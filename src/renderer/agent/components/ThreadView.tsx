@@ -1,6 +1,6 @@
 import { Button } from '../../ui/primitives/Button';
 import { UserInputRecovery } from './UserInputRecovery';
-import { recoveryText, type UserInputDraft } from '../store/userInputState';
+import { activeInputAnswers, recoveryText, type UserInputDraft } from '../store/userInputState';
 import { userInputKey } from '../../../core/agent/userInput';
 import {
   memo,
@@ -31,6 +31,7 @@ import { officeOwnershipFileInfo } from '../../../core/officeFiles';
 import type {
   RequestUserInputAnswer,
   RequestUserInputRequest,
+  UserInputSettlement,
   JsonValue,
   ProviderRetryStatus,
   RendererUserViewHints,
@@ -90,7 +91,7 @@ import { WorkingText } from '../../ui/primitives/WorkingText';
 import { ThreadGoalView } from './ThreadGoalView';
 import { ThreadComposerModelControl } from './ThreadComposerModelControl';
 import { ThreadComposerAttachmentTray } from './ThreadComposerAttachmentTray';
-import { UserInputRequest } from './UserInputRequest';
+import { UserInputDeadline, UserInputMenu, UserInputRequest } from './UserInputRequest';
 import {
   ThreadComposerEditor,
   type ThreadComposerDraft,
@@ -210,11 +211,13 @@ interface ThreadViewProps {
   readonly inputRequest: RequestUserInputRequest | null;
   readonly inputDrafts?: readonly UserInputDraft[];
   readonly inputRecovery?: 'restoring' | 'error' | null;
-  readonly onInputDraftChange?: (request: RequestUserInputRequest, update: Partial<Pick<UserInputDraft, 'answers' | 'step'>>) => void;
+  readonly onInputDraftChange?: (request: RequestUserInputRequest, update: Partial<Pick<UserInputDraft, 'answers' | 'step' | 'view'>>) => void;
   readonly onReconcileInput?: () => void;
   readonly onDiscardInput?: (key: string) => void;
   readonly onInputAdded?: (key: string) => void;
   readonly onInputMessageAccepted?: (keys: readonly string[]) => void;
+  readonly onInputMessageChanged?: (text: string) => void;
+  readonly onInputSettlement?: (request: RequestUserInputRequest) => UserInputSettlement | undefined;
   /** The run is blocked on the user. Working phrases become static and the
    *  divider names the wait; elapsed time remains the Turn's wall-clock span. */
   readonly waitingOnUserInput: boolean;
@@ -244,7 +247,8 @@ interface ThreadViewProps {
     content: readonly ThreadUserContent[],
     clientMessageId: string,
   ) => Promise<TurnSubmitResponse | null>;
-  readonly onSubmitUserInput: (answers: readonly RequestUserInputAnswer[]) => Promise<void>;
+  readonly onSubmitUserInput: (request: RequestUserInputRequest, answers: readonly RequestUserInputAnswer[], intent: 'answer' | 'continue') => Promise<void>;
+  readonly onDiscussUserInput?: (request: RequestUserInputRequest, answers: readonly RequestUserInputAnswer[], content: readonly ThreadUserContent[], submissionId: string) => Promise<TurnSubmitResponse>;
 }
 
 const ATTACHMENT_ERROR_TIMEOUT_MS = 5_000;
@@ -682,7 +686,7 @@ export function ThreadView({
   turns,
   selfSpeaker,
   inputRequest,
-  inputDrafts = [], inputRecovery = null, onInputDraftChange, onReconcileInput, onDiscardInput, onInputAdded, onInputMessageAccepted,
+  inputDrafts = [], inputRecovery = null, onInputDraftChange, onReconcileInput, onDiscardInput, onInputAdded, onInputMessageAccepted, onInputMessageChanged, onInputSettlement,
   waitingOnUserInput,
   providerRetry,
   threadCreationBlocked,
@@ -701,10 +705,20 @@ export function ThreadView({
   onReadToolArguments,
   onReadToolOutput,
   onSend,
-  onSubmitUserInput,
+  onSubmitUserInput, onDiscussUserInput,
 }: ThreadViewProps) {
   const t = useT();
-  const waitingForInput = Boolean(inputRequest || waitingOnUserInput || inputRecovery);
+  const inputUncertain = Boolean(inputRecovery || (waitingOnUserInput && !inputRequest));
+  const [questionEditorKey, setQuestionEditorKey] = useState<string | null>(null);
+  const shownInput = inputDrafts.find((entry) => userInputKey(entry.request) === questionEditorKey);
+  const questionEditorOpen = Boolean(shownInput);
+  const handledInputRef = useRef<string | null>(null);
+  const settledInputRef = useRef<string | null>(null);
+  const composingMessageRef = useRef(false);
+  const pendingDiscussionRef = useRef<{ request: RequestUserInputRequest; submissionId: string;
+    content: readonly ThreadUserContent[]; recoveryKeys: readonly string[] } | null>(null);
+  const [continuingInput, setContinuingInput] = useState(false);
+  const continuingInputRef = useRef(false);
   const inputDraft = inputRequest ? inputDrafts.find((entry) => userInputKey(entry.request) === userInputKey(inputRequest)) : undefined;
   const initialScrollSnapshot = threadScrollSnapshots.get(threadId);
   const [draft, setDraft] = useState<ThreadComposerDraft>(EMPTY_COMPOSER_DRAFT);
@@ -928,14 +942,14 @@ export function ThreadView({
   const hasUsableProvider = Boolean(providerSettings?.providers.some(
     (provider) => isProviderUsable(providerSettings, provider),
   ));
-  attachmentAdmissionEnabledRef.current = !activeTurn
+  attachmentAdmissionEnabledRef.current = (!activeTurn || Boolean(inputRequest))
     && !providerBlocksSend
     && !sending
     && !threadCreationPending
-    && !waitingForInput;
-  const newThreadCommandState = classifyNewThreadCommand(draft);
+    && !inputUncertain && !questionEditorOpen;
+  const newThreadCommandState = inputRequest ? 'ordinary' : classifyNewThreadCommand(draft);
   const newThreadAction = newThreadCommandState !== 'ordinary';
-  const composerActionDisabled = !hasDraft
+  const composerActionDisabled = inputUncertain || continuingInput || !hasDraft
     || draft.pendingFileRefs.length > 0
     || sending
     || threadCreationPending
@@ -943,7 +957,7 @@ export function ThreadView({
     || (newThreadCommandState === 'ordinary' ? providerBlocksSend : false);
   const composerActionLabel = newThreadAction
     ? t.agent.thread.new
-    : activeTurn ? t.agent.thread.steer : t.agent.thread.send;
+    : inputRequest ? t.agent.thread.inputDiscussSend : activeTurn ? t.agent.thread.steer : t.agent.thread.send;
   const composerActionTitle = (
     (newThreadCommandState === 'ready' && threadCreationBlocked)
     || (newThreadCommandState === 'ordinary' && providerBlocksSend)
@@ -2148,16 +2162,99 @@ export function ThreadView({
     return () => window.clearTimeout(timeout);
   }, [error]);
 
+  useLayoutEffect(() => {
+    const key = inputRequest ? userInputKey(inputRequest) : null;
+    if (key && handledInputRef.current !== key && inputDraft) {
+      handledInputRef.current = key;
+      const focused = document.activeElement;
+      const editing = focused instanceof HTMLElement && (focused.isContentEditable || focused.matches('input, textarea'));
+      const focusElsewhere = focused && focused !== document.body && !composerRegionRef.current?.contains(focused);
+      const canReveal = !editing && !composingMessageRef.current && draftRef.current.empty && !focusElsewhere;
+      const showQuestions = inputDraft.view === 'questions' || (inputDraft.view === undefined && canReveal);
+      if (showQuestions && !questionEditorOpen) setQuestionEditorKey(key);
+      if (inputDraft.view === undefined) onInputDraftChange?.(inputRequest!, { view: showQuestions ? 'questions' : 'message' });
+    }
+    if (questionEditorKey && !shownInput) setQuestionEditorKey(null);
+    if (shownInput && shownInput.outcome !== 'pending' && settledInputRef.current !== questionEditorKey) {
+      settledInputRef.current = questionEditorKey;
+      const editing = document.activeElement instanceof HTMLElement
+        && document.activeElement.matches('.thread-user-input-other');
+      if (!editing || !recoveryText(shownInput)) setQuestionEditorKey(null);
+    }
+  }, [inputRequest, inputDraft, shownInput, questionEditorKey, questionEditorOpen, onInputDraftChange]);
+
+  // A late authoritative receipt can arrive after both notification and response were lost.
+  // Clear only that unchanged restored message; new edits never become a second automatic send.
+  function reconcileDiscussionDraft(): boolean {
+    const submitted = pendingDiscussionRef.current;
+    if (!submitted || sendingRef.current) return false;
+    const receipt = onInputSettlement?.(submitted.request);
+    if (!receipt) return false;
+    if (receipt.submitted?.submissionId !== submitted.submissionId) {
+      pendingDiscussionRef.current = null;
+      return false;
+    }
+    pendingDiscussionRef.current = null;
+    const unchanged = JSON.stringify(threadContentFromDraft(draftRef.current, attachmentsRef.current)) === JSON.stringify(submitted.content);
+    onInputMessageAccepted?.(submitted.recoveryKeys);
+    const ids = new Set(submitted.content.flatMap((part) => part.type === 'attachment' ? [part.id] : []));
+    for (const id of ids) attachmentUiState.rememberCanonicalPreview(id);
+    if (unchanged) {
+      composerRef.current?.clear();
+      updateAttachments((current) => current.filter((attachment) => !ids.has(attachment.id)));
+      setError(null);
+    }
+    return unchanged;
+  }
+  useEffect(() => { reconcileDiscussionDraft(); });
+
+  function showQuestions() {
+    if (!inputRequest) return;
+    const expectedFocus = document.activeElement;
+    setQuestionEditorKey(userInputKey(inputRequest));
+    onInputDraftChange?.(inputRequest, { view: 'questions' });
+    window.requestAnimationFrame(() => {
+      if (composerFocusRequestIsCurrent(expectedFocus, document.activeElement, document.body)) {
+        composerRegionRef.current?.querySelector<HTMLElement>('.thread-user-input-step')?.focus();
+      }
+    });
+  }
+
+  function showMessage() {
+    const expectedFocus = document.activeElement;
+    if (shownInput) onInputDraftChange?.(shownInput.request, { view: 'message' });
+    setQuestionEditorKey(null);
+    window.requestAnimationFrame(() => {
+      if (composerFocusRequestIsCurrent(expectedFocus, document.activeElement, document.body)) composerRef.current?.focus();
+    });
+  }
+
+  function addInputToMessage(entry: UserInputDraft) {
+    if (entry.addedToMessage || sending || !composerRef.current) return;
+    showMessage();
+    composerRef.current.appendPlainText(recoveryText(entry));
+    onInputAdded?.(userInputKey(entry.request));
+  }
+
+  async function continueInput() {
+    if (!inputRequest || !inputDraft || inputUncertain || continuingInputRef.current) return;
+    continuingInputRef.current = true;
+    setContinuingInput(true);
+    try { await onSubmitUserInput(inputRequest, activeInputAnswers(inputDraft), 'continue'); }
+    catch (failure) { setError(errorMessage(failure)); }
+    finally { continuingInputRef.current = false; setContinuingInput(false); }
+  }
+
   useEffect(() => {
-    if (!waitingForInput) return;
+    if (!questionEditorOpen) return;
     dragDepthRef.current = 0;
     setDragActive(false);
-  }, [waitingForInput]);
+  }, [questionEditorOpen]);
 
   useEffect(() => {
     if (composerFocusToken <= 0
       || handledFocusTokenRef.current >= composerFocusToken
-      || waitingForInput) return undefined;
+      || questionEditorOpen) return undefined;
     handledFocusTokenRef.current = composerFocusToken;
     const frame = window.requestAnimationFrame(() => {
       if (composerFocusRequestIsCurrent(
@@ -2167,17 +2264,17 @@ export function ThreadView({
       )) composerRef.current?.focus();
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [composerFocusExpectedActiveElement, composerFocusToken, waitingForInput]);
+  }, [composerFocusExpectedActiveElement, composerFocusToken, questionEditorOpen]);
 
   useEffect(() => {
     if (failedThreadCreationFocusToken <= 0
       || handledFailedThreadCreationFocusTokenRef.current >= failedThreadCreationFocusToken
       || threadCreationPending
-      || waitingForInput) return undefined;
+      || questionEditorOpen) return undefined;
     handledFailedThreadCreationFocusTokenRef.current = failedThreadCreationFocusToken;
     const frame = window.requestAnimationFrame(() => composerRef.current?.focus());
     return () => window.cancelAnimationFrame(frame);
-  }, [failedThreadCreationFocusToken, threadCreationPending, waitingForInput]);
+  }, [failedThreadCreationFocusToken, threadCreationPending, questionEditorOpen]);
 
   useEffect(() => {
     if (threadCreationBlocked) return;
@@ -2366,15 +2463,16 @@ export function ThreadView({
   }
 
   async function submit() {
+    if (reconcileDiscussionDraft()) return;
     const currentDraft = draftRef.current;
     if (!composerEnabled
       || currentDraft.empty
       || currentDraft.pendingFileRefs.length > 0
       || sending
       || threadCreationPending
-      || waitingForInput) return;
+      || inputUncertain || continuingInputRef.current) return;
     endComposerHistorySession();
-    const commandState = classifyNewThreadCommand(currentDraft);
+    const commandState = inputRequest ? 'ordinary' : classifyNewThreadCommand(currentDraft);
     if (commandState === 'blockedByStructuredContent') {
       setNewThreadValidation('structuredContent');
       return;
@@ -2496,8 +2594,12 @@ export function ThreadView({
       const inputRecoveryKeys = inputDrafts.filter((entry) => entry.addedToMessage && recoveryText(entry)
         && submittedContent.filter((part) => part.type === 'text').map((part) => part.text).join('\n').includes(recoveryText(entry)))
         .map((entry) => userInputKey(entry.request));
-      const submission = await onSend(submittedContent, pendingSend.clientMessageId);
-      if (submission) onInputMessageAccepted?.(inputRecoveryKeys);
+      if (inputRequest && inputDraft) pendingDiscussionRef.current = { request: inputRequest,
+        submissionId: pendingSend.clientMessageId, content: submittedContent, recoveryKeys: inputRecoveryKeys };
+      const submission = inputRequest && inputDraft
+        ? await onDiscussUserInput!(inputRequest, activeInputAnswers(inputDraft), submittedContent, pendingSend.clientMessageId)
+        : await onSend(submittedContent, pendingSend.clientMessageId);
+      if (submission) { onInputMessageAccepted?.(inputRecoveryKeys); pendingDiscussionRef.current = null; }
       const acceptedTurn = submission?.turn ?? null;
       // A steer is accepted into the active Turn and therefore has no new Turn
       // in the response. Admission disposition, not nullable layout data, owns
@@ -2825,7 +2927,7 @@ export function ThreadView({
   async function processBrowserFiles(files: readonly File[]) {
     const signal = attachmentLifecycleControllerRef.current?.signal;
     if (!signal || signal.aborted) return;
-    if (waitingForInput || files.length === 0) return;
+    if (inputUncertain || questionEditorOpen || files.length === 0) return;
     if (composerAttachmentCount(attachmentsRef.current, pendingPasteRequestsRef.current) >= MAX_COMPOSER_ATTACHMENTS) {
       setError(t.agent.composer.maxAttachments({ max: MAX_COMPOSER_ATTACHMENTS }));
       return;
@@ -2888,27 +2990,27 @@ export function ThreadView({
   }
 
   function handleDragEnter(event: DragEvent<HTMLDivElement>) {
-    if (waitingForInput || !hasDraggedFiles(event.dataTransfer)) return;
+    if (inputUncertain || questionEditorOpen || !hasDraggedFiles(event.dataTransfer)) return;
     event.preventDefault();
     dragDepthRef.current += 1;
     setDragActive(true);
   }
 
   function handleDragLeave(event: DragEvent<HTMLDivElement>) {
-    if (waitingForInput || !hasDraggedFiles(event.dataTransfer)) return;
+    if (inputUncertain || questionEditorOpen || !hasDraggedFiles(event.dataTransfer)) return;
     event.preventDefault();
     dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
     if (dragDepthRef.current === 0) setDragActive(false);
   }
 
   function handleDragOver(event: DragEvent<HTMLDivElement>) {
-    if (waitingForInput || !hasDraggedFiles(event.dataTransfer)) return;
+    if (inputUncertain || questionEditorOpen || !hasDraggedFiles(event.dataTransfer)) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = 'copy';
   }
 
   function handleDrop(event: DragEvent<HTMLDivElement>) {
-    if (waitingForInput || !hasDraggedFiles(event.dataTransfer)) return;
+    if (inputUncertain || questionEditorOpen || !hasDraggedFiles(event.dataTransfer)) return;
     event.preventDefault();
     dragDepthRef.current = 0;
     setDragActive(false);
@@ -3000,6 +3102,7 @@ export function ThreadView({
   function handleDraftChange(next: ThreadComposerDraft) {
     draftRef.current = next;
     setDraft(next);
+    if (!sendingRef.current) onInputMessageChanged?.(next.content.filter((part) => part.type === 'text').map((part) => part.text).join('\n'));
     const nextCommandState = classifyNewThreadCommand(next);
     setNewThreadValidation((current) => {
       if (current === 'structuredContent' && nextCommandState === 'blockedByStructuredContent') return current;
@@ -3041,7 +3144,7 @@ export function ThreadView({
   }
 
   function refocusComposerFromClick(event: MouseEvent<HTMLDivElement>) {
-    if (!composerEnabled || waitingForInput) return;
+    if (!composerEnabled || questionEditorOpen) return;
     const decision = composerRefocusDecision({
       altKey: event.altKey,
       button: event.button,
@@ -3222,12 +3325,8 @@ export function ThreadView({
         {projectControl}
         <UserInputRecovery
           drafts={inputDrafts.filter((entry) => entry.outcome !== 'pending')}
-          canAdd={!waitingForInput && !sending}
-          onAdd={(entry) => {
-            if (!composerRef.current) return;
-            composerRef.current.appendPlainText(recoveryText(entry));
-            onInputAdded?.(userInputKey(entry.request));
-          }}
+          canAdd={!sending}
+          onAdd={addInputToMessage}
           onDiscard={(key) => onDiscardInput?.(key)}
           onRetry={() => onReconcileInput?.()}
         />
@@ -3245,15 +3344,28 @@ export function ThreadView({
           onDragOver={handleDragOver}
           onDrop={handleDrop}
         >
-          {inputRequest && inputDraft ? (
+          {inputRequest && inputDraft && (!shownInput || !sameInputShown(shownInput, inputRequest)) ? (
+            <div className="thread-user-input-strip" onKeyDown={(event) => { if (event.key === 'Escape') event.stopPropagation(); }}>
+              <div className="thread-user-input-heading">
+                <span>{t.agent.thread.inputAnsweredCount({ count: activeInputAnswers(inputDraft).filter((answer) => !answer.skipped).length, total: inputRequest.questions.length })}</span>
+                <UserInputDeadline request={inputRequest} onExpired={() => onReconcileInput?.()} />
+              </div>
+              <div className="thread-user-input-secondary">
+                <Button size="sm" disabled={sending || continuingInput} onClick={showQuestions}>{t.agent.thread.inputAnswerQuestions}</Button>
+                <UserInputMenu hasAnswers={activeInputAnswers(inputDraft).some((answer) => !answer.skipped)}
+                  disabled={inputUncertain || sending || continuingInput} onContinue={() => void continueInput()} onStop={() => void onInterrupt()} />
+              </div>
+              {!questionEditorOpen ? <p className="thread-user-input-countdown">{t.agent.thread.inputDiscussHint}</p> : null}
+            </div>
+          ) : null}
+          {shownInput ? (
             <UserInputRequest
-              key={userInputKey(inputRequest)}
-              draft={inputDraft}
-              disabled={Boolean(inputRecovery)}
-              onDraftChange={(update) => onInputDraftChange?.(inputRequest, update)}
+              key={userInputKey(shownInput.request)} request={shownInput.request} draft={shownInput}
+              disabled={inputUncertain || sending || continuingInput}
+              onDraftChange={(update) => onInputDraftChange?.(shownInput.request, update)}
               onExpired={() => onReconcileInput?.()}
-              onSubmit={onSubmitUserInput}
-              request={inputRequest}
+              onSubmit={(answers, intent) => onSubmitUserInput(shownInput.request, answers, intent)}
+              onChat={showMessage} onAdd={() => addInputToMessage(shownInput)} onStop={() => void onInterrupt()}
             />
           ) : null}
           {(inputRecovery || (waitingOnUserInput && !inputRequest)) ? (
@@ -3265,7 +3377,9 @@ export function ThreadView({
               </div>
             </div>
           ) : null}
-          <div className="thread-composer-main" hidden={waitingForInput}>
+          <div className="thread-composer-main" hidden={questionEditorOpen}
+            onCompositionStartCapture={() => { composingMessageRef.current = true; }}
+            onCompositionEndCapture={() => { composingMessageRef.current = false; }}>
               {dragActive ? <div className="thread-composer-drop-overlay">{t.agent.thread.dropFilesToAttach}</div> : null}
               {error ? <p className="thread-inline-error" role="status">{error}</p> : null}
               {newThreadValidationMessage ? (
@@ -3305,11 +3419,11 @@ export function ThreadView({
                 threadId={threadId}
               />
               <ThreadComposerEditor
-                allowFileReferences={!activeTurn && !providerBlocksSend && !waitingForInput && !threadCreationPending}
-                allowNodeReferences={!waitingForInput && !threadCreationPending}
-                allowSlashCommands={slashCommands.length > 0}
+                allowFileReferences={(!activeTurn || Boolean(inputRequest)) && !providerBlocksSend && !inputUncertain && !threadCreationPending}
+                allowNodeReferences={!threadCreationPending}
+                allowSlashCommands={!inputRequest && slashCommands.length > 0}
                 currentNodeId={null}
-                disabled={waitingForInput || threadCreationPending}
+                disabled={threadCreationPending}
                 indexStore={indexStore}
                 isStreaming={Boolean(activeTurn)}
                 onChange={handleDraftChange}
@@ -3323,7 +3437,7 @@ export function ThreadView({
                 onThreadReferenceClick={(referencedThreadId) => void onOpenThreadReference(referencedThreadId)}
                 onThreadReferenceSearch={searchThreadReferences}
                 onTextPasteRejected={rejectTextPaste}
-                onStop={() => void onInterrupt()}
+                onStop={() => { if (!inputRequest && !inputUncertain) void onInterrupt(); }}
                 onSubmit={() => void submit()}
                 placeholder={activeTurn
                   ? t.agent.composer.steerPlaceholder
@@ -3342,7 +3456,7 @@ export function ThreadView({
                 />
                 <IconButton
                   disabled={providerBlocksSend
-                    || Boolean(activeTurn)
+                    || (Boolean(activeTurn) && !inputRequest)
                     || attachments.length + pendingPastes.length >= MAX_COMPOSER_ATTACHMENTS
                     || sending
                     || threadCreationPending}
@@ -3373,6 +3487,8 @@ export function ThreadView({
                     settings={providerSettings}
                   />
                 ) : null}
+                {activeTurn && inputRequest && hasDraft ? <IconButton className="is-stop" icon={StopIcon}
+                  label={t.agent.thread.interrupt} onClick={() => void onInterrupt()} variant="composerAction" /> : null}
                 {activeTurn && !hasDraft ? (
                   <IconButton
                     className="is-stop"
@@ -5149,4 +5265,8 @@ function formatBytes(bytes: number): string {
 
 function hasDraggedFiles(dataTransfer: DataTransfer): boolean {
   return Array.from(dataTransfer.types).includes('Files');
+}
+
+function sameInputShown(draft: UserInputDraft, request: RequestUserInputRequest): boolean {
+  return userInputKey(draft.request) === userInputKey(request);
 }

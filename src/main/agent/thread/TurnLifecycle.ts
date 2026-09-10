@@ -550,88 +550,8 @@ export class TurnLifecycle {
         if (active.finishing || active.fatalError) {
           throw this.createThreadBusyError('Expected Turn is no longer accepting steering', true);
         }
-        const thread = this.core.requireThread(request.threadId).thread;
-        const admission = await this.resourceOps.resolveAdmissionContent(request.input, thread);
-        const createdEvidenceResources: ThreadResourceReference[] = [];
-        const acceptedAt = this.now();
-        let item: ThreadItem;
-        let admittedItems: readonly ThreadItem[];
-        try {
-          const extensionContext = this.core.hiddenEphemeralThreads.has(request.threadId)
-            ? []
-            : await this.extensions.threadContext(thread);
-          const canonicalTurns = this.core.allTurns(request.threadId);
-          const skillAdmission = this.core.hiddenEphemeralThreads.has(request.threadId)
-              ? { catalogSnapshot: null, preloadedInvocations: [], invocation: null }
-              : await this.resolveSkillAdmission({
-                thread,
-                turnId: active.turnId,
-                configuration: active.configuration,
-                preloadedSkills: [],
-                content: admission.content,
-                acceptedAt,
-                observedFilePaths: observedSkillFilePaths(canonicalTurns),
-              });
-          const skillCatalog = await planSkillCatalogEvidence({
-            turns: canonicalTurns,
-            snapshot: skillAdmission.catalogSnapshot,
-            readContext: (ref) => this.core.payloads.readContext(thread.id, ref),
-          });
-          const admissionProjection = this.getDocumentProjection();
-          const evidence = await admitContextEvidence({
-            thread,
-            persona: this.resolvePersona(thread),
-            turnId: active.turnId,
-            acceptedAt,
-            content: admission.content,
-            userView: request.userView,
-            // NO drift notice here. This is `steerTurn`: it admits into a Turn
-            // that is already running, and the notice's whole contract is that it
-            // arrives between Turns. Delivered here it would land while the model
-            // is composing an edit and tell it not to revert changes it is itself
-            // being asked to make.
-            additionalContext: request.additionalContext,
-            additionalContextSource: request.additionalContextSource,
-            extensionContext,
-            skillCatalog,
-            preloadedSkillInvocations: skillAdmission.preloadedInvocations,
-            skillInvocation: skillAdmission.invocation,
-            includeHostContext: !this.core.hiddenEphemeralThreads.has(request.threadId),
-            projection: admissionProjection,
-            createItemId: () => uuidV7(),
-            writeContext: (payload) => this.core.payloads.writeContext(thread.id, payload),
-            resolveAsset: this.resolveReferencedAsset,
-            writeResource: (bytes, mimeType, fileName) => (
-              this.core.resources.writeBytes(thread.id, bytes, mimeType, fileName)
-            ),
-            onResourceCreated: (ref) => createdEvidenceResources.push(ref),
-          });
-          item = userMessage(
-            request.threadId,
-            active.turnId,
-            request.author,
-            admission.content,
-            request.clientUserMessageId ?? null,
-            acceptedAt,
-          );
-          admittedItems = [...evidence.items, item];
-          this.assertExecutionAvailable();
-          admissionGuard?.();
-          await active.recorder.completedImmediatelyBatch(admittedItems, acceptedAt);
-        } catch (error) {
-          const references = this.resourceOps.threadStorageReferences(thread.id);
-          await this.resourceOps.discardCreatedResourcesAgainstReferences(
-            thread.id,
-            [...admission.createdResources, ...createdEvidenceResources],
-            references.resources,
-          );
-          await this.core.payloads.pruneUnreferencedContexts(
-            thread.id,
-            references.contexts,
-            references.internalTexts,
-          );
-          throw error;
-        }
+        const { item, admittedItems, acceptedAt } = await this.admitSteering(active, request,
+          (items, at) => active.recorder.completedImmediatelyBatch(items, at).then(() => undefined), admissionGuard);
         try {
           if (request.clientUserMessageId) {
             this.bindClientInput(request.threadId, request.clientUserMessageId, active.turnId, item.id);
@@ -648,6 +568,95 @@ export class TurnLifecycle {
         }
         return { turnId: active.turnId, acceptedItemId: item.id, deduplicated: false };
       }); }
+  /** Shared admission for ordinary steering and atomic question discussion. */
+  private async admitSteering(
+    active: ActiveTurn, request: InternalTurnSteerRequest,
+    commit: (items: readonly ThreadItem[], at: number) => Promise<void>, admissionGuard?: () => void,
+  ): Promise<{ item: ThreadItem; admittedItems: readonly ThreadItem[]; acceptedAt: number }> {
+    const thread = this.core.requireThread(request.threadId).thread;
+    const admission = await this.resourceOps.resolveAdmissionContent(request.input, thread);
+    const createdEvidenceResources: ThreadResourceReference[] = [];
+    const acceptedAt = this.now();
+    let item: ThreadItem;
+    let admittedItems: readonly ThreadItem[];
+    try {
+      const extensionContext = this.core.hiddenEphemeralThreads.has(request.threadId)
+        ? []
+        : await this.extensions.threadContext(thread);
+      const canonicalTurns = this.core.allTurns(request.threadId);
+      const skillAdmission = this.core.hiddenEphemeralThreads.has(request.threadId)
+          ? { catalogSnapshot: null, preloadedInvocations: [], invocation: null }
+          : await this.resolveSkillAdmission({
+            thread,
+            turnId: active.turnId,
+            configuration: active.configuration,
+            preloadedSkills: [],
+            content: admission.content,
+            acceptedAt,
+            observedFilePaths: observedSkillFilePaths(canonicalTurns),
+          });
+      const skillCatalog = await planSkillCatalogEvidence({
+        turns: canonicalTurns,
+        snapshot: skillAdmission.catalogSnapshot,
+        readContext: (ref) => this.core.payloads.readContext(thread.id, ref),
+      });
+      const admissionProjection = this.getDocumentProjection();
+      const evidence = await admitContextEvidence({
+        thread,
+        persona: this.resolvePersona(thread),
+        turnId: active.turnId,
+        acceptedAt,
+        content: admission.content,
+        userView: request.userView,
+        // NO drift notice here. This is `steerTurn`: it admits into a Turn
+        // that is already running, and the notice's whole contract is that it
+        // arrives between Turns. Delivered here it would land while the model
+        // is composing an edit and tell it not to revert changes it is itself
+        // being asked to make.
+        additionalContext: request.additionalContext,
+        additionalContextSource: request.additionalContextSource,
+        extensionContext,
+        skillCatalog,
+        preloadedSkillInvocations: skillAdmission.preloadedInvocations,
+        skillInvocation: skillAdmission.invocation,
+        includeHostContext: !this.core.hiddenEphemeralThreads.has(request.threadId),
+        projection: admissionProjection,
+        createItemId: () => uuidV7(),
+        writeContext: (payload) => this.core.payloads.writeContext(thread.id, payload),
+        resolveAsset: this.resolveReferencedAsset,
+        writeResource: (bytes, mimeType, fileName) => (
+          this.core.resources.writeBytes(thread.id, bytes, mimeType, fileName)
+        ),
+        onResourceCreated: (ref) => createdEvidenceResources.push(ref),
+      });
+      item = userMessage(
+        request.threadId,
+        active.turnId,
+        request.author,
+        admission.content,
+        request.clientUserMessageId ?? null,
+        acceptedAt,
+      );
+      admittedItems = [...evidence.items, item];
+      this.assertExecutionAvailable();
+      admissionGuard?.();
+      await commit(admittedItems, acceptedAt);
+    } catch (error) {
+      const references = this.resourceOps.threadStorageReferences(thread.id);
+      await this.resourceOps.discardCreatedResourcesAgainstReferences(
+        thread.id,
+        [...admission.createdResources, ...createdEvidenceResources],
+        references.resources,
+      );
+      await this.core.payloads.pruneUnreferencedContexts(
+        thread.id,
+        references.contexts,
+        references.internalTexts,
+      );
+      throw error;
+    }
+    return { item, admittedItems, acceptedAt };
+  }
   async interruptTurn(threadId: ThreadId, turnId: string): Promise<void> {
       await this.core.threadMutex.run(threadId, async () => {
         const active = this.activeTurns.get(threadId);
@@ -717,20 +726,28 @@ export class TurnLifecycle {
   }
 
   async respondUserInput(response: RequestUserInputResponse): Promise<UserInputReadResponse> {
-    return this.inputMutex.run(response.threadId, async () => {
+    return this.inputMutex.run(response.threadId, () => this.core.threadMutex.run(response.threadId, async () => {
+      this.assertExecutionAvailable();
       this.core.requireThread(response.threadId);
       await this.reconcileInputDeadline(response.threadId);
       const receipt = await this.findInputReceipt(response);
       if (receipt) {
         if (receipt.response && equalInputAnswers(receipt.response, response)) return this.inputReadResponse(response.threadId, response);
-        throw new Error(receipt.settlement.outcome === 'timedOut' ? 'This question expired; no answer was submitted.' : 'This question is already settled.');
+        throw new Error(receipt.settlement.outcome === 'timedOut' ? 'This question expired; the response was not sent.' : 'This question is already settled.');
       }
       const pending = this.pendingUserInputs.get(response.threadId);
       if (!pending || !sameUserInput(pending.request, response)) throw new Error('This question is no longer waiting for an answer.');
       validateUserInputAnswers(pending.request, response);
-      await this.settleUserInput(pending, 'answered', response);
+      if (response.intent === 'discuss') {
+        if (!response.message) throw new Error('Discussion requires a message.');
+        if (this.readCanonicalClientBinding(response.threadId, response.submissionId)) throw new Error('This message id already belongs to another submission.');
+        const active = this.requireActiveTurn(response.threadId, response.turnId);
+        await this.admitSteering(active, { ...response.message, threadId: response.threadId,
+          expectedTurnId: response.turnId, clientUserMessageId: response.submissionId, author: { kind: 'reader' } },
+          (items, at) => this.settleUserInput(pending, 'discussed', response, { active, items, at }));
+      } else await this.settleUserInput(pending, 'answered', response);
       return this.inputReadResponse(response.threadId, response);
-    });
+    }));
   }
 
   async acceptAndLaunch(
@@ -1770,6 +1787,9 @@ export class TurnLifecycle {
     const events = await this.core.rollout.read(identity.threadId);
     for (let index = events.length - 1; index >= 0; index -= 1) {
       const event = events[index]!.event;
+      if (event.type === 'items/completed' && event.userInput && sameUserInput(event.userInput.settlement, identity)) {
+        return event.userInput;
+      }
       if ((event.type === 'userInput/resolved' || event.type === 'userInput/cleared') && sameUserInput(event.settlement, identity)) {
         return { settlement: event.settlement, ...(event.type === 'userInput/resolved' ? { response: event.response } : {}) };
       }
@@ -1777,34 +1797,59 @@ export class TurnLifecycle {
     return null;
   }
 
-  /** Durable settlement is the commit point; only then remove the request and release its tool. */
-  private async settleUserInput(pending: PendingUserInput, outcome: UserInputSettlement['outcome'], response?: RequestUserInputResponse): Promise<void> {
+  /** One durable entry commits the response and, for discussion, its canonical message. */
+  private async settleUserInput(
+    pending: PendingUserInput, outcome: UserInputSettlement['outcome'], response?: RequestUserInputResponse,
+    discussion?: { active: ActiveTurn; items: readonly ThreadItem[]; at: number },
+  ): Promise<void> {
     const request = pending.request;
     if (this.pendingUserInputs.get(request.threadId) !== pending) return;
-    const skippedQuestionIds = response?.answers.filter((answer) => answer.skipped).map((answer) => answer.questionId);
+    const message = discussion?.items.find((item) => item.type === 'userMessage');
     let settlement: UserInputSettlement = {
       hostGeneration: request.hostGeneration, threadId: request.threadId, turnId: request.turnId, itemId: request.itemId,
       deadlineAt: request.deadlineAt, revision: (this.inputRevisions.get(request.threadId) ?? 0) + 1, outcome,
-      ...(skippedQuestionIds?.length ? { skippedQuestionIds } : {}),
+      ...(response ? { submitted: { submissionId: response.submissionId, intent: response.intent, answers: response.answers } } : {}),
+      ...(message ? { messageItemId: message.id } : {}),
     };
     let notification: AgentCoreRecordedNotification = response
       ? { type: 'userInput/resolved', threadId: request.threadId, turnId: request.turnId, itemId: request.itemId, settlement, response }
       : { type: 'userInput/cleared', threadId: request.threadId, turnId: request.turnId, itemId: request.itemId, settlement };
-    try {
-      await this.core.recordNotification(notification, { deferObservers: true });
-    } catch (error) {
-      // A projection failure follows a durable append; a transport/write error may also follow one.
-      const committed = error instanceof RecordedNotificationProjectionError
-        || Boolean(await this.findInputReceipt(request).catch(() => null));
-      if (!committed && outcome === 'answered') {
-        this.traceUserInput('answer-write-failed', settlement);
-        throw new Error('The answer could not be saved. Retry while the question is still open.');
+    const persist = async () => {
+      // Admission and item preparation can be asynchronous. Recheck the Host clock at the write boundary.
+      if (response && (pending.cancelled || this.now() >= request.deadlineAt
+        || discussion?.active.controller.signal.aborted || discussion?.active.finishing)) {
+        await this.reconcileInputDeadline(request.threadId);
+        throw new Error('This question ended; the response was not sent.');
       }
-      if (!committed) {
-        settlement = { ...settlement, outcome: 'failed' };
-        notification = { type: 'userInput/cleared', threadId: request.threadId, turnId: request.turnId, itemId: request.itemId, settlement };
+      try {
+        await this.core.recordNotification(notification, { deferObservers: true });
+      } catch (error) {
+        const receipt = await this.findInputReceipt(request).catch(() => null);
+        const committed = error instanceof RecordedNotificationProjectionError
+          || (response ? Boolean(receipt?.response && equalInputAnswers(receipt.response, response)) : Boolean(receipt));
+        if (committed && discussion && !(error instanceof RecordedNotificationProjectionError)) {
+          // A lost append acknowledgement can precede projection. Rebuild from the same committed ledger.
+          try { this.core.history.rebuildThread(request.threadId, await this.core.rollout.read(request.threadId)); }
+          catch { this.traceUserInput('discussion-projection-recovery-failed', settlement); }
+        }
+        if (!committed && response) {
+          this.traceUserInput('response-write-failed', settlement);
+          throw new Error('The response could not be saved. Retry while the question is still open.');
+        }
+        if (!committed) {
+          settlement = { ...settlement, outcome: 'failed' };
+          notification = { type: 'userInput/cleared', threadId: request.threadId, turnId: request.turnId, itemId: request.itemId, settlement };
+        }
       }
-    }
+    };
+    let discussionItems: readonly ThreadItem[] = [];
+    if (discussion && response) {
+      discussionItems = await discussion.active.recorder.completedImmediatelyBatch(discussion.items, discussion.at, async (batch) => {
+        if (batch.type !== 'items/completed') throw new Error('Discussion admission requires a completed message batch');
+        notification = { ...batch, userInput: { response, settlement } };
+        await persist();
+      });
+    } else await persist();
     this.inputRevisions.set(request.threadId, settlement.revision);
     this.pendingUserInputs.delete(request.threadId);
     pending.cleanup();
@@ -1812,12 +1857,25 @@ export class TurnLifecycle {
     this.inputReceipts.set(userInputKey(request), { settlement, ...(response ? { response } : {}) });
     while (this.inputReceipts.size > 128) this.inputReceipts.delete(this.inputReceipts.keys().next().value!);
     this.traceUserInput('settled', settlement);
-    // Publication/status failures cannot undo a committed answer or strand its Promise.
+    if (discussion && response && message) {
+      try {
+        this.bindClientInput(request.threadId, response.submissionId, request.turnId, message.id);
+        const input = { items: discussionItems, acceptedAt: discussion.at };
+        if (discussion.active.steeringHandler) await this.enqueueSteeringDelivery(discussion.active, input);
+        else discussion.active.queuedSteering.push(input);
+      } catch (error) {
+        this.failCommittedActiveTurn(discussion.active, error);
+      }
+    }
     await this.core.publishRecordedNotification(notification, { awaitObservers: false }).catch(() => this.traceUserInput('settlement-publication-failed', settlement));
     if (this.activeTurns.get(request.threadId)?.turnId === request.turnId) {
       await this.setInputWaitingStatus(request.threadId, false).catch(() => this.traceUserInput('status-publication-failed', settlement));
     }
-    if (settlement.outcome === 'answered' && response) pending.resolve({ ...response, outcome: 'answered', deadlineAt: request.deadlineAt });
+    if ((settlement.outcome === 'answered' || settlement.outcome === 'discussed') && response) pending.resolve({
+      hostGeneration: request.hostGeneration, threadId: request.threadId, turnId: request.turnId, itemId: request.itemId,
+      outcome: settlement.outcome, deadlineAt: request.deadlineAt, intent: response.intent, answers: response.answers,
+      ...(settlement.messageItemId ? { messageItemId: settlement.messageItemId } : {}),
+    });
     else if (settlement.outcome === 'timedOut') pending.resolve({
       hostGeneration: request.hostGeneration, threadId: request.threadId, turnId: request.turnId, itemId: request.itemId,
       outcome: 'timedOut', deadlineAt: request.deadlineAt,
@@ -2017,7 +2075,9 @@ function errorCode(error: Error): TurnErrorCode | undefined {
 }
 
 function equalInputAnswers(left: RequestUserInputResponse, right: RequestUserInputResponse): boolean {
-  return left.answers.length === right.answers.length && left.answers.every((answer) => right.answers.some((candidate) =>
+  return left.submissionId === right.submissionId && left.intent === right.intent
+    && JSON.stringify(left.message) === JSON.stringify(right.message)
+    && left.answers.length === right.answers.length && left.answers.every((answer) => right.answers.some((candidate) =>
     answer.questionId === candidate.questionId && answer.optionLabel === candidate.optionLabel && answer.otherText === candidate.otherText
     && answer.skipped === candidate.skipped));
 }

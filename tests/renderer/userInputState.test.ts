@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { RequestUserInputRequest, UserInputReadResponse, UserInputSettlement } from '../../src/core/agent/protocol';
 import { userInputKey } from '../../src/core/agent/userInput';
-import { ThreadUserInputState, recoveryText } from '../../src/renderer/agent/store/userInputState';
+import { ThreadUserInputState, activeInputAnswers, recoveryText } from '../../src/renderer/agent/store/userInputState';
 
 const request = (itemId = 'question-1', revision = 1, threadId = 'thread-1'): RequestUserInputRequest => ({
   hostGeneration: 'host-1', threadId, turnId: 'turn-1', itemId, revision, deadlineAt: Date.now() + 60_000, autoResolutionMs: 60_000,
@@ -16,6 +16,7 @@ const pendingRead = (pending: RequestUserInputRequest): UserInputReadResponse =>
 const settlement = (pending: RequestUserInputRequest, outcome: UserInputSettlement['outcome'] = 'timedOut'): UserInputSettlement => ({
   hostGeneration: pending.hostGeneration, threadId: pending.threadId, turnId: pending.turnId, itemId: pending.itemId,
   revision: pending.revision + 1, deadlineAt: pending.deadlineAt, outcome,
+  ...(outcome === 'answered' ? { submitted: { submissionId: 'submit-1', intent: 'answer' as const, answers: [{ questionId: 'scope', optionLabel: 'Full' }, { questionId: 'schedule', skipped: true as const }] } } : {}),
 });
 function clear(owner: ThreadUserInputState, pending: RequestUserInputRequest, outcome: UserInputSettlement['outcome'] = 'timedOut') {
   const settled = settlement(pending, outcome);
@@ -36,7 +37,7 @@ describe('session user input projection', () => {
     const owner = new ThreadUserInputState(async () => pendingRead(question), () => {}, () => false);
     ask(owner, question);
     owner.updateDraft(question, { answers: { scope: { optionLabel: 'Full' }, schedule: { otherText: 'Not ready to share', skipped: true } }, step: 1 });
-    const accepted = { ...settlement(question, 'answered'), skippedQuestionIds: ['schedule'] };
+    const accepted = settlement(question, 'answered');
     const response = { state: { ...pendingRead(question).state, revision: 2, pending: null, settled: accepted }, observed: accepted };
     owner.applyRead(response, question);
     const key = userInputKey(question);
@@ -166,4 +167,36 @@ describe('session user input projection', () => {
     expect(owner.getSnapshot().userInputDrafts.has(userInputKey(question))).toBe(false);
     expect(owner.getSnapshot().userInputDrafts.has(userInputKey(other))).toBe(true);
   });
+});
+
+test('accepted content releases only exact submitted values and leaves newer edits and inactive alternatives recoverable', () => {
+  const question = request();
+  const owner = new ThreadUserInputState(async () => pendingRead(question), () => {}, () => false);
+  ask(owner, question);
+  owner.updateDraft(question, { answers: { scope: { optionLabel: 'Full', otherText: 'An inactive alternative', selection: 'option' },
+    schedule: { otherText: 'A new edit', selection: 'text' } } });
+  expect(activeInputAnswers(owner.getSnapshot().userInputDrafts.get(userInputKey(question))!)).toEqual([
+    { questionId: 'scope', optionLabel: 'Full' }, { questionId: 'schedule', otherText: 'A new edit' },
+  ]);
+  const accepted = { ...settlement(question, 'answered'), submitted: { submissionId: 'submit-1', intent: 'continue' as const,
+    answers: [{ questionId: 'scope', optionLabel: 'Full' }, { questionId: 'schedule', otherText: 'The submitted edit' }] } };
+  owner.applyRead({ state: { ...pendingRead(question).state, revision: 2, pending: null, settled: accepted }, observed: accepted });
+  const retained = owner.getSnapshot().userInputDrafts.get(userInputKey(question))!;
+  expect(recoveryText(retained)).toContain('An inactive alternative');
+  expect(recoveryText(retained)).toContain('A new edit');
+  expect(recoveryText(retained)).not.toContain('Full');
+});
+
+test('removing added recovery content makes it available again and an unrelated message cannot discard it', () => {
+  const question = request();
+  const owner = new ThreadUserInputState(async () => pendingRead(question), () => {}, () => false);
+  ask(owner, question);
+  owner.updateDraft(question, { answers: { scope: { otherText: 'Preserve this' } } });
+  clear(owner, question);
+  const key = userInputKey(question);
+  owner.markAdded(key);
+  owner.syncMessage(question.threadId, 'An unrelated message');
+  expect(owner.getSnapshot().userInputDrafts.get(key)?.addedToMessage).toBe(false);
+  owner.acceptMessage(question.threadId, [key]);
+  expect(owner.getSnapshot().userInputDrafts.has(key)).toBe(true);
 });

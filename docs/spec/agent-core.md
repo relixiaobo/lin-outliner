@@ -997,7 +997,7 @@ grouped by the concept they own:
 - `turn/*`: start, steer, and interrupt
 - `goal/*`: get, create, and update
 - `userInput/read`: bounded current request state and an optional exact prior settlement
-- `userInput/respond`: accept an exact pending answer or return its same-answer receipt
+- `userInput/respond`: accept an exact pending answer, Continue, or discussion submission and return its receipt
 
 All input and output crosses strict codecs. Unknown fields, invalid UUIDv7 IDs,
 invalid state transitions, and impossible terminal facts fail closed. Thread
@@ -1209,27 +1209,41 @@ it does not complete a Turn, release an executing Task/run slot, or mark results
 read. Existing Automation execution admission remains unchanged; the future
 scheduled-work consumer must consume this same settlement, not add a timer.
 
-Answer, timeout, cancellation, tool abort, Turn termination, and shutdown share
+Answer, Continue, discussion, timeout, cancellation, tool abort, Turn termination, and shutdown share
 one per-Thread input mutex. Answer validation checks the exact identity, complete
 answer-or-skip set, live execution, and Host clock. Each question has exactly one
 option, non-empty Other text, or an explicit `skipped: true` entry. A skip carries
-no answer text and grants no authority. Skipping the last step submits the form
-immediately, without waiting for the deadline. The serialized check orders competing
+no answer text and grants no authority. Skipping and navigation only edit local
+drafts, including on the last question; explicit Send or Continue submits. The serialized check orders competing
 transitions; the durable settlement append commits acceptance. Only then does
 the owner remove pending state, publish the settlement, clear the waiting flag,
 and resolve the tool once. A lost reply or append acknowledgement reconciles to
-that receipt. Duplicate same-answer requests succeed consistently; conflicting,
+that receipt. Duplicate identical submission IDs, intents, answers, and messages succeed consistently; conflicting,
 wrong-Thread, or expired submissions cannot mutate a newer request. A write
 failure before answer commitment keeps the original request answerable. A failed
 request publication or non-answer settlement releases the tool with a visible
 failed state even if recording is unavailable. Notification/status publication
 failure cannot undo committed acceptance or strand the execution Promise.
 
-`userInput/requested` carries the request and ordering. `userInput/resolved`
-retains the validated response and carries an answered settlement (explicit form
-submission, including any skipped questions). Its optional `skippedQuestionIds`
-contains only the skipped IDs, allowing exact-receipt reconciliation to release
-submitted answers while preserving withheld local text;
+`userInput/requested` carries the request and ordering. Each submitted response
+has a client submission ID and an explicit `answer`, `continue`, or `discuss`
+intent. `userInput/resolved` records ordinary answer/Continue responses. Their
+settlements contain the exact submitted ID, intent, and answer-or-skip set so
+reconciliation releases only submitted local content; inactive free text and
+newer edits are retained. Continue ends clarification and uses active answers,
+including the current field, within existing authorization.
+
+Discussion submits an actual reader message through the existing renderer input
+and attachment admission. The ordinary completed-item batch carries a `userInput`
+resolution alongside that canonical message and its context evidence. One durable
+Rollout append accepts both; there is no separate Skip followed by Send. The
+recorder adopts the committed Items, binds the client message ID, and delivers
+steering before releasing the question Promise. The `discussed` result identifies
+the message Item and active answers without copying the message into a second
+user record. Admission and Item preparation recheck the deadline before the write;
+timeout or cancellation winning first transmits no message. An acknowledged loss
+recovers the exact receipt and heals projection from the same Rollout.
+
 `userInput/cleared` carries timed-out, cancelled, or failed settlement without
 inventing an answer. Snapshots expose exact outcomes independently of delivery.
 A new Host generation follows interrupted-Turn recovery and never revives

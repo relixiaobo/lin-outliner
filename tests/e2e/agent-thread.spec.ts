@@ -5184,19 +5184,21 @@ test.describe('canonical agent Thread surface', () => {
     });
 
     const form = page.getByRole('form', { name: 'Input needed' });
-    await expect(form).toContainText('1 of 2');
+    await expect(composer).toBeFocused();
+    await page.getByRole('button', { name: 'Answer questions', exact: true }).click();
+    await expect(form).toContainText('0 of 2 answered');
     await expect(page.getByRole('textbox', { name: 'Message this Thread' })).toBeHidden();
     await form.getByRole('radio', { name: /Complete/ }).check();
     await form.getByRole('button', { name: 'Next' }).click();
-    await expect(form).toContainText('2 of 2');
-    await expect(form.getByRole('radio', { name: /Now/ })).toBeFocused();
+    await expect(form).toContainText('1 of 2 answered');
+    await expect(form.locator('.thread-user-input-step')).toBeFocused();
 
-    await form.getByRole('button', { name: 'Previous question' }).click();
+    await form.getByRole('button', { name: 'Scope', exact: true }).click();
     await expect(form.getByRole('radio', { name: /Complete/ })).toBeChecked();
     await form.getByRole('button', { name: 'Next' }).click();
-    await form.getByRole('radio', { name: 'Other' }).check();
-    await form.getByRole('textbox', { name: 'Other' }).fill('Every morning');
-    await form.getByRole('button', { name: 'Submit', exact: true }).click();
+    await form.getByRole('textbox', { name: 'Write an answer' }).fill('Every morning');
+    await form.getByRole('button', { name: 'Review answers', exact: true }).last().click();
+    await form.getByRole('button', { name: 'Send answers', exact: true }).click();
 
     const response = (await commandCalls(page)).filter((call) => call.cmd === 'userInput/respond').at(-1);
     expect(response?.args.answers).toEqual([

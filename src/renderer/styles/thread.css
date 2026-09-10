@@ -2858,7 +2858,7 @@
   gap: var(--space-2);
   align-items: start;
   border-radius: var(--radius-md);
-  background: var(--fill-1);
+  background: transparent;
   color: var(--text-soft);
   font-size: var(--font-ui-sm);
   line-height: var(--line-ui-sm);
@@ -2866,6 +2866,10 @@
 }
 
 .thread-user-input-options > label:hover {
+  background: var(--fill-2);
+}
+
+.thread-user-input-options > label:has(input:checked) {
   background: var(--fill-2);
 }
 
@@ -3324,4 +3328,129 @@
 .thread-user-input-recovery-state .thread-user-input-actions {
   flex-wrap: wrap;
   gap: var(--space-2);
+}
+
+.thread-user-input [hidden],
+.thread-composer-main[hidden] {
+  display: none;
+}
+
+.thread-user-input-nav,
+.thread-user-input-secondary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  min-width: 0;
+}
+
+.thread-user-input-nav {
+  flex: 1;
+  flex-wrap: nowrap;
+}
+
+.thread-user-input-nav > button {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-user-input-heading > .thread-user-input-countdown {
+  flex: 0 0 auto;
+}
+
+.thread-user-input-footer {
+  justify-content: space-between;
+  align-items: center;
+}
+
+.thread-user-input-primary-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.thread-user-input-tab {
+  min-width: 0;
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-soft);
+  font: inherit;
+  font-size: var(--font-meta);
+  text-align: start;
+  overflow-wrap: anywhere;
+  user-select: none;
+}
+
+.thread-user-input-tab:hover {
+  color: var(--text-strong);
+}
+
+.thread-user-input-tab[aria-current] {
+  background: var(--fill-2);
+  color: var(--text-strong);
+}
+
+.thread-user-input-tab:focus-visible,
+.thread-user-input-other:focus-visible,
+.thread-user-input-recoveries > summary:focus-visible {
+  box-shadow: var(--focus-ring-shadow);
+}
+
+.thread-user-input-text-label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  color: var(--text-soft);
+  font-size: var(--font-meta);
+}
+
+textarea.thread-user-input-other {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-2);
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-strong);
+  font: inherit;
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+  resize: vertical;
+}
+
+.thread-user-input-strip {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-1);
+  border-bottom: 1px solid var(--separator);
+  color: var(--text-soft);
+  font-size: var(--font-meta);
+}
+
+.thread-user-input-review {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.thread-user-input-review p {
+  margin: var(--space-1) var(--space-2);
+  color: var(--text-strong);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: var(--font-ui-sm);
+}
+
+.thread-user-input-recoveries > summary {
+  user-select: none;
+  font-size: var(--font-meta);
+}
+
+.thread-user-input-recoveries > .thread-user-input-recovery {
+  margin-top: var(--space-2);
 }

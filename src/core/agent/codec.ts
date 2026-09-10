@@ -959,7 +959,7 @@ export function decodeAgentCoreNotification(value: unknown): AgentCoreNotificati
       break;
     }
     case 'items/completed': {
-      exactKeys(record, ['type', 'threadId', 'turnId', 'items', 'completedAt'], 'notification');
+      exactKeys(record, ['type', 'threadId', 'turnId', 'items', 'completedAt', 'userInput'], 'notification');
       const items = arrayValue(record.items, 'notification.items').map((item, index) => {
         const decoded = decodeThreadItem(item);
         if (executionStatusOf(decoded) === 'inProgress') {
@@ -970,12 +970,23 @@ export function decodeAgentCoreNotification(value: unknown): AgentCoreNotificati
       if (items.length === 0) fail('notification.items', 'must not be empty');
       const itemIds = items.map((item) => item.id);
       if (new Set(itemIds).size !== itemIds.length) fail('notification.items', 'must not contain duplicate Item ids');
+      const userInput = record.userInput === undefined ? undefined : decodeUserInputResolution(record.userInput);
+      if (userInput) {
+        const message = items.find((item) => item.id === userInput.settlement.messageItemId);
+        if (userInput.settlement.outcome !== 'discussed' || userInput.settlement.threadId !== record.threadId
+          || userInput.settlement.turnId !== record.turnId || message?.type !== 'userMessage'
+          || message.author.kind !== 'reader' || message.clientId !== userInput.response.submissionId
+          || items.filter((item) => item.type === 'userMessage').length !== 1) {
+          fail('notification.userInput', 'discussion must atomically include its one reader message in the same Turn');
+        }
+      }
       result = {
         type,
         threadId: uuidV7(record.threadId, 'notification.threadId'),
         turnId: uuidV7(record.turnId, 'notification.turnId'),
         items,
         completedAt: finiteNumber(record.completedAt, 'notification.completedAt'),
+        ...(userInput ? { userInput } : {}),
       };
       break;
     }
@@ -1012,18 +1023,11 @@ export function decodeAgentCoreNotification(value: unknown): AgentCoreNotificati
         fail('notification.settlement', 'control-plane ids must match the notification envelope');
       }
       if (type === 'userInput/resolved') {
-        const response = decodeRequestUserInputResponse(record.response);
-        if (!sameUserInput(settlement, response) || settlement.outcome !== 'answered') {
-          fail('notification.response', 'must match the answered settlement');
-        }
-        const skipped = response.answers.filter((answer) => answer.skipped).map((answer) => answer.questionId);
-        if (skipped.length !== (settlement.skippedQuestionIds?.length ?? 0)
-          || skipped.some((id) => !settlement.skippedQuestionIds?.includes(id))) {
-          fail('notification.settlement', 'skipped question ids must match the accepted response');
-        }
+        const { response } = decodeUserInputResolution({ response: record.response, settlement });
+        if (settlement.outcome !== 'answered') fail('notification.settlement', 'discussion requires its atomic message batch');
         result = { type, threadId, turnId, itemId, response, settlement };
       } else {
-        if (settlement.outcome === 'answered') fail('notification.settlement', 'answered requests require a response');
+        if (settlement.outcome === 'answered' || settlement.outcome === 'discussed') fail('notification.settlement', 'accepted requests require a response');
         result = { type, threadId, turnId, itemId, settlement };
       }
       break;
@@ -3321,31 +3325,54 @@ function decodeUserInputIdentity(value: unknown): UserInputIdentity {
 
 export function decodeRequestUserInputResult(value: unknown): RequestUserInputResult {
   const record = recordValue(value, 'userInput result');
-  const outcome = enumValue(record.outcome, ['answered', 'timedOut'], 'userInput result.outcome');
-  exactKeys(record, [...USER_INPUT_IDENTITY_KEYS, 'deadlineAt', 'outcome', ...(outcome === 'answered' ? ['answers'] : [])], 'userInput result');
+  const outcome = enumValue(record.outcome, ['answered', 'discussed', 'timedOut'], 'userInput result.outcome');
+  exactKeys(record, [...USER_INPUT_IDENTITY_KEYS, 'deadlineAt', 'outcome',
+    ...(outcome === 'timedOut' ? [] : ['answers', 'intent', 'messageItemId'])], 'userInput result');
   const identity = readUserInputIdentity(record);
   const deadlineAt = nonNegativeInteger(record.deadlineAt, 'userInput result.deadlineAt');
   if (outcome === 'timedOut') return deepFreeze({ ...identity, deadlineAt, outcome });
-  return deepFreeze({ ...decodeRequestUserInputResponse({ ...identity, answers: record.answers }), deadlineAt, outcome });
+  const intent = enumValue(record.intent, ['answer', 'continue', 'discuss'], 'userInput result.intent');
+  if ((outcome === 'discussed') !== (intent === 'discuss')) fail('userInput result.intent', 'must match its outcome');
+  const messageItemId = record.messageItemId === undefined ? undefined : stringValue(record.messageItemId, 'userInput result.messageItemId');
+  if ((outcome === 'discussed') !== (messageItemId !== undefined)) fail('userInput result.messageItemId', 'required only for discussion');
+  return deepFreeze({ ...identity, deadlineAt, outcome, intent, answers: decodeUserInputAnswers(record.answers),
+    ...(messageItemId === undefined ? {} : { messageItemId }) });
 }
 
 function decodeUserInputSettlement(value: unknown): UserInputSettlement {
   const record = recordValue(value, 'userInput settlement');
-  exactKeys(record, [...USER_INPUT_IDENTITY_KEYS, 'revision', 'deadlineAt', 'outcome', 'skippedQuestionIds'], 'userInput settlement');
-  const outcome = enumValue(record.outcome, ['answered', 'timedOut', 'cancelled', 'failed'], 'userInput.outcome');
-  const skippedQuestionIds = record.skippedQuestionIds === undefined ? undefined
-    : arrayValue(record.skippedQuestionIds, 'userInput.skippedQuestionIds').map((id) => snakeCaseId(id, 'userInput.skippedQuestionIds'));
-  if (skippedQuestionIds && (outcome !== 'answered' || skippedQuestionIds.length < 1 || skippedQuestionIds.length > 3
-    || new Set(skippedQuestionIds).size !== skippedQuestionIds.length)) {
-    fail('userInput.skippedQuestionIds', 'requires one to three unique skipped questions in an accepted response');
+  exactKeys(record, [...USER_INPUT_IDENTITY_KEYS, 'revision', 'deadlineAt', 'outcome', 'submitted', 'messageItemId'], 'userInput settlement');
+  const outcome = enumValue(record.outcome, ['answered', 'discussed', 'timedOut', 'cancelled', 'failed'], 'userInput.outcome');
+  const accepted = outcome === 'answered' || outcome === 'discussed';
+  if (accepted !== (record.submitted !== undefined)) fail('userInput.submitted', 'required only for an accepted response');
+  let submitted: UserInputSettlement['submitted'];
+  if (record.submitted !== undefined) {
+    const fields = recordValue(record.submitted, 'userInput.submitted');
+    exactKeys(fields, ['submissionId', 'intent', 'answers'], 'userInput.submitted');
+    submitted = { submissionId: stringValue(fields.submissionId, 'userInput.submissionId'),
+      intent: enumValue(fields.intent, ['answer', 'continue', 'discuss'], 'userInput.intent'),
+      answers: decodeUserInputAnswers(fields.answers) };
+    if ((outcome === 'discussed') !== (submitted.intent === 'discuss')) fail('userInput.intent', 'must match its outcome');
   }
+  const messageItemId = record.messageItemId === undefined ? undefined : stringValue(record.messageItemId, 'userInput.messageItemId');
+  if ((outcome === 'discussed') !== (messageItemId !== undefined)) fail('userInput.messageItemId', 'required only for discussion');
   return {
-    ...readUserInputIdentity(record),
-    revision: positiveInteger(record.revision, 'userInput.revision'),
-    deadlineAt: nonNegativeInteger(record.deadlineAt, 'userInput.deadlineAt'),
-    outcome,
-    ...(skippedQuestionIds ? { skippedQuestionIds } : {}),
+    ...readUserInputIdentity(record), revision: positiveInteger(record.revision, 'userInput.revision'),
+    deadlineAt: nonNegativeInteger(record.deadlineAt, 'userInput.deadlineAt'), outcome,
+    ...(submitted ? { submitted } : {}), ...(messageItemId === undefined ? {} : { messageItemId }),
   };
+}
+
+function decodeUserInputResolution(value: unknown) {
+  const record = recordValue(value, 'userInput resolution');
+  exactKeys(record, ['response', 'settlement'], 'userInput resolution');
+  const response = decodeRequestUserInputResponse(record.response);
+  const settlement = decodeUserInputSettlement(record.settlement);
+  if (!sameUserInput(settlement, response) || !settlement.submitted
+    || JSON.stringify(settlement.submitted) !== JSON.stringify({ submissionId: response.submissionId, intent: response.intent, answers: response.answers })) {
+    fail('userInput resolution', 'receipt must describe the exact accepted response');
+  }
+  return { response, settlement };
 }
 
 export function decodeUserInputReadResponse(value: unknown): UserInputReadResponse {
@@ -3390,15 +3417,29 @@ function decodeRequestUserInputRequest(value: unknown): RequestUserInputRequest 
 
 function decodeRequestUserInputResponse(value: unknown): AgentCoreRequestByMethod['userInput/respond'] {
   const record = recordValue(value, 'userInput response');
-  exactKeys(record, [...USER_INPUT_IDENTITY_KEYS, 'answers'], 'userInput response');
-  const answers = arrayValue(record.answers, 'userInput response.answers');
+  exactKeys(record, [...USER_INPUT_IDENTITY_KEYS, 'submissionId', 'intent', 'answers', 'message'], 'userInput response');
+  const identity = readUserInputIdentity(record);
+  const intent = enumValue(record.intent, ['answer', 'continue', 'discuss'], 'userInput response.intent');
+  if ((intent === 'discuss') !== (record.message !== undefined)) fail('userInput response.message', 'required only for discussion');
+  let message: AgentCoreRequestByMethod['userInput/respond']['message'];
+  if (record.message !== undefined) {
+    const fields = recordValue(record.message, 'userInput response.message');
+    exactKeys(fields, ['input', 'userView', 'additionalContext'], 'userInput response.message');
+    const { threadId: _threadId, ...decoded } = decodeRendererTurnStartRequest({ ...fields, threadId: identity.threadId });
+    if (!decoded.input.length) fail('userInput response.message.input', 'must contain a message');
+    message = decoded;
+  }
+  return deepFreeze({ ...identity, submissionId: stringValue(record.submissionId, 'userInput response.submissionId'), intent,
+    answers: decodeUserInputAnswers(record.answers), ...(message ? { message } : {}) });
+}
+
+function decodeUserInputAnswers(value: unknown) {
+  const answers = arrayValue(value, 'userInput response.answers');
   if (answers.length < 1 || answers.length > 3) {
     fail('userInput response.answers', 'requires one to three answers');
   }
   const questionIds = new Set<string>();
-  return deepFreeze({
-    ...readUserInputIdentity(record),
-    answers: answers.map((entry, index) => {
+  return answers.map((entry, index) => {
       const answer = recordValue(entry, `userInput response.answers[${index}]`);
       exactKeys(answer, ['questionId', 'optionLabel', 'otherText', 'skipped'], `userInput response.answers[${index}]`);
       if ([answer.optionLabel, answer.otherText, answer.skipped].filter((value) => value !== undefined).length !== 1
@@ -3420,8 +3461,7 @@ function decodeRequestUserInputResponse(value: unknown): AgentCoreRequestByMetho
           ? {}
           : { otherText: stringValue(answer.otherText, `userInput response.answers[${index}].otherText`, true) }),
       };
-    }),
-  });
+    });
 }
 
 export function decodeRequestUserInputQuestions(value: unknown): readonly RequestUserInputQuestion[] {

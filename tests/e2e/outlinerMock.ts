@@ -52,6 +52,8 @@ export const ids = {
 } as const;
 
 interface MockFixtureOptions {
+  /** Drop discussion delivery after committing mock Host state for reconciliation tests. */
+  dropDiscussionNotifications?: boolean;
   initialLanguage?: 'en' | 'zh-Hans';
   dateField?: boolean;
   optionsField?: boolean;
@@ -993,6 +995,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         task?: unknown;
         request?: RequestUserInputRequest;
         settlement?: UserInputSettlement;
+        userInput?: import('../../src/core/agent/protocol').UserInputResolution;
       };
       if (event.type === 'userInput/requested' && event.request) {
         const request = event.request;
@@ -1005,6 +1008,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             settlement: { hostGeneration: request.hostGeneration, threadId: request.threadId, turnId: request.turnId, itemId: request.itemId,
               deadlineAt: request.deadlineAt, revision: request.revision + 1, outcome: 'timedOut' } });
         }, Math.max(0, request.deadlineAt - Date.now()));
+      }
+      if (event.type === 'items/completed' && event.userInput) {
+        const settled = (event.userInput as any).settlement;
+        mockUserInputs.set(settled.threadId, { state: { threadId: settled.threadId, hostGeneration: settled.hostGeneration,
+          revision: settled.revision, activeTurnId: settled.turnId, pending: null, settled }, observed: settled });
       }
       if ((event.type === 'userInput/resolved' || event.type === 'userInput/cleared') && event.settlement) {
         const settled = event.settlement;
@@ -1046,6 +1054,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           else turns[index] = turn;
         }
       }
+      if (options.dropDiscussionNotifications && event.type === 'items/completed' && event.userInput) return;
       for (const listener of agentCoreListeners) listener(clone(notification));
     };
     const emitAutomationNotification = (notification: unknown) => {
@@ -5162,11 +5171,19 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         if (method === 'userInput/respond') {
           const request = mockUserInputs.get(String(input.threadId))?.state.pending;
           if (!request || request.itemId !== input.itemId) throw new Error('Question is no longer pending');
-          const skippedQuestionIds = (input.answers as { questionId: string; skipped?: true }[]).filter((answer) => answer.skipped).map((answer) => answer.questionId);
-          emitAgentCoreNotification({ type: 'userInput/resolved', threadId: request.threadId, turnId: request.turnId, itemId: request.itemId,
-            response: input, settlement: { hostGeneration: request.hostGeneration, threadId: request.threadId, turnId: request.turnId,
-              itemId: request.itemId, deadlineAt: request.deadlineAt, revision: request.revision + 1, outcome: 'answered',
-              ...(skippedQuestionIds.length ? { skippedQuestionIds } : {}) } });
+          const submitted = { submissionId: input.submissionId, intent: input.intent, answers: input.answers };
+          const settlement = { hostGeneration: request.hostGeneration, threadId: request.threadId, turnId: request.turnId,
+            itemId: request.itemId, deadlineAt: request.deadlineAt, revision: request.revision + 1,
+            outcome: input.intent === 'discuss' ? 'discussed' : 'answered', submitted,
+            ...(input.intent === 'discuss' ? { messageItemId: `message-${input.submissionId}` } : {}) };
+          if (input.intent === 'discuss') {
+            emitAgentCoreNotification({ type: 'items/completed', threadId: request.threadId, turnId: request.turnId,
+              completedAt: ++now, items: [{ type: 'userMessage', id: settlement.messageItemId,
+                author: { kind: 'reader' }, content: (input.message as any).input, clientId: input.submissionId,
+                provenance: { originThreadId: request.threadId, originTurnId: request.turnId, originItemId: settlement.messageItemId } }],
+              userInput: { response: input, settlement } });
+          } else emitAgentCoreNotification({ type: 'userInput/resolved', threadId: request.threadId, turnId: request.turnId,
+            itemId: request.itemId, response: input, settlement });
           return clone(mockUserInputs.get(request.threadId)) as T;
         }
         throw new Error(`Unhandled Agent Core mock request: ${method}`);

@@ -4,24 +4,30 @@
 
 Ensure that whenever an Agent is waiting for a person's structured answer, that
 person can reach the corresponding question in the conversation composer.
+The person can answer, leave a question unanswered, continue with the information
+already provided, or discuss the question in ordinary language. These actions
+have explicit sending boundaries and never silently discard earlier answers.
 Reload, subscription loss, cancellation, and late replies must not leave an
 invisible question or a stale form that the Host can no longer accept. An
 unanswered question releases the Agent after a bounded wait instead of suspending
 the execution indefinitely.
 
 **Shape:** ONE complete feature in one PR. Authoritative pending state,
-snapshot/event synchronization, answer/cancellation/timeout settlement, composer
-recovery, and end-to-end validation ship together. This plan defines the proposed
-change;
+snapshot/event synchronization, answer/discussion/cancellation/timeout settlement,
+composer interaction, draft recovery, and end-to-end validation ship together.
+This plan is the consolidated proposed design; earlier interaction sketches are
+not independent authorities. It does not assert that the proposal is implemented;
 current behavior is owned by [Agent Core](../spec/agent-core.md) and
 [Thread rendering](../spec/agent-thread-rendering.md). Status and selected order
 live on [the board](../TASKS.md).
 
 ## Non-goals
 
-- Changing question content policy, replacing the existing option-or-Other form,
-  adding a modal, or using questions for permission requests. Explicit per-question
-  Skip is part of the existing step flow.
+- Adding a modal, an interview workspace, new question types, or a Settings panel.
+  Keep one to three questions and the existing option-or-free-text capability.
+- Using questions, silence, skips, or discussion as permission to perform work.
+- Durable or cross-device storage of unsent answer drafts. Retention is explicitly
+  limited to the current renderer session.
 - Automatically choosing an answer because the UI failed to show the form.
 - Replaying a tool call or model Turn to reconstruct a question, or reviving a
   historical request after its owning execution has ended.
@@ -40,6 +46,14 @@ settlement. A missing snapshot produces a reachable recovery state, not ordinary
 editable input while the Agent silently waits. A finite Host-owned deadline
 releases unanswered requests with an explicit timeout result.
 
+OBJ-2: A person who does not know an answer or does not want to answer can make
+progress without inventing an answer, abandoning earlier answers, or stopping the
+whole task. The question and useful choices dominate the visual hierarchy.
+
+OBJ-3: Incoming questions, expiry, and delivery failures preserve active typing,
+IME composition, selection, existing message content, and attachments. Only an
+explicit sending action transfers local content to the Agent.
+
 EVD-1: Inspection of the reported conversation's retained events found an
 in-progress `request_user_input` Item, `waitingOnUserInput`, and a valid
 `userInput/requested` event. No answer-resolution event followed. Approximately
@@ -49,21 +63,28 @@ interrupted. This proves Host admission and waiting, not successful UI delivery.
 EVD-2: Replaying that request through the renderer codec and `ThreadStore` while
 subscribed populated `userInputByThread`. Initializing a fresh store from a Thread
 already marked as waiting and its in-progress tool Item did not populate it.
-`ThreadStore.loadTurns` reads history, Goal, and configuration but no pending
-request snapshot. Live notification is currently the only form-population path.
+At the incident baseline, `ThreadStore.loadTurns` read history, Goal, and
+configuration but no pending request snapshot. Live notification was the only
+form-population path.
 
 EVD-3: Replaying the real interruption events after the request left the Thread
-idle with the old request still in `userInputByThread`. `rejectUserInput` removes
-Host pending state without publishing a request-cancellation event; renderer
-Turn completion does not remove the request. These are two reproducible defects,
+idle with the old request still in `userInputByThread`. At that baseline,
+`rejectUserInput` removed Host pending state without publishing a cancellation
+event; renderer Turn completion did not remove the request. These were two defects,
 independent of the unresolved location of the original notification loss.
 
 EVD-4: The user additionally requested that unanswered questions allow the Agent
-to continue after a limited wait. The current `autoResolutionMs` is optional,
-bounded from 60 to 240 seconds, and omitted in the reported request. Its present
-timeout handler synthesizes an Other answer for every question. The proposed
+to continue after a limited wait. At the incident baseline, `autoResolutionMs`
+was optional, bounded from 60 to 240 seconds, and omitted in the reported request.
+Its timeout handler synthesized an Other answer for every question. The proposed
 contract replaces optional unbounded waiting and synthetic answers with a default
 deadline and a distinct no-answer outcome.
+
+EVD-5: Source inspection of the local cc-2.1 reference found partial-answer
+submission, Chat about this, and a plan-only Skip interview and plan immediately
+action. Both conversational exits retain already answered context; plain Cancel
+aborts the main execution. Its delayed notification is a reminder, not the bounded
+deadline in this plan. These are reference behaviors, not usability-test results.
 
 CON-1: `TurnLifecycle` remains the pending-request and response owner. The current
 root-only, one-pending-question-call-per-Thread contract and exact Thread/Turn/Item
@@ -76,24 +97,34 @@ and a waiting flag alone cannot authorize a response. The clean-slate invariant
 and selected brownfield target are the same: snapshots recover state and events
 keep it current. Reuse the existing owners instead of introducing another ledger.
 
+CON-3: Hard constraints are process isolation, exact-once settlement, finite
+Host-owned deadlines, explicit sending, session-local unsent drafts, and the
+existing neutral design tokens and accessibility preferences. Forced editor
+replacement, an Other radio, last-step auto-submission, and blocking normal chat
+are changeable interaction choices. The selected target combines the existing
+Host ownership with a revised composer; a cosmetic form repair is insufficient.
+
 ### Decisions and requirements
 
 DEC-1: Make current input state a bounded Host-readable snapshot, with no pending
 request as an explicit value. Include the pending question's exact identity and
 an ordering token sufficient to reject stale reads/events. Cleared state carries
-the exact request identity and its answered, timed-out, cancelled, or failed
+the exact request identity and its answered, discussed, timed-out, cancelled, or failed
 outcome; absence alone does not prove which outcome occurred. Reconciliation can
 resolve the exact previously observed request through the same owner when newer
 requests have superseded it, without returning an unbounded settlement history.
 Supply state on initial conversation load and reattachment, not only when the
 tool first asks.
 
-DEC-2: Preserve the existing in-composer question form. Receiving or restoring a
-question replaces the editor with the established step flow, retaining the
-ordinary draft. There is no separate popup. Hiding the dock does not cancel or
-answer the request; reopening restores it and its current Host validity. Request
-answerability belongs to the Host; unsubmitted answer drafts belong to the
-renderer session and are retained independently of the live form under FR-13.
+DEC-2: Use one contextual question surface inside the existing composer dock.
+Show one question at a time with a compact question navigator. An idle, empty
+composer may reveal the form; an active editor, IME composition, existing message
+draft, or focus elsewhere is never displaced. Show a compact pending-question
+strip beside the ordinary editor instead, with Answer questions and More
+actions. Chat about this in More folds the form and focuses the preserved ordinary editor.
+Hiding the dock or switching editor modes sends nothing, does not cancel, and
+does not reset the deadline. Request answerability belongs to the Host;
+unsubmitted drafts belong to the renderer session under FR-13.
 
 DEC-3: Every question request has a finite deadline. Use 60 seconds for the whole
 one-to-three-question request by default; an explicit duration may use the
@@ -102,6 +133,46 @@ the default, never infinity. Start the deadline at Host acceptance, not UI
 visibility, so a lost notification cannot produce an unlimited wait. The default
 is a concrete implementation choice for the user's bounded-wait requirement;
 there is no new Settings panel.
+
+DEC-4: Combine compact question navigation and quiet remaining time on one line.
+Put the question first, then neutral option rows and an immediately editable
+Write an answer field. Only selected or hovered option rows have a fill. The
+footer shows Skip question, one primary Next / Review answers / Send action, and
+an unboxed More trigger. More contains Chat, Continue, and Stop. Do not repeat
+review navigation or expose a second row of secondary actions. The recommended option is a suggestion, never an answer
+until explicitly selected. Typing activates free text; selecting an option keeps
+inactive text locally. Back, Next, navigation, and Skip this question only change
+local state. A multi-question flow ends in a compact review listing answered and
+unanswered questions without a warning or completeness gate. A single answered question
+needs no extra review page, but still requires explicit Send answer.
+
+DEC-5: Offer Continue with answers in More from every question, review, and the pending strip;
+when nothing is answered, label it Continue without answers. Keep the answered
+count accessible and visible in the pending strip; explain that filled active answers will be sent and the rest left
+unanswered. This explicit action sends the active answers, including the current
+field, and continues authorized work without another interview round. There is
+no request-wide Skip all that discards earlier answers. Stop remains a separate
+existing execution control. Escape follows local overlay/focus dismissal and
+never silently submits or stops the task.
+
+DEC-6: Chat about this opens the normal editor locally; it does not make an empty
+model call asking what the person wants to clarify. Show compact question context
+and the count of active answers that will accompany the message. The explicit
+Send and discuss action submits the user's message, existing supported content
+parts, and those answers together, then ends this question request and lets the
+same Turn discuss the message. While a valid request is pending, ordinary message
+submission uses this same visible route; answering or skipping is not a prerequisite
+for sending a message. A message with no supported content parts cannot be sent; returning to the form is
+local and retains both drafts. No whole-Thread lock is held while the user types.
+
+DEC-7: Expiry removes answerability, not an active editing gesture. Keep a focused
+non-empty answer editor and its selection mounted as an unsent draft. Its primary
+action becomes Add to message, which sends nothing. Otherwise return to the
+ordinary editor and expose non-empty retained content through one Unsent answers
+shelf. Do not create recovery rows for empty skips or empty timeouts. Use subdued
+remaining time and one factual expiry announcement, without flashing, warning
+colors, or per-second screen-reader announcements. Only an authoritative timeout
+allows copy claiming that the Agent continued without these answers.
 
 FR-1: Expose the authoritative snapshot through the existing Agent Core control
 plane. Read request state and execution validity at one owner boundary. Waiting
@@ -122,7 +193,7 @@ window returning to focus may trigger one coalesced reconciliation of its active
 conversation to heal missed IPC. Do not poll the whole catalog. Concurrent reads
 use generations/revisions; switching Threads never paints another Thread's form.
 
-FR-4: Settle an answer, timeout, explicit cancellation, tool abort, Turn
+FR-4: Settle an answer, a submitted discussion message, timeout, explicit cancellation, tool abort, Turn
 interruption, Turn termination, or owner shutdown through one request lifecycle. Each accepted
 transition invalidates the exact request and emits authoritative state change.
 Do not fabricate an answer to represent cancellation. Preserve existing recorded
@@ -137,7 +208,8 @@ replies are rejected without modifying a newer request or launching another Turn
 FR-6: Response acceptance, request removal, event recording, and Promise
 resolution must have a defined commit boundary. If acceptance committed but its
 reply was lost, reconciliation must show the answered state and must not resume
-the model twice. Duplicate same-answer submissions settle consistently; a
+the model twice. The same rule applies to discussion and continue submissions.
+Duplicate same-response submissions settle consistently; a
 conflicting answer after acceptance is rejected. On write failure retain an
 answerable request or terminate it with a visible recoverable error, never a
 removed request with an unresolved execution Promise.
@@ -153,8 +225,9 @@ system resume before accepting another response.
 FR-8: When a known waiting state lacks request content, show a localized restoring
 state in the composer. If the read fails or the Host reports inconsistent state,
 show an inline error with Retry and the existing interrupt action. Preserve the
-draft, avoid an endlessly empty form or ordinary steering editor, and keep
-the user able to stop waiting. The Host deadline continues during UI recovery;
+ordinary editor and allow local typing; disable question-dependent sending only
+while the request's validity is unknown. Never silently queue a message behind an
+invisible question. The user can retry or stop waiting. The Host deadline continues during UI recovery;
 failure to render a question cannot extend it. No failure path invents an answer.
 
 FR-9: Record bounded diagnostics for request publication, snapshot reconciliation,
@@ -169,6 +242,8 @@ clear pending state, remove the waiting flag, and let the same active Turn
 continue. Do not select the recommended option or manufacture per-question Other
 text. Answered results retain the complete validated answer-or-skip set; timed-out
 results carry the request identity and deadline with no fabricated answers.
+Draft selections and partial free text are not submitted on timeout, even when
+the user answered earlier steps locally.
 Distinguish this outcome from user cancellation, tool failure, and authorization.
 The model-tool output contract, decoder, context projection, and guidance must
 all preserve that distinction.
@@ -194,7 +269,7 @@ or start another Turn on its own.
 
 FR-13: Keep answer drafts in the renderer's Thread state owner, keyed by exact
 Host generation, Thread, Turn, and request Item identity, outside the form
-component's lifetime. Update selections, Other text, and step position as the
+component's lifetime. Update active choice, inactive free text, skips, and step position as the
 user edits them; do not wait for Submit or an unmount callback to capture them.
 Only the Host snapshot/lifecycle determines whether that request is answerable.
 The ordinary composer draft, attachments, and a newer question's answers remain
@@ -203,19 +278,23 @@ separate and are never replaced by settlement of an older request.
 | Observed request state | Live form | Local answer draft |
 | --- | --- | --- |
 | Pending | Display or restore the exact request | Preserve edits across step navigation, reconciliation, Thread switches, and dock/form remounts within the same renderer session |
-| Response accepted, including acceptance reconciled after a lost reply | Close the matching form | Release submitted answers after authoritative acceptance; retain only content withheld by skipped questions |
-| Timed out, by timer, resume, snapshot reconciliation, or rejected late submission | Close the matching form and show that no answer was submitted | Retain every unsubmitted selection and Other text as an unsent recovery entry, including earlier question steps |
-| Cancelled, interrupted, failed, or invalidated by Host restart | Close/fence the matching form and show the known reason | Retain unsent content for manual recovery; it grants no authority to revive the tool |
+| Answer, continue, or discussion accepted, including a lost reply reconciled later | Close the matching form | Release only the content actually included in that accepted submission; retain withheld free text, skipped drafts, and any newer local edits |
+| Timed out, by timer, resume, snapshot reconciliation, or rejected late submission | Fence submission; keep a focused non-empty editor mounted as a local draft, otherwise fold the form | Retain every unsubmitted selection and free-text value, including earlier question steps; never claim they were sent |
+| Cancelled, interrupted, failed, or invalidated by Host restart | Fence submission and show the known reason; preserve an active local editor | Retain unsent content for manual recovery; it grants no authority to revive the tool |
 | Settlement cannot be determined | Disable submission and reconcile through the existing recovery state | Preserve the draft without claiming acceptance or automatically retrying submission |
 
-An unsent recovery entry remains reachable beside the composer even while a
-newer question is displayed. It offers Review/copy and Discard for that exact
-request. When the ordinary composer is available, an explicit Add to message
+Use one compact Unsent answers shelf beside the composer, even while a newer
+question is displayed. It contains only non-empty retained content, grouped by
+request, and offers Review, Copy, and Discard for the selected entry. An explicit Add to message
 action inserts the selected recovery content with its question context, preserving
-existing text and attachments. It never sends the message. Only the ordinary
-Send action can steer or start execution. Keep the recovery entry until the user
-discards it or that explicit message is accepted; send failure retains it. A new
-question or a delayed old event cannot clear another entry.
+existing text and attachments, and opens the ordinary editor if needed. It never
+sends the message or answers a newer question. Show In message draft after adding
+the content and prevent duplicate insertion. Only explicit Send or Send and
+discuss can steer or start execution. Keep the recovery entry until discarded or
+its included message is accepted; send failure retains it. If the user removes
+the inserted content before sending, retain it in recovery. A new question or a
+delayed old event cannot clear another entry. Accepted receipts must identify the
+submitted content, not assume every local field of an answered question was sent.
 
 Draft retention is session-local: full renderer reload or application exit may
 discard unsent content, as in the existing draft contract. Neither is required
@@ -235,25 +314,57 @@ or uncertainty causes remain actionable under their existing owners. There is no
 scheduled-request timer or separate answer ledger; the scheduled-work plan owns
 only run presentation and admission around this shared lifecycle.
 
-FR-15: Offer Skip question at every step for a person who does not know or does
-not want to answer. Skip marks only the current question unanswered and advances;
-on the last question, Skip and submit sends the full answer-or-skip set immediately.
-Each submitted question carries exactly one option, Other text, or `skipped: true`.
-The explicit submission still uses the answered settlement; that state does not
-claim every question received an answer. The settlement identifies skipped
-questions so reconciliation releases only submitted answers and retains withheld
-local text in a skipped recovery entry. Empty skips need no recovery entry.
-Back preserves the skipped state; selecting an answer replaces it. No skipped
-draft content crosses the Host boundary. Skips grant no authorization and do not
-automatically trigger the same question again. They use the same identity,
-deadline, cancellation, and exactly-once acceptance boundary as ordinary answers.
+FR-15: Offer Skip this question at every step. It marks only the current question
+unanswered and advances locally; on the last step it opens the review, including
+for a skipped single question. It never submits. Navigation can visit any question
+or the review without completing earlier questions. Back retains the active skip;
+choosing or typing an answer replaces it without deleting inactive text.
+
+Send answer, Send answers, and Continue with answers serialize active selections
+or non-empty active free text plus explicit `skipped: true` entries for every
+remaining question. Empty skips create no recovery item. Skipped or inactive text
+stays local. Continue without answers explicitly sends only skips when no active
+answer exists. Normal submission and early Continue are distinct user intents:
+early Continue tells the Agent to end clarification and use available information
+within existing authorization. Neither the runtime nor its guidance automatically
+re-asks skipped questions. All paths use the same identity, deadline, cancellation,
+and exactly-once acceptance boundary. All-unanswered review uses Continue without
+answers, without an alarming incomplete-form warning or a confirmation dialog.
+
+FR-16: Discussion is an explicit response mode, distinct from answered, timed-out,
+and cancelled outcomes. Opening Chat about this is local and leaves the deadline
+running. Send and discuss submits one bounded envelope containing the exact
+request identity, the visible active answer-or-skip set, and the ordinary message
+using existing supported content parts. The surface previews what accompanies
+the message; hidden inactive or skipped draft text is excluded.
+
+Acceptance settles the request, records the user's message exactly once through
+the existing conversation record owner, and supplies both the message and answer
+context to the same Turn before it resumes. It must not be implemented as an
+unrelated Skip call followed by an ordinary Send that can fail halfway or open a
+second Turn. Existing attachment validation and user visibility still apply.
+The Agent responds to the actual message and may reformulate only where that
+discussion changes the need; it does not send an empty clarification invitation
+or repeat the same questionnaire automatically. Discussion is not authorization.
+
+Lost acknowledgement reconciles the exact receipt before any retry. Known
+pre-acceptance failure retains both drafts and permits retry while still pending;
+unknown acceptance disables resubmission until reconciled. If timeout wins the
+race, no discussion message or local answer is transmitted. Keep the ordinary
+draft and explain that it was not sent; after reconciliation, an explicit normal
+Send may continue the conversation. There is no automatic conversion of a failed
+question response into a new Turn. Stop fences this route under FR-12 as well.
 
 ### Flows, UI behavior, and recovery
 
 FLOW-1: The Agent asks a valid question. The Host accepts it, publishes pending
-state, and awaits its result. The composer displays the question, options, Other,
-and the existing multi-step controls. Submission resolves once and restores the
-ordinary draft while the same Turn continues.
+state, and awaits its result. An idle empty composer displays the question,
+options, direct free text, quiet remaining time, and local step controls. Selecting
+an option or typing does not submit. Multiple questions allow free navigation and
+finish at a review; a single answered question offers Send answer directly.
+Explicit submission resolves once and restores the ordinary draft while the same
+Turn continues. A user can instead Continue with answers at any step, keeping
+already filled active answers and leaving the rest unanswered.
 
 FLOW-2: The notification occurs before a new renderer subscribes, or while its
 subscription is absent. Initialization/reattachment reads the live snapshot and
@@ -274,25 +385,58 @@ existing execution recovery state, not a restored historical question.
 
 FLOW-5: The user gives no answer. The form shows its remaining wait time and
 explains that the Agent will continue without an answer. At the original deadline
-the Host returns the no-answer outcome once; the form closes and the ordinary
-composer returns with its existing draft intact. Any unsubmitted answer content
-remains in the recovery entry defined by FR-13, even if the user was typing when
-the timer fired and never pressed Submit. The Agent continues within the
-boundaries above. A hidden or failed form follows the same deadline; no UI
-acknowledgement is needed to release the wait. Unsubmitted option selections or
-partial Other text are not answers.
+the Host returns the no-answer outcome once. With no unsent content, the ordinary
+composer returns and no recovery item is created. With non-empty drafts and no
+active editor, the form folds into the shared recovery shelf. The Agent continues
+within the boundaries above. A hidden or failed form follows the same deadline;
+no UI acknowledgement is needed to release the wait. Unsubmitted selections or
+partial free text are not answers.
 
-FLOW-6: The deadline expires while the user is writing Other on a later question
-step. The live form closes; the recovery entry retains every edited step. The
-user reviews or copies it, or explicitly adds it to the ordinary message draft
-without replacing existing content. The user can then edit and send that new
-message. A newer question, a delayed snapshot, and failed Send do not destroy the
-unsent entry or submit it as an answer to another request.
+FLOW-6: The deadline expires while the user is typing on a later question step.
+The old tool becomes unanswerable, but the same editor, caret, selection, IME,
+and scroll remain. Its context becomes Unsent answer and the action becomes Add
+to message. All edited steps remain in local recovery. Adding appends question
+context and selected draft content to the ordinary message without replacing
+existing text or attachments or sending it. A newer question appears as a compact
+strip instead of displacing this editor. A delayed snapshot or failed Send cannot
+destroy retained content or silently submit it to another request.
 
-Respect focus within a displayed question step. Newly restored questions receive
-the existing question focus behavior; background updates must not repeatedly
-reset selections or steal focus. Keep Back/Next state, submission errors, Other
-input, draft retention, keyboard operation, light/dark styling, and accessibility
+FLOW-7: A question arrives during ordinary composition. The pending strip offers
+Answer questions and More, containing Continue with answers (or Continue without answers). The
+existing text, caret, attachments, and IME retain focus. The editor remains usable
+and shows Send and discuss with the question/answer context that accompanies the
+message. Sending resolves the question and delivers that actual message together;
+it does not require the user to first answer, skip, or stop. Arrival and opening
+the form themselves send nothing.
+
+FLOW-8: The person does not understand a question. Chat about this folds the form
+and opens the preserved ordinary editor, with a short invitation to explain and
+the answered-context summary outside its editable text. The person types and
+presses Send and discuss. The Agent receives the explanation and active answers
+once and responds to that message. If the person returns to questions without
+sending, both drafts remain and the original deadline still applies. If expiry
+happens first, the message remains an ordinary unsent draft; no hidden replay or
+automatic Send occurs.
+
+The action hierarchy is one primary step/send action, a light per-question Skip,
+and secondary request-wide Continue and Chat actions. On the review page, the
+primary Send answers replaces the duplicate Continue action. Use one static hint
+that sending includes only active answers; Continue also ends clarification.
+At narrow widths, secondary actions may wrap without horizontal scrolling. Keep
+the question in an opaque content surface, use neutral tokenized interaction
+states, and avoid stacked warning cards. A submitted outcome becomes a compact
+conversation record: answered counts, continued with partial/no answers,
+discussion message, or the factual no-answer expiry. Do not add a synthetic user
+message for a timeout or a separate banner to every historical question.
+
+Respect focus within a displayed question step. Explicit Answer questions focuses
+the question; automatic restoration never overrides another editing target.
+Background updates must not repeatedly reset selections or steal focus. Selection
+keys choose locally; Enter/Space activate a focused control, never submit merely
+because an option became selected. The ordinary editor retains its established
+newline/send shortcuts, routed visibly to discussion while pending. Escape first
+dismisses local UI; Stop stays an explicit execution action. Keep Back/Next state,
+submission errors, draft retention, light/dark styling, and accessibility
 preferences. Error and loading copy must describe the user's state rather than
 protocol revisions or internal request IDs.
 Show a subdued countdown or remaining-time label; screen readers must not
@@ -310,34 +454,41 @@ coordination required by the repository.
   acceptance ordering. Inspect `requestUserInput`, `resolveUserInput`, and
   `rejectUserInput`; do not only patch `UserInputRequest` presentation.
 - `src/core/agent/protocol.ts`, `codec.ts`, and `rendererProjection.ts`: bounded
-  snapshot, deadline, and ordered pending/cleared contracts; preserve response
-  validation.
+  snapshot, deadline, ordered pending/cleared contracts, response intent, and the
+  distinct discussion outcome; validate all response modes at the write boundary.
 - `src/core/agent/tools.ts`, `src/main/agent/runtime/ToolRuntime.ts`, and
   `src/main/agent/thread/TurnLifecycle.ts`: default bounded wait, explicit
-  no-answer tool outcome, provider-visible continuation guidance, and deadline
-  races without a fabricated answer or new model Turn.
+  no-answer tool outcome, atomic discussion/message acceptance, provider-visible
+  continuation guidance, and deadline races without a fabricated answer or new
+  model Turn. Use the existing conversation record owner for the user message.
 - Existing preload/desktop notification forwarding, if needed for snapshot
   wiring, observation diagnostics, or subscriber-error containment. Keep process
   isolation and renderer visibility boundaries intact.
 - `src/renderer/agent/store/threadStore.ts`, `components/ThreadDock.tsx`,
   `ThreadView.tsx`, and `UserInputRequest.tsx`: recovery, merge ordering, exact
-  clear semantics, session-owned per-request answer drafts, explicit recovery into
-  the ordinary composer, draft/focus preservation, and localized settlement/error
-  states. Make the form a consumer of draft state rather than its lifetime owner.
+  clear semantics, session-owned per-request answer drafts, direct text input,
+  local answer/discussion modes, a partial-answer review, one recovery shelf,
+  draft/focus preservation, and localized settlement/error states. Include the
+  existing `UserInputRecovery.tsx` and `store/userInputState.ts` owners. Make the
+  form a consumer of draft state rather than its lifetime owner.
 - Current core, model-runtime, tool-design, and Thread-rendering specifications:
   fold the final request lifecycle and snapshot behavior in the same feature PR.
 
 Implementation uses the current Thread lifecycle and
 [published record owners](../spec/agent-core.md#published-conversation-records).
 Preserve their final contracts while coordinating request protocol/codec and
-renderer-store changes. PR #670's future work-folder implementation also uses Thread
-and composer owners. Refresh live scopes at claim time.
+renderer-store changes. The future work-folder implementation also uses Thread
+and composer owners. The collision self-check found only this feature's #672
+claim open, with no other open-PR overlap. Discussion broadens its original
+response contract and must be included in the claim and shared-interface check
+before implementation; it is not merely a renderer-only change. No dependency,
+build, core document-command, main-owned board, or changelog edits are required.
 
 This feature and [background continuation](background-task-continuation-policy.md)
 can each ship alone. Select an integration order for their shared
 `ThreadService`, `TurnLifecycle`, protocol, and renderer-store edits; reliable
 questions do not depend on adopting new background agreements. The
-[scheduled-work plan](scheduled-work-redesign.md) consumes FR-14's answered,
+[scheduled-work plan](scheduled-work-redesign.md) consumes FR-14's answered, discussed,
 timed-out, cancelled, and failed settlements, distinct from unread results and
 run termination. It preserves its own run admission and introduces no second
 scheduled input owner. Whichever implementation lands later adapts the final
@@ -353,20 +504,29 @@ on the future scheduling UI to ship the conversation feature.
 | AC-3 | Switching Threads, hiding/reopening the dock, and repeated reconciliation preserve request identity and never show another Thread's question. |
 | AC-4 | Reordered pending/empty snapshots and requested/cleared events cannot erase a newer question or resurrect an old one. |
 | AC-5 | Interrupt, tool cancellation, normal/error Turn termination, and owner shutdown remove the matching form and settle the wait without inventing an answer. |
-| AC-6 | Submission racing with cancellation, double submission, and a lost acceptance reply produce at most one accepted answer and one model resumption. |
+| AC-6 | Answer, Continue, or discussion racing with cancellation, double submission, or a lost acceptance reply produce at most one accepted response, one recorded discussion message where applicable, and one model resumption. |
 | AC-7 | A waiting-state/snapshot failure shows Retry and an interrupt route; successful recovery restores a form or editor, never an invisible indefinite wait. |
 | AC-8 | Host restart does not revive historical questions; renderer reload under a live Host restores the request and retains its original deadline. |
 | AC-9 | Multi-step/Other answers, existing draft retention, focus, keyboard use, light/dark themes, and accessibility preferences remain functional. |
 | AC-10 | The reported event order reproduces neither a waiting Thread with no recoverable form nor an idle Thread with a stale form. Diagnostics identify transition boundaries without recording question/answer content. |
 | AC-11 | An omitted timeout releases an unanswered request after 60 seconds; explicit durations retain the 60-to-240-second bounds, and hiding/reloading the form or losing its notification cannot extend the deadline. |
-| AC-12 | Timeout clears the form/waiting flag, returns a typed no-answer result, and resumes the same active Turn once without selecting an option, fabricating Other text, or creating another Turn. |
+| AC-12 | Timeout fences live submission and clears the waiting flag, returns a typed no-answer result, and resumes the same active Turn once without sending local drafts, selecting an option, fabricating text, or creating another Turn. |
 | AC-13 | Answer versus deadline, delayed timer, system sleep/resume, cancellation, and late-response races yield one settlement; a stopped Turn is never revived. |
 | AC-14 | After timeout the Agent can continue reversible independent work, retains genuinely required decisions as unresolved, and does not automatically re-ask the same question or treat silence as approval. |
 | AC-15 | Automatic expiry while typing Other on a later step retains every edited step without Submit; hiding/remounting the form, Thread switching, and delayed snapshots do not lose that draft within the same renderer session. |
 | AC-16 | After expiry or interruption, Review/copy, Add to message, and Discard address the exact recovery entry. Adding preserves existing composer text/attachments and makes no model call; only explicit Send can execute, and failed Send retains the recovery content. |
-| AC-17 | A newer request, late settlement, or lost acceptance reply never moves or deletes another request's draft. Reconciled acceptance clears only its own draft; unavailable settlement retains content without claiming a submitted answer. |
+| AC-17 | A newer request, late settlement, or lost acceptance reply never moves or deletes another request's draft. Reconciled acceptance releases only content actually included in that submission, retaining inactive text and newer edits; unavailable settlement retains content without claiming acceptance. |
 | AC-18 | Timeout of a scheduled-run question removes its live form and active-question attention while preserving the same run and occupied foreground slot until actual execution settles. Unread results and unrelated issues remain unchanged; no timer or input owner is duplicated. |
-| AC-19 | A user can skip individual or all questions without answering. Back preserves skips; the last skip submits immediately. Other answers are retained in the submitted set, skipped text remains local and recoverable, and skip/deadline/cancellation races settle once. |
+| AC-19 | A user can skip individual or all questions. Skip and navigation make no response call; the last skip opens review. Explicit submission includes active answers and typed skips, withheld text remains local, and response/deadline/cancellation races settle once. |
+| AC-20 | At 320 CSS pixels, all questions and actions remain reachable without horizontal scrolling. Light/dark, contrast, reduced motion/transparency, neutral states, and visible keyboard focus follow existing design guards. |
+| AC-21 | Receiving or restoring a question while composing an ordinary message shows a compact strip without changing text, selection, attachments, or IME. With a valid pending request, Send and discuss remains available for valid message content. |
+| AC-22 | Typing activates free text, selecting an option preserves inactive text, and neither sends. Multi-question review lists answered and unanswered rows without blocking partial submission; a single selected answer still requires an explicit Send. |
+| AC-23 | Continue with answers on any step submits earlier and current active answers and skips the rest. With none answered, Continue without answers sends only skips. Both explicitly end clarification, preserve withheld drafts, and grant no authorization. |
+| AC-24 | Chat about this and returning to questions make no model call and preserve both drafts and the original deadline. Send and discuss delivers the visible message/content parts and active answers once; the Agent receives the actual explanation without a preliminary empty clarification turn. |
+| AC-25 | Injected write failure, lost acknowledgement, duplicate discussion Send, and timeout/Stop races never leave a settled question with a silently lost message or two recorded messages. Failure preserves drafts; late sending does not automatically become an ordinary Send or open a new Turn. |
+| AC-26 | Expiry while typing preserves the actual editor, caret, selection, IME, and scroll while disabling the expired tool route. New typing remains local and Add to message sends nothing. A new question does not displace that active draft editor. |
+| AC-27 | Empty outcomes create no recovery item; several non-empty outcomes share one shelf. Add to message preserves existing rich content and attachments, cannot insert twice, and failed Send or removing the inserted content retains recoverability. |
+| AC-28 | Escape dismisses local UI without answering, skipping, or stopping. Stop explicitly interrupts. The deadline is quiet and announced accessibly without per-second updates; outcome copy distinguishes submitted partial answers, discussion, timeout, and cancellation. |
 
 Extend the service test titled `round-trips request_user_input through the control
 plane and active Thread flag`, codec/projection tests, renderer `ThreadStore`
@@ -378,8 +538,12 @@ alive, then cancellation and late replies with controlled ordering.
 Use a controlled Host clock for deadline tests, plus one real tool-to-renderer
 timeout smoke; include missing `autoResolutionMs`, explicit bounds, no form
 delivery, multi-question partial drafts, and timer callbacks delayed by sleep.
-Drive draft tests through actual keystrokes, timer expiry without Submit, form
-unmount/remount, a newer request, and explicit ordinary Send with failure/retry.
+Drive draft tests through actual keystrokes and IME, timer expiry without Submit,
+form unmount/remount, a newer request, and ordinary/discussion Send with
+failure/retry. Verify partial Continue from the middle of a request, final-step
+skip without a call, free-text/option switching, and single-question explicit
+submission. Cover response-intent and discussion codecs, model projection,
+canonical conversation records, attachment validation, and exact receipt replay.
 Verify recovery preserves rich composer content and never emits an old-tool answer
 or a model request on its own. The later scheduled implementation must run AC-18
 through its shared owner and attention projection as well as the conversation UI.
@@ -398,13 +562,17 @@ two recovery/cleanup defects, but do not identify that transition. Investigate
 with the bounded diagnostics and real delivery test in FR-9/AC-1; do not block
 fixing the independently reproduced defects on speculation about a reload.
 
-The user requested bounded unanswered waits; the plan selects the concrete
-60-second default and preserves the existing maximum duration. Public
-snapshot/cancellation/timeout shape still requires the normal shared-interface
-collision check before dev writes against it.
+The bounded wait and existing maximum duration remain the selected constraint.
+Accept its tradeoff explicitly: typing does not extend the deadline, and the
+Agent may continue while the person finishes a local draft. The draft editor
+preserves that work within the renderer session. Full reload or application exit
+is outside the unsent-draft retention guarantee. The consolidated interaction
+and discussion response contract form one complete feature; the diagnostic OQ-1
+is not a start blocker.
 
 ## Implementation checklist
 
 - [ ] Reproduce delivery, recovery/cleanup failures, and the missing-deadline case using synthetic fixtures (EVD-1 through EVD-4, AC-1/2/10/11).
-- [ ] Settle the shared snapshot/ordering/timeout and independent draft-lifecycle contracts, then implement Host lifecycle and all existing consumers in one PR (FR-1 through FR-14).
-- [ ] Verify AC-1 through AC-18 against the consumers present at implementation, investigate the original loss boundary, fold specs, and complete the board/archive lifecycle; the later scheduled-work consumer owns its AC-18 integration fixture.
+- [ ] Settle snapshot/ordering, response intent/discussion, deadline, and independent draft-lifecycle contracts before their consumers, then implement the complete feature in one PR (FR-1 through FR-16).
+- [ ] Implement local answer/discussion modes, partial review/Continue, uninterrupted editing, and grouped recovery together (DEC-2 through DEC-7).
+- [ ] Verify AC-1 through AC-28 against the consumers present at implementation, investigate the original loss boundary, and fold the final behavior into current specs. Main owns the board/archive lifecycle; the later scheduled-work consumer owns its AC-18 integration fixture.

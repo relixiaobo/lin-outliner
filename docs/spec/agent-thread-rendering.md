@@ -433,8 +433,8 @@ state after resolution would make the two indistinguishable and strand a Thread
 on a model it never chose to pin.
 
 Reopening the Agent rail restores focus to the composer of an editable Thread.
-An active `request_user_input` keeps focus in its current step instead; opening
-the rail never steals focus from that blocking form.
+An explicitly opened question keeps its current step and focus. A pending
+question folded beside ordinary composition does not block composer focus.
 
 Collapsing the Agent rail keeps the same `ThreadView` mounted, preserving its
 composer draft, staged attachments, disclosure state, and scroll DOM. While
@@ -453,7 +453,8 @@ document or an external browser), a text selection the user still needs for
 copying, or any surface that installs its own focus target within a frame of
 the click (self-focusing popovers, dialogs, the inline message editor).
 Keyboard-activated clicks are never intercepted, and an active
-`request_user_input` suspends the hand-back entirely.
+An open question or retained-answer editor suspends the hand-back; a compact
+pending-question strip leaves normal composer focus behavior available.
 
 The same terminal model governs input history. A focused composer offers plain Up at
 its first visual line and plain Down at its last visual line as semantic history
@@ -652,51 +653,67 @@ that the paste was not inserted; it never recreates a pending atom whose request
 Explicit removal cancels the request. Names increase monotonically within the mounted draft
 and reset after a successful Send.
 
-`request_user_input` replaces the editor inside the existing composer surface
-with an in-dock form tied to one Item. It is a product-input surface, never a
-permission prompt or a modal over the transcript. Multiple questions use the
-established one-at-a-time flow with progress, Back/Next navigation, retained
-answers, and focus moved into each newly shown step. The form adapts only the
-canonical option-or-Other contract with an explicit Skip question action. Skip
-marks only the current question as unanswered and advances to the next step;
-on the last step, Skip and submit sends the completed answer-or-skip set. Back
-shows the skipped state, and choosing an answer replaces the skip. Any typed or
-selected content withheld by Skip stays local and is not part of that response.
-A response includes the exact Host generation,
-Thread, Turn, and Item identity and is rejected if the request is no longer
-pending or its original deadline has elapsed.
+`request_user_input` uses one contextual surface inside the existing composer,
+never a permission prompt or a modal. One question appears at a time with compact
+navigation and quiet remaining time on one line, neutral option rows, and directly
+editable free text. The footer exposes only Skip question, the primary Next /
+Review answers / Send action, and an unboxed More trigger. Chat, Continue, and
+Stop are menu actions; review is not repeated in the navigator. Only selected or
+hovered option rows have a fill. Recommended options are not selected automatically. Typing activates free
+text; choosing an option preserves inactive text. Navigation and Skip question
+change only local state. The last skip opens review; multi-question review lists
+answered and unanswered questions without a completeness gate. A single selected
+answer also requires explicit Send answer.
+
+Continue with answers is available in More from every question, review, and the
+compact pending strip. It submits active answers, including the current field, skips the remaining
+questions, and tells the Agent to end clarification. With no active answer it reads
+Continue without answers. It never discards earlier active answers. Stop is a
+separate execution action; Escape dismisses local question UI without submitting
+or stopping.
+
+An incoming question preserves an active editor, IME, existing message, and
+attachments. A compact pending strip offers Answer questions and More.
+An idle empty composer can reveal the question when focus is unclaimed. Chat
+about this locally folds the form and focuses the preserved ordinary editor.
+The strip describes the answer context accompanying the message. Send and discuss
+atomically submits the actual message and active answers, then resumes the same
+Turn in discussion; no preliminary empty clarification call is made. A pending
+question does not require answering/skipping before a message can be sent.
+Unknown request validity temporarily disables sending, not local typing.
 
 ThreadStore subscribes before snapshot reads and reconciles on initial load,
 subscription reattachment, Thread selection, dock reopening, visible-window
 focus, and a waiting notification without question content. Reads coalesce per
-Thread. Host generations are resynchronized, and per-Thread revisions reject
-stale snapshots/events. Matching Turn termination immediately fences a form;
-an older settlement cannot clear a newer question. A localized restoring/error
-state replaces ordinary input when question recovery is needed, with Retry and
-Interrupt Turn actions. The original deadline continues during recovery.
+Thread; generations and revisions reject stale snapshots/events. Matching Turn
+termination fences submission, and an older settlement cannot erase a newer
+question. Restoring/error states offer Retry and Stop while retaining local drafts.
+Exact receipts distinguish accepted, discussed, timed-out, cancelled, and failed
+requests; discussion arrives with its canonical completed-message batch.
 
-Answer drafts belong to ThreadStore's session state, keyed by exact request
-identity. Each edit updates options, Other text, and step position immediately;
-form remounting, Thread switching, and reconciliation preserve them. The ordinary
-rich composer draft and attachments stay independent. Confirmed acceptance
-releases that request's submitted answers. Authoritative skipped question IDs
-retain only withheld content as a skipped recovery entry; an empty skip needs no
-recovery entry. Expiry, cancellation, failure, or Host
-replacement retains unsent answers beside the composer, including every edited
-step. Unconfirmed settlement retains the draft and offers reconciliation without
-claiming acceptance. A subdued remaining-time label explains continuation without
-an answer; its ticks are not live screen-reader announcements.
+Answer drafts belong to ThreadStore outside the form lifetime, keyed by exact
+request identity. Selection, inactive text, skips, step, and local editor mode
+survive remounting and Thread switches within the renderer session. Acceptance
+releases only content equal to the actual submitted answer; withheld text and
+subsequent edits remain. Ordinary rich message drafts and attachments are separate.
+At expiry, no local answers are sent. A focused non-empty answer editor keeps its
+DOM node, caret, selection, IME, and scroll while becoming an unsent draft with
+Add to message. A newer question cannot displace that editor. Other expired forms
+fold, and empty outcomes create no recovery entry. The timer is subdued and its
+ticks are not live screen-reader announcements; only authoritative expiry can
+claim that no answer was submitted.
 
-Recovery entries remain reachable while another question is shown. Their native
-inline disclosure offers Review/copy and exact-entry Discard. When ordinary input
-is available, Add to message appends question context and answers to the existing
-rich document without replacing text or attachments, and never submits anything.
-The entry stays until Discard or successful explicit Send of the inserted content;
-a failed Send retains it. If the inserted text was removed or rewritten, the
-entry remains available for manual dismissal rather than guessing ownership of
-unrelated text. Thread deletion clears only that Thread's entries. Full renderer
-reload/application exit may discard drafts; they are never persisted in Rollout
-or transmitted before an explicit Submit/Send.
+One Unsent answers shelf groups non-empty retained requests, including while a
+new question is visible. Entries offer Review, Copy, Add to message, and Discard.
+Adding appends question context and content to the ordinary rich draft, preserves
+existing text/attachments, and sends nothing. In message draft prevents repeated
+insertion. Failed Send retains recovery; deleting inserted content restores its
+availability rather than clearing the entry on a later unrelated Send. Successful
+explicit Send releases only included unchanged recovery content. Thread deletion
+clears that Thread's entries. Full renderer reload or application exit may discard
+unsent drafts; these are never persisted in Rollout or sent before explicit
+submission. Reload still restores a live question from the Host and retains its
+original deadline; Host restart never revives the old request.
 
 Rename uses the shared `Dialog`; delete uses `ConfirmDialog`. Browser-native
 prompt and confirm APIs are not used. Fork creates and selects the new Thread

@@ -1679,6 +1679,7 @@ describe('Codex Agent Core protocol codec', () => {
       'goal/update': { threadId: THREAD_ID, status: 'complete' },
       'userInput/read': { threadId: THREAD_ID },
       'userInput/respond': {
+        submissionId: 'submit-1', intent: 'answer',
         threadId: THREAD_ID,
         turnId: TURN_ID,
         itemId: 'item-question',
@@ -2247,6 +2248,7 @@ describe('Codex Agent Core protocol codec', () => {
     })).toThrow('control-plane ids must match');
 
     const response = {
+      submissionId: 'submit-1', intent: 'answer',
       threadId: THREAD_ID,
       turnId: TURN_ID,
       itemId: 'item-question',
@@ -2279,18 +2281,18 @@ test('user input outcomes keep no-answer distinct and snapshots enforce one orde
   expect(decodeRequestUserInputResult(timedOut)).toEqual(timedOut);
   expect(() => decodeRequestUserInputResult({ ...timedOut, answers: [] })).toThrow('unknown fields');
   expect(() => decodeRequestUserInputResult({ ...timedOut, outcome: 'answered' })).toThrow();
-  const answered = { ...timedOut, outcome: 'answered', answers: [{ questionId: 'scope', optionLabel: 'Complete' }] };
+  const answered = { ...timedOut, outcome: 'answered', intent: 'answer', answers: [{ questionId: 'scope', optionLabel: 'Complete' }] };
   expect(decodeRequestUserInputResult(answered)).toEqual(answered);
   const skipped = { ...answered, answers: [{ questionId: 'scope', skipped: true }] };
   expect(decodeRequestUserInputResult(skipped)).toEqual(skipped);
   for (const answer of [{ questionId: 'scope', skipped: false }, { questionId: 'scope', skipped: true, otherText: 'Private draft' }]) {
     expect(() => decodeRequestUserInputResult({ ...skipped, answers: [answer] })).toThrow('exactly one');
   }
-  const settlement = { ...identity, revision: 2, deadlineAt: 60_000, outcome: 'answered', skippedQuestionIds: ['scope'] };
+  const settlement = { ...identity, revision: 2, deadlineAt: 60_000, outcome: 'answered', submitted: { submissionId: 'submit-1', intent: 'answer', answers: skipped.answers } };
   const notification = { type: 'userInput/resolved', threadId: THREAD_ID, turnId: TURN_ID, itemId: identity.itemId,
-    settlement, response: { ...identity, answers: skipped.answers } };
+    settlement, response: { ...identity, submissionId: 'submit-1', intent: 'answer', answers: skipped.answers } };
   expect(decodeAgentCoreNotification(notification)).toEqual(notification);
-  expect(() => decodeAgentCoreNotification({ ...notification, settlement: { ...settlement, skippedQuestionIds: ['wrong'] } })).toThrow('must match');
+  expect(() => decodeAgentCoreNotification({ ...notification, settlement: { ...settlement, submitted: { ...settlement.submitted, submissionId: 'wrong' } } })).toThrow('exact accepted response');
   const pending = { ...identity, revision: 1, deadlineAt: 60_000, autoResolutionMs: 60_000,
     questions: [{ id: 'scope', header: 'Scope', question: 'How broad?', options: [
       { label: 'Focused', description: 'One module.' }, { label: 'Complete', description: 'All modules.' },
@@ -2300,4 +2302,33 @@ test('user input outcomes keep no-answer distinct and snapshots enforce one orde
   expect(() => decodeUserInputReadResponse({ state: { ...state, activeTurnId: null }, observed: null })).toThrow('active Turn');
   expect(() => decodeUserInputReadResponse({ state: { ...state, hostGeneration: 'another-host' }, observed: null })).toThrow('ordering');
   expect(() => decodeUserInputReadResponse({ state: { ...state, revision: 0 }, observed: null })).toThrow('ordering');
+});
+
+test('discussion uses renderer admission and requires its canonical message in the same atomic receipt', () => {
+  const identity = { hostGeneration: 'host-1', threadId: THREAD_ID, turnId: TURN_ID, itemId: 'question-1' };
+  const response = { ...identity, submissionId: 'discussion-1', intent: 'discuss',
+    answers: [{ questionId: 'scope', skipped: true }], message: { input: [{ type: 'text', text: 'Explain the tradeoff.' }] } };
+  expect(decodeAgentCoreRequest('userInput/respond', response)).toEqual(response);
+  for (const message of [undefined, { input: [] }, { ...response.message, author: { kind: 'agent' } },
+    { ...response.message, additionalContext: { 'internal-context': 'injected' } }]) {
+    expect(() => decodeAgentCoreRequest('userInput/respond', { ...response, message })).toThrow();
+  }
+  expect(() => decodeAgentCoreRequest('userInput/respond', { ...response, intent: 'continue' })).toThrow('required only for discussion');
+  const settlement = { ...identity, revision: 2, deadlineAt: 60_000, outcome: 'discussed', messageItemId: 'item-1',
+    submitted: { submissionId: response.submissionId, intent: response.intent, answers: response.answers } };
+  const message = { ...allItems[0]!, clientId: response.submissionId, content: response.message.input };
+  const event = { type: 'items/completed', threadId: THREAD_ID, turnId: TURN_ID,
+    items: [message], completedAt: 200, userInput: { response, settlement } };
+  expect(decodeAgentCoreNotification(event)).toEqual(event);
+  expect(() => decodeAgentCoreNotification({ type: 'userInput/resolved', threadId: THREAD_ID, turnId: TURN_ID,
+    itemId: identity.itemId, response, settlement })).toThrow('atomic message batch');
+  expect(() => decodeAgentCoreNotification({ ...event, turnId: CHILD_TURN_ID })).toThrow('same Turn');
+  expect(() => decodeAgentCoreNotification({ ...event, items: [{ ...message, clientId: 'another-send' }] })).toThrow('one reader message');
+  expect(() => decodeAgentCoreNotification({ ...event, userInput: { response,
+    settlement: { ...settlement, submitted: { ...settlement.submitted, answers: [{ questionId: 'scope', otherText: 'Unsent draft' }] } } } })).toThrow('exact accepted response');
+  expect(() => decodeAgentCoreNotification({ ...event, items: [allItems[1]] })).toThrow('one reader message');
+  const result = { ...identity, deadlineAt: settlement.deadlineAt, outcome: 'discussed', intent: 'discuss',
+    answers: response.answers, messageItemId: message.id };
+  expect(decodeRequestUserInputResult(result)).toEqual(result);
+  expect(() => decodeRequestUserInputResult({ ...result, messageItemId: undefined })).toThrow('required only for discussion');
 });

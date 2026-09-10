@@ -11,6 +11,8 @@ import type {
   RendererAgentCoreNotification,
   ProviderRetryStatus,
   RequestUserInputAnswer,
+  RequestUserInputResponse,
+  UserInputSettlement,
   RequestUserInputRequest,
   JsonValue,
   RendererUserViewHints,
@@ -100,6 +102,7 @@ export type ThreadStoreListenerScheduler = (flush: () => void) => void;
 type ThreadStoreListenerDelivery = 'immediate' | 'frame';
 
 export class ThreadStore {
+  private readonly inputMessageContexts = new Map<string, readonly string[]>();
   readonly userInputs = new ThreadUserInputState(
     (threadId, observed) => this.client.agentCoreRequest('userInput/read', { threadId, ...(observed ? { observed } : {}) }),
     (projection) => this.patch(projection),
@@ -111,6 +114,20 @@ export class ThreadStore {
       status: waiting ? { type: 'active', activeFlags: ['waitingOnUserInput'] }
         : thread.status.type === 'active' ? { type: 'active', activeFlags: [] } : thread.status,
     })),
+    (settlement) => {
+      const id = settlement.submitted?.submissionId;
+      if (id) {
+        for (const key of this.inputMessageContexts.get(id) ?? []) acknowledgeThreadComposerContext(key);
+        this.inputMessageContexts.delete(id);
+      }
+      if (!settlement.messageItemId) return;
+      queueMicrotask(() => {
+        const turns = this.snapshot.turnsByThread.get(settlement.threadId);
+        if (turns && !turns.some((turn) => turn.items.some((item) => item.id === settlement.messageItemId))) {
+          void this.loadTurns(settlement.threadId).catch(() => undefined);
+        }
+      });
+    },
   );
   private readonly reconcileFocusedInput = () => {
     if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
@@ -631,17 +648,35 @@ export class ThreadStore {
     });
   }
 
+  async discussUserInput(request: RequestUserInputRequest, answers: readonly RequestUserInputAnswer[],
+    content: readonly ThreadUserContent[], userView: RendererUserViewHints, submissionId: string): Promise<TurnSubmitResponse> {
+    const additionalContext = pendingComposerAdditionalContext();
+    this.inputMessageContexts.set(submissionId, Object.keys(additionalContext));
+    while (this.inputMessageContexts.size > 128) this.inputMessageContexts.delete(this.inputMessageContexts.keys().next().value!);
+    const deduplicated = this.userInputs.settlement(request)?.submitted?.submissionId === submissionId;
+    const receipt = await this.respondToUserInput(request, answers, { intent: 'discuss', submissionId,
+      message: { input: normalizeUserContent(content), userView,
+        ...(Object.keys(additionalContext).length ? { additionalContext } : {}) } });
+    return { turn: null, turnId: request.turnId, acceptedItemId: receipt.messageItemId!, deduplicated };
+  }
+
   async respondToUserInput(
     request: RequestUserInputRequest,
     answers: readonly RequestUserInputAnswer[],
-  ): Promise<void> {
+    options: { intent?: RequestUserInputResponse['intent']; submissionId?: string; message?: RequestUserInputResponse['message'] } = {},
+  ): Promise<UserInputSettlement> {
+    const submissionId = options.submissionId ?? crypto.randomUUID();
     try {
-      const response = await this.client.agentCoreRequest('userInput/respond', { ...identityOf(request), answers });
+      const response = await this.client.agentCoreRequest('userInput/respond', { ...identityOf(request), answers,
+        submissionId, intent: options.intent ?? 'answer', ...(options.message ? { message: options.message } : {}) });
       this.userInputs.applyRead(response, request);
+      const receipt = response.observed;
+      if (receipt?.submitted?.submissionId !== submissionId) throw new Error('The response was not accepted.');
+      return receipt;
     } catch (error) {
       await this.userInputs.reconcile(request.threadId);
-      const draft = this.snapshot.userInputDrafts.get(userInputKey(request));
-      if (!draft || draft.outcome === 'skipped') return;
+      const receipt = this.userInputs.settlement(request);
+      if (receipt?.submitted?.submissionId === submissionId) return receipt;
       throw error;
     }
   }

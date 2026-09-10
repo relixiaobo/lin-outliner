@@ -268,10 +268,12 @@ describe('native turn kernel parity', () => {
     });
   });
 
-  test.each(['answered', 'timedOut', 'skipped'] as const)('preserves the canonical request_user_input %s outcome', async (kind) => {
+  test.each(['answered', 'timedOut', 'skipped', 'discussed'] as const)('preserves the canonical request_user_input %s outcome', async (kind) => {
     const outcome = kind === 'skipped' ? 'answered' : kind;
     const data = { outcome, hostGeneration: 'host-1', threadId: 'thread-1', turnId: 'turn-1', itemId: 'item-1', deadlineAt: 60_000,
-      ...(outcome === 'answered' ? { answers: [{ questionId: 'delivery', ...(kind === 'skipped' ? { skipped: true } : { optionLabel: 'Ship now' }) }] } : {}) };
+      ...(outcome !== 'timedOut' ? { intent: kind === 'discussed' ? 'discuss' : kind === 'skipped' ? 'continue' : 'answer',
+        answers: [{ questionId: 'delivery', ...(kind === 'skipped' ? { skipped: true } : { optionLabel: 'Ship now' }) }] } : {}),
+      ...(outcome === 'discussed' ? { messageItemId: 'reader-message-1' } : {}) };
     const runtime = await executeOneTool('request_user_input', async () => ({ kind: 'tenon', outcome: { ok: true }, data, content: [], details: {} }));
     expect(runtime.state.messages.find((message) => message.role === 'toolResult')).toMatchObject({
       isError: false, content: [{ text: JSON.stringify({ ok: true, data }) }],

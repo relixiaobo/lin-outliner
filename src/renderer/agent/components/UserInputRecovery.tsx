@@ -13,9 +13,11 @@ export function UserInputRecovery({ drafts, canAdd, onAdd, onDiscard, onRetry }:
 }) {
   const t = useT();
   const [copyError, setCopyError] = useState<string | null>(null);
-  if (!drafts.length) return null;
-  return <div className="thread-user-input-recoveries" aria-label={t.agent.thread.inputUnsent}>
-    {drafts.map((draft) => {
+  const retained = drafts.filter((draft) => draft.outcome !== 'pending' && recoveryText(draft));
+  if (!retained.length) return null;
+  return <details className="thread-user-input-recoveries">
+    <summary>{t.agent.thread.inputShelfCount({ count: retained.length })}</summary>
+    {retained.map((draft) => {
       const key = userInputKey(draft.request);
       const text = recoveryText(draft);
       const reason = draft.outcome === 'timedOut' ? t.agent.thread.inputExpired
@@ -24,19 +26,22 @@ export function UserInputRecovery({ drafts, canAdd, onAdd, onDiscard, onRetry }:
         : draft.outcome === 'failed' ? t.agent.thread.inputFailed
         : draft.outcome === 'invalidated' ? t.agent.thread.inputInvalidated : t.agent.thread.inputUnknown;
       return <details className="thread-user-input-recovery" key={key}>
-        <summary>{reason} {text ? t.agent.thread.inputReview : ''}</summary>
-        {text ? <pre>{text}</pre> : null}
+        <summary>{draft.request.questions[0]?.question}</summary>
+        <p>{reason}</p>
+        <pre>{text}</pre>
         <div className="thread-user-input-actions">
-          {text ? <Button size="sm" onClick={() => {
+          <Button size="sm" onClick={() => {
             setCopyError(null);
             void navigator.clipboard.writeText(text).catch(() => setCopyError(key));
-          }}>{t.agent.thread.inputCopy}</Button> : null}
-          {text && canAdd ? <Button size="sm" onClick={() => onAdd(draft)}>{t.agent.thread.inputAddToMessage}</Button> : null}
+          }}>{t.agent.thread.inputCopy}</Button>
+          <Button size="sm" disabled={!canAdd || draft.addedToMessage} onClick={() => onAdd(draft)}>
+            {draft.addedToMessage ? t.agent.thread.inputInMessage : t.agent.thread.inputAddToMessage}
+          </Button>
           {draft.outcome === 'unknown' ? <Button size="sm" onClick={onRetry}>{t.agent.thread.inputRetry}</Button> : null}
           <Button size="sm" onClick={() => onDiscard(key)}>{t.agent.thread.inputDiscard}</Button>
         </div>
         {copyError === key ? <p role="alert">{t.agent.thread.inputCopyError}</p> : null}
       </details>;
     })}
-  </div>;
+  </details>;
 }

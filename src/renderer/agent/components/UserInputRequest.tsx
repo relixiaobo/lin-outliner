@@ -1,29 +1,47 @@
-import type { UserInputDraft } from '../store/userInputState';
 import { useEffect, useRef, useState } from 'react';
-import type {
-  RequestUserInputAnswer,
-  RequestUserInputRequest as Request,
-} from '../../../core/agent/protocol';
+import type { RequestUserInputAnswer, RequestUserInputRequest as Request } from '../../../core/agent/protocol';
 import { useT } from '../../i18n/I18nProvider';
-import { BackIcon, ICON_SIZE } from '../../ui/icons';
 import { Button } from '../../ui/primitives/Button';
 import { IconButton } from '../../ui/primitives/IconButton';
+import { AnchoredActionMenu } from '../../ui/primitives/AnchoredActionMenu';
+import { MoreIcon } from '../../ui/icons';
+import { activeInputAnswers, recoveryText, type UserInputDraft } from '../store/userInputState';
 
+type DraftChange = Partial<Pick<UserInputDraft, 'answers' | 'step' | 'view'>>;
+
+export function UserInputMenu({ hasAnswers, disabled, onContinue, onChat, onStop }: {
+  hasAnswers: boolean; disabled: boolean; onContinue: () => void; onChat?: () => void; onStop: () => void;
+}) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const anchor = useRef<HTMLButtonElement>(null);
+  const select = (action: () => void) => () => { anchor.current?.focus(); action(); };
+  return <>
+    <IconButton ref={anchor} icon={MoreIcon} label={t.agent.thread.inputMore} aria-haspopup="menu" aria-expanded={open}
+      onClick={() => setOpen(!open)} />
+    {open ? <AnchoredActionMenu anchorRef={anchor} ariaLabel={t.agent.thread.inputMore} className="thread-action-menu"
+      itemLabelClassName="thread-action-menu-label" onClose={() => setOpen(false)} actions={[
+        ...(onChat ? [{ label: t.agent.thread.inputChat, onSelect: select(onChat), disabled }] : []),
+        { label: hasAnswers ? t.agent.thread.inputContinue : t.agent.thread.inputContinueEmpty, onSelect: select(onContinue), disabled },
+        { label: t.agent.thread.interrupt, onSelect: select(onStop) },
+      ]} /> : null}
+  </>;
+}
 interface UserInputRequestProps {
   readonly request: Request;
   readonly draft: UserInputDraft;
   readonly disabled?: boolean;
-  readonly onDraftChange: (update: Partial<Pick<UserInputDraft, 'answers' | 'step'>>) => void;
+  readonly onDraftChange: (update: DraftChange) => void;
   readonly onExpired: () => void;
-  readonly onSubmit: (answers: readonly RequestUserInputAnswer[]) => Promise<void>;
+  readonly onSubmit: (answers: readonly RequestUserInputAnswer[], intent: 'answer' | 'continue') => Promise<void>;
+  readonly onChat: () => void;
+  readonly onAdd: () => void;
+  readonly onStop: () => void;
 }
 
-export function UserInputRequest({ request, draft, disabled = false, onDraftChange, onExpired, onSubmit }: UserInputRequestProps) {
+/** Own the ticking display separately so it never rerenders the answer editor each second. */
+export function UserInputDeadline({ request, onExpired }: { request: Request; onExpired: () => void }) {
   const t = useT();
-  const answers = draft.answers;
-  const currentQuestionIndex = draft.step;
-  const setAnswers = (update: (current: UserInputDraft['answers']) => UserInputDraft['answers']) => onDraftChange({ answers: update(answers) });
-  const setCurrentQuestionIndex = (step: number) => onDraftChange({ step });
   const [remaining, setRemaining] = useState(() => Math.max(0, Math.ceil((request.deadlineAt - Date.now()) / 1000)));
   const expiredRef = useRef(onExpired);
   expiredRef.current = onExpired;
@@ -37,181 +55,126 @@ export function UserInputRequest({ request, draft, disabled = false, onDraftChan
     tick();
     return () => clearInterval(timer);
   }, [request.deadlineAt]);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const focusStepOnChangeRef = useRef(true);
-  const questionStepRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    setSubmitting(false);
-    setError(null);
-  }, [request.itemId]);
-
-  useEffect(() => {
-    if (!focusStepOnChangeRef.current) return undefined;
-    focusStepOnChangeRef.current = false;
-    const frame = window.requestAnimationFrame(() => {
-      const step = questionStepRef.current;
-      const focusTarget = step?.querySelector<HTMLElement>('input:not(:disabled)');
-      (focusTarget ?? step)?.focus();
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [currentQuestionIndex]);
-
-  const blocked = disabled || submitting || remaining === 0;
-  const questionCount = request.questions.length;
-  const currentQuestion = request.questions[Math.min(currentQuestionIndex, questionCount - 1)];
-  const selected = currentQuestion ? answers[currentQuestion.id] : undefined;
-  const currentComplete = Boolean(selected?.skipped || selected?.optionLabel || selected?.otherText?.trim());
-  const complete = request.questions.every((question) => {
-    const answer = answers[question.id];
-    return Boolean(answer?.skipped || answer?.optionLabel || answer?.otherText?.trim());
-  });
-  const isLastStep = currentQuestionIndex >= questionCount - 1;
-
-  function moveToQuestion(index: number) {
-    if (blocked) return;
-    focusStepOnChangeRef.current = true;
-    setCurrentQuestionIndex(Math.max(0, Math.min(questionCount - 1, index)));
-  }
-
-  async function submit(submittedAnswers = answers) {
-    if (blocked || !request.questions.every((question) => {
-      const answer = submittedAnswers[question.id];
-      return answer?.skipped || answer?.optionLabel || answer?.otherText?.trim();
-    })) return;
-    setSubmitting(true);
-    setError(null);
-    try {
-      await onSubmit(request.questions.map((question) => ({
-        questionId: question.id,
-        ...(submittedAnswers[question.id]?.skipped ? { skipped: true as const } : submittedAnswers[question.id]),
-      })));
-    } catch (submitError) {
-      setError(errorMessage(submitError));
-      setSubmitting(false);
-    }
-  }
-
-  function skipCurrentQuestion() {
-    if (!currentQuestion || blocked) return;
-    const skippedAnswers = { ...answers, [currentQuestion.id]: { ...selected, skipped: true as const } };
-    onDraftChange({ answers: skippedAnswers });
-    if (isLastStep) void submit(skippedAnswers);
-    else moveToQuestion(currentQuestionIndex + 1);
-  }
-
-  if (!currentQuestion) return null;
-
-  const otherSelected = !selected?.skipped && selected?.otherText !== undefined;
-  const progress = questionCount > 1
-    ? t.agent.thread.inputProgress({ current: currentQuestionIndex + 1, total: questionCount })
-    : null;
-
-  return (
-    <form
-      aria-label={t.agent.thread.inputNeeded}
-      className="thread-user-input"
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (isLastStep) void submit();
-        else if (currentComplete) moveToQuestion(currentQuestionIndex + 1);
-      }}
-    >
-      <div className="thread-user-input-heading">
-        <div className="thread-user-input-title">
-          {t.agent.thread.inputNeeded}
-          {progress ? (
-            <>
-              <span aria-hidden="true">·</span>
-              <span>{progress}</span>
-            </>
-          ) : null}
-        </div>
-        {currentQuestionIndex > 0 ? (
-          <IconButton
-            className="thread-user-input-back"
-            disabled={blocked}
-            icon={BackIcon}
-            iconSize={ICON_SIZE.menu}
-            label={t.agent.thread.inputBack}
-            onClick={() => moveToQuestion(currentQuestionIndex - 1)}
-          />
-        ) : null}
-      </div>
-      <p className="thread-user-input-countdown" aria-live="off">{t.agent.thread.inputRemaining({ seconds: remaining })}</p>
-      <div className="thread-user-input-step" key={currentQuestion.id} ref={questionStepRef} tabIndex={-1}>
-        {currentQuestion.header ? <div className="thread-user-input-header">{currentQuestion.header}</div> : null}
-        <div className="thread-user-input-prompt">{currentQuestion.question}</div>
-        {selected?.skipped ? <p className="thread-user-input-countdown">{t.agent.thread.inputSkipped}</p> : null}
-        <fieldset>
-          <legend className="sr-only">{currentQuestion.question}</legend>
-          <div className="thread-user-input-options">
-            {currentQuestion.options.map((option) => (
-              <label key={option.label}>
-                <input
-                  checked={!selected?.skipped && selected?.optionLabel === option.label}
-                  disabled={blocked}
-                  name={currentQuestion.id}
-                  onChange={() => setAnswers((current) => ({
-                    ...current,
-                    [currentQuestion.id]: { optionLabel: option.label },
-                  }))}
-                  type="radio"
-                />
-                <span>
-                  <strong>{option.label}</strong>
-                  <small>{option.description}</small>
-                </span>
-              </label>
-            ))}
-            <label>
-              <input
-                checked={otherSelected}
-                disabled={blocked}
-                name={currentQuestion.id}
-                onChange={(event) => {
-                  const otherInput = event.currentTarget.closest('label')?.querySelector<HTMLInputElement>('.thread-user-input-other');
-                  setAnswers((current) => ({
-                    ...current,
-                    [currentQuestion.id]: { otherText: selected?.otherText ?? '' },
-                  }));
-                  window.requestAnimationFrame(() => otherInput?.focus());
-                }}
-                type="radio"
-              />
-              <span>
-                <strong>{t.agent.thread.other}</strong>
-                <input
-                  aria-label={t.agent.thread.other}
-                  className="thread-user-input-other"
-                  disabled={!otherSelected || blocked}
-                  onChange={(event) => setAnswers((current) => ({
-                    ...current,
-                    [currentQuestion.id]: { otherText: event.target.value },
-                  }))}
-                  placeholder={t.agent.thread.otherPlaceholder}
-                  type="text"
-                  value={selected?.otherText ?? ''}
-                />
-              </span>
-            </label>
-          </div>
-        </fieldset>
-      </div>
-      {error ? <p className="thread-inline-error" role="alert">{error}</p> : null}
-      <div className="thread-user-input-actions">
-        <Button disabled={blocked} size="sm" type="button" onClick={skipCurrentQuestion}>
-          {isLastStep ? t.agent.thread.inputSkipAndSubmit : t.agent.thread.inputSkip}
-        </Button>
-        <Button disabled={!(isLastStep ? complete : currentComplete) || blocked} size="sm" type="submit" variant="primary">
-          {isLastStep ? t.agent.thread.submitInput : t.agent.thread.inputNext}
-        </Button>
-      </div>
-    </form>
-  );
+  return <span className="thread-user-input-countdown" aria-live="off" title={t.agent.thread.inputDeadlineHint}>
+    {t.agent.thread.inputRemaining({ seconds: remaining })}
+  </span>;
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+export function UserInputRequest({ request, draft, disabled = false, onDraftChange, onExpired, onSubmit, onChat, onAdd, onStop }: UserInputRequestProps) {
+  const t = useT();
+  const [expired, setExpired] = useState(() => Date.now() >= request.deadlineAt);
+  const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
+  const [error, setError] = useState<string | null>(null);
+  const stepRef = useRef<HTMLDivElement>(null);
+  const reviewRef = useRef<HTMLDivElement>(null);
+  const focusNext = useRef(false);
+  const pending = draft.outcome === 'pending';
+  const blocked = !pending || expired || disabled || submitting;
+  const answers = activeInputAnswers(draft);
+  const count = answers.filter((answer) => !answer.skipped).length;
+  const review = draft.step >= request.questions.length;
+  const question = request.questions[Math.min(draft.step, request.questions.length - 1)]!;
+  const selected = draft.answers[question.id];
+  const activeAnswer = answers.find((answer) => answer.questionId === question.id);
+  const last = draft.step === request.questions.length - 1;
+  const single = request.questions.length === 1;
+
+  useEffect(() => {
+    if (!focusNext.current) return;
+    focusNext.current = false;
+    (review ? reviewRef : stepRef).current?.focus();
+  }, [draft.step]);
+
+  function move(step: number) {
+    focusNext.current = true;
+    onDraftChange({ step: Math.max(0, Math.min(request.questions.length, step)) });
+  }
+  function skip() {
+    focusNext.current = true;
+    onDraftChange({ answers: { ...draft.answers, [question.id]: { ...selected, skipped: true, selection: 'skip' } }, step: draft.step + 1 });
+  }
+  async function submit(intent: 'answer' | 'continue') {
+    if (blocked || submittingRef.current || Date.now() >= request.deadlineAt) { onExpired(); return; }
+    submittingRef.current = true;
+    setSubmitting(true);
+    setError(null);
+    try { await onSubmit(answers, intent); }
+    catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
+    finally { submittingRef.current = false; setSubmitting(false); }
+  }
+  const reason = draft.outcome === 'timedOut' ? t.agent.thread.inputExpired
+    : draft.outcome === 'cancelled' ? t.agent.thread.inputCancelled
+    : draft.outcome === 'failed' ? t.agent.thread.inputFailed
+    : draft.outcome === 'invalidated' ? t.agent.thread.inputInvalidated
+    : !pending ? t.agent.thread.inputUnknown : t.agent.thread.inputRestoring;
+
+  return <form className="thread-user-input" aria-label={pending ? t.agent.thread.inputNeeded : t.agent.thread.inputSavedDraft}
+    onSubmit={(event) => event.preventDefault()} onKeyDown={(event) => {
+      if (event.key === 'Escape' && !event.nativeEvent.isComposing) { event.stopPropagation(); onChat(); }
+    }}>
+    <div className="thread-user-input-heading">
+      {pending && !single && !review ? <nav className="thread-user-input-nav" aria-label={t.agent.thread.inputReview}
+        title={t.agent.thread.inputAnsweredCount({ count, total: request.questions.length })}>
+        {request.questions.map((item, index) => <button key={item.id} type="button" className="thread-user-input-tab"
+          aria-current={draft.step === index ? 'step' : undefined} title={item.header} disabled={submitting} onClick={() => move(index)}>
+          {item.header}
+        </button>)}
+      </nav> : <span className="thread-user-input-title">{!pending ? t.agent.thread.inputSavedDraft : review ? t.agent.thread.inputReview : t.agent.thread.inputNeeded}</span>}
+      {pending ? <span className="sr-only">{t.agent.thread.inputAnsweredCount({ count, total: request.questions.length })}</span> : null}
+      {pending ? <UserInputDeadline request={request} onExpired={() => { setExpired(true); onExpired(); }} /> : null}
+    </div>
+    {/* Keep this editor subtree mounted when the Host settles; only its sending authority changes. */}
+    <div className="thread-user-input-step" key={question.id} ref={stepRef} tabIndex={-1} hidden={review}>
+      <div className="thread-user-input-prompt">{question.question}</div>
+      <fieldset hidden={!pending || expired}>
+        <legend className="sr-only">{question.question}</legend>
+        <div className="thread-user-input-options">
+          {question.options.map((option) => <label key={option.label}>
+            <input type="radio" name={question.id} checked={activeAnswer?.optionLabel === option.label} disabled={submitting}
+              onChange={() => onDraftChange({ answers: { ...draft.answers, [question.id]: {
+                ...selected, optionLabel: option.label, skipped: undefined, selection: 'option',
+              } } })} />
+            <span><strong>{option.label}</strong><small>{option.description}</small></span>
+          </label>)}
+        </div>
+      </fieldset>
+      <label className="thread-user-input-text-label">
+        <span className="sr-only">{t.agent.thread.inputWriteAnswer}</span>
+        <textarea className="thread-user-input-other" aria-label={t.agent.thread.inputWriteAnswer} rows={2}
+          readOnly={submitting && pending} value={selected?.otherText ?? ''} placeholder={t.agent.thread.inputWriteAnswer}
+          onChange={(event) => onDraftChange({ answers: { ...draft.answers, [question.id]: {
+            ...selected, otherText: event.target.value, skipped: undefined, selection: 'text',
+          } } })} />
+      </label>
+      {pending && activeAnswer?.skipped && selected?.skipped ? <span className="thread-user-input-countdown">{t.agent.thread.inputUnanswered}</span> : null}
+    </div>
+    {review ? <div className="thread-user-input-review" ref={reviewRef} tabIndex={-1} aria-label={t.agent.thread.inputReview}>
+      {request.questions.map((item, index) => <div key={item.id}>
+        <button type="button" className="thread-user-input-tab" onClick={() => move(index)}>{item.question}</button>
+        <p>{answers[index]?.optionLabel ?? answers[index]?.otherText ?? t.agent.thread.inputUnanswered}</p>
+      </div>)}
+    </div> : null}
+    {!pending || expired ? <p className="thread-user-input-countdown" role="status">{reason}</p> : null}
+    {error ? <p className="thread-inline-error" role="alert">{error}</p> : null}
+    {pending && !expired ? <>
+      <div className="thread-user-input-actions thread-user-input-footer">
+        <UserInputMenu hasAnswers={count > 0} disabled={blocked} onContinue={() => void submit('continue')} onChat={onChat} onStop={onStop} />
+        <div className="thread-user-input-primary-actions">
+        {!review ? <Button size="sm" variant="ghost" disabled={submitting} onClick={skip}>{t.agent.thread.inputSkip}</Button> : null}
+        {review || single ? <Button size="sm" variant="primary" disabled={blocked || (!review && single && !count)} onClick={() => void submit(count ? 'answer' : 'continue')}>
+          {review && !count ? t.agent.thread.inputContinueEmpty : single ? t.agent.thread.inputSendAnswer : t.agent.thread.inputSendAnswers}
+        </Button> : <Button size="sm" variant="primary" disabled={submitting} onClick={() => move(draft.step + 1)}>
+          {last ? t.agent.thread.inputReview : t.agent.thread.inputNext}
+        </Button>}
+        </div>
+      </div>
+    </> : <div className="thread-user-input-actions">
+      {!pending && recoveryText(draft) ? <Button size="sm" variant="primary" disabled={draft.addedToMessage} onClick={onAdd}>
+        {draft.addedToMessage ? t.agent.thread.inputInMessage : t.agent.thread.inputAddToMessage}
+      </Button> : <Button size="sm" onClick={onExpired}>{t.agent.thread.inputRetry}</Button>}
+      <Button size="sm" onClick={onChat}>{t.agent.thread.inputReturnToMessage}</Button>
+      {pending ? <Button size="sm" onClick={onStop}>{t.agent.thread.interrupt}</Button> : null}
+    </div>}
+  </form>;
 }

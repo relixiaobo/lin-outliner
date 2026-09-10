@@ -6112,6 +6112,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
     await waitUntil(() => fixture.service.readThread({ threadId: thread.id }).thread.status.type === 'active'
       && fixture.service.readThread({ threadId: thread.id }).thread.status.activeFlags.includes('waitingOnUserInput'));
     await fixture.service.request('userInput/respond', {
+      submissionId: 'storage-submit', intent: 'answer',
       threadId: thread.id,
       turnId: turn.turn.id,
       itemId: 'question-item',
@@ -8501,8 +8502,8 @@ function recordPdfFixture(pageTexts: string[]): string {
 }
 
 describe('bounded user input lifecycle', () => {
-  async function setup(extensions?: ExtensionRegistry) {
-    const fixture = await createFixture(extensions);
+  async function setup(extensions?: ExtensionRegistry, options?: Parameters<typeof createFixture>[1]) {
+    const fixture = await createFixture(extensions, options);
     const thread = (await fixture.service.startThread({ source: 'app', threadSource: 'user', modelProvider: 'openai', configurationSource: { kind: 'user' } })).thread;
     const { turn } = await fixture.service.startRendererTurn({ threadId: thread.id, input: [{ type: 'text', text: 'Ask about storage.' }] });
     await fixture.executor.waitUntilWaiting();
@@ -8517,7 +8518,7 @@ describe('bounded user input lifecycle', () => {
       void result.catch(() => undefined);
       const snapshot = await read();
       const request = snapshot.state.pending!;
-      const response = { hostGeneration: request.hostGeneration, threadId: thread.id, turnId: turn.id, itemId, answers: [{ questionId: 'storage', optionLabel: 'Local' }] };
+      const response = { submissionId: `submit-${itemId}`, intent: 'answer' as const, hostGeneration: request.hostGeneration, threadId: thread.id, turnId: turn.id, itemId, answers: [{ questionId: 'storage', optionLabel: 'Local' }] };
       return { result, request, response };
     };
     return { ...fixture, thread, turn, read, ask };
@@ -8593,6 +8594,101 @@ describe('bounded user input lifecycle', () => {
     await f.service.close();
   });
 
+  test('discussion commits one canonical message with its settlement and delivers it before releasing the tool', async () => {
+    const f = await setup();
+    const question = await f.ask();
+    const response = { ...question.response, intent: 'discuss' as const,
+      message: { input: [{ type: 'text' as const, text: 'Please explain the difference first.' }] } };
+    const [first, duplicate] = await Promise.all([f.service.request('userInput/respond', response), f.service.respondUserInput(response)]);
+    expect(first.observed).toEqual(duplicate.observed);
+    expect(await question.result).toMatchObject({ outcome: 'discussed', intent: 'discuss', answers: response.answers,
+      messageItemId: first.observed!.messageItemId });
+    expect(f.executor.steered).toEqual(['Please explain the difference first.']);
+    const events = await f.stores.rollout.read(f.thread.id);
+    const commits = events.filter((entry) => entry.event.type === 'items/completed' && entry.event.userInput);
+    expect(commits).toHaveLength(1);
+    const turn = f.service.readThread({ threadId: f.thread.id, includeTurns: true }).thread.turns!.find((turn) => turn.id === f.turn.id)!;
+    expect(turn.items.filter((item) => item.type === 'userMessage' && item.clientId === response.submissionId)).toHaveLength(1);
+    expect((await f.read()).state).toMatchObject({ activeTurnId: f.turn.id, pending: null, settled: { outcome: 'discussed' } });
+    await expect(f.service.respondUserInput({ ...response, message: { input: [{ type: 'text', text: 'A conflicting retry' }] } })).rejects.toThrow('already settled');
+    f.executor.finish();
+    await f.service.waitForIdle(f.thread.id);
+    await f.service.close();
+  });
+
+  test('failed discussion append leaves both the question and message uncommitted, then retry commits once', async () => {
+    const f = await setup();
+    const question = await f.ask();
+    const response = { ...question.response, intent: 'discuss' as const, message: { input: [{ type: 'text' as const, text: 'Keep my explanation.' }] } };
+    const append = f.stores.rollout.append.bind(f.stores.rollout);
+    const failure = spyOn(f.stores.rollout, 'append').mockImplementation(async (...args) => {
+      if (args[1].type === 'items/completed' && args[1].userInput) throw new Error('synthetic atomic failure');
+      return append(...args);
+    });
+    await expect(f.service.respondUserInput(response)).rejects.toThrow('could not be saved');
+    expect((await f.read()).state.pending).toEqual(question.request);
+    expect(f.executor.steered).toHaveLength(0);
+    expect((await f.stores.rollout.read(f.thread.id)).some((entry) => entry.event.type === 'items/completed' && entry.event.userInput)).toBe(false);
+    failure.mockRestore();
+    await f.service.respondUserInput(response);
+    expect(await question.result).toMatchObject({ outcome: 'discussed' });
+    expect(f.executor.steered).toEqual(['Keep my explanation.']);
+    f.executor.finish();
+    await f.service.waitForIdle(f.thread.id);
+    await f.service.close();
+  });
+
+  test('lost discussion write acknowledgement heals canonical projection and does not record or deliver twice', async () => {
+    const f = await setup();
+    const question = await f.ask();
+    const response = { ...question.response, intent: 'discuss' as const, message: { input: [{ type: 'text' as const, text: 'This was delivered.' }] } };
+    const append = f.stores.rollout.append.bind(f.stores.rollout);
+    const failure = spyOn(f.stores.rollout, 'append').mockImplementation(async (...args) => {
+      const result = await append(...args);
+      if (args[1].type === 'items/completed' && args[1].userInput) throw new Error('synthetic lost acknowledgement');
+      return result;
+    });
+    const receipt = await f.service.respondUserInput(response);
+    failure.mockRestore();
+    expect(await question.result).toMatchObject({ outcome: 'discussed' });
+    await f.service.respondUserInput(response);
+    const turn = f.service.readThread({ threadId: f.thread.id, includeTurns: true }).thread.turns!.find((turn) => turn.id === f.turn.id)!;
+    expect(turn.items.filter((item) => item.id === receipt.observed?.messageItemId)).toHaveLength(1);
+    expect(f.executor.steered).toEqual(['This was delivered.']);
+    f.executor.finish();
+    await f.service.waitForIdle(f.thread.id);
+    await f.service.close();
+  });
+
+  test('discussion admission crossing the deadline cannot record a message or revive the question', async () => {
+    let advance!: (ms: number) => void;
+    const f = await setup(undefined, { resolveUserContent: (content) => {
+      if (content.some((part) => part.type === 'text' && part.text === 'Slow admission')) advance(60_001);
+      return content;
+    } });
+    advance = f.advanceClock;
+    const question = await f.ask();
+    await expect(f.service.respondUserInput({ ...question.response, intent: 'discuss',
+      message: { input: [{ type: 'text', text: 'Slow admission' }] } })).rejects.toThrow('not sent');
+    expect(await question.result).toMatchObject({ outcome: 'timedOut' });
+    expect(f.executor.steered).toHaveLength(0);
+    expect((await f.stores.rollout.read(f.thread.id)).some((entry) => entry.event.type === 'items/completed' && entry.event.userInput)).toBe(false);
+    f.executor.finish();
+    await f.service.waitForIdle(f.thread.id);
+    await f.service.close();
+  });
+
+  test('continue preserves submitted answers with an explicit intent to end clarification', async () => {
+    const f = await setup();
+    const question = await f.ask();
+    await f.service.respondUserInput({ ...question.response, intent: 'continue' });
+    expect(await question.result).toMatchObject({ outcome: 'answered', intent: 'continue', answers: question.response.answers });
+    expect(f.executor.steered).toHaveLength(0);
+    f.executor.finish();
+    await f.service.waitForIdle(f.thread.id);
+    await f.service.close();
+  });
+
   test('late answer loses to the Host deadline even before the timer callback runs', async () => {
     const f = await setup();
     const question = await f.ask();
@@ -8610,9 +8706,9 @@ describe('bounded user input lifecycle', () => {
     const skipped = { ...first.response, answers: [{ questionId: 'storage', skipped: true as const }] };
     await expect(f.service.respondUserInput({ ...skipped, answers: [{ ...skipped.answers[0]!, otherText: 'Not submitted' }] })).rejects.toThrow('explicit skip');
     const responses = await Promise.all([f.service.respondUserInput(skipped), f.service.respondUserInput(skipped)]);
-    expect(responses.every((response) => response.observed?.skippedQuestionIds?.[0] === 'storage')).toBe(true);
+    expect(responses.every((response) => response.observed?.submitted?.answers[0]?.skipped === true)).toBe(true);
     expect(await first.result).toMatchObject({ outcome: 'answered', answers: [{ questionId: 'storage', skipped: true }] });
-    expect((await f.read()).state).toMatchObject({ activeTurnId: f.turn.id, pending: null, settled: { skippedQuestionIds: ['storage'] } });
+    expect((await f.read()).state).toMatchObject({ activeTurnId: f.turn.id, pending: null, settled: { submitted: { answers: [{ questionId: 'storage', skipped: true }] } } });
     await expect(f.service.respondUserInput(first.response)).rejects.toThrow('already settled');
     const next = await f.ask('late-skip');
     f.advanceClock(60_001);

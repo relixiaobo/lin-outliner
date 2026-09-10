@@ -609,7 +609,8 @@ function toolResult(tool: string, value: unknown): AgentToolResult<unknown> {
       threadId: details.threadId,
       turnId: details.turnId,
       itemId: details.itemId,
-      ...(details.outcome === 'answered' ? { answers: details.answers } : {}),
+      ...(details.outcome === 'answered' || details.outcome === 'discussed'
+        ? { answers: details.answers, intent: details.intent, ...(details.messageItemId ? { messageItemId: details.messageItemId } : {}) } : {}),
     });
   }
   if (tool === 'task_stop' && isRecord(details)) {

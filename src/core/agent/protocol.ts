@@ -2233,19 +2233,30 @@ export interface RequestUserInputAnswer {
 }
 
 export interface RequestUserInputResponse extends UserInputIdentity {
+  readonly submissionId: string;
+  readonly intent: 'answer' | 'continue' | 'discuss';
   readonly answers: readonly RequestUserInputAnswer[];
+  readonly message?: Omit<RendererTurnStartRequest, 'threadId' | 'clientUserMessageId'>;
 }
 
 export type RequestUserInputResult =
-  | (RequestUserInputResponse & { readonly outcome: 'answered'; readonly deadlineAt: number })
+  | (UserInputIdentity & { readonly outcome: 'answered' | 'discussed'; readonly deadlineAt: number;
+      readonly intent: RequestUserInputResponse['intent']; readonly answers: readonly RequestUserInputAnswer[];
+      readonly messageItemId?: string })
   | (UserInputIdentity & { readonly outcome: 'timedOut'; readonly deadlineAt: number });
 
 export interface UserInputSettlement extends UserInputIdentity {
   readonly revision: number;
   readonly deadlineAt: number;
-  readonly outcome: 'answered' | 'timedOut' | 'cancelled' | 'failed';
-  /** Present only on an accepted response containing explicitly skipped questions. */
-  readonly skippedQuestionIds?: readonly string[];
+  readonly outcome: 'answered' | 'discussed' | 'timedOut' | 'cancelled' | 'failed';
+  /** Exact submitted content; inactive local text and subsequent edits remain drafts. */
+  readonly submitted?: Pick<RequestUserInputResponse, 'submissionId' | 'intent' | 'answers'>;
+  readonly messageItemId?: string;
+}
+
+export interface UserInputResolution {
+  readonly response: RequestUserInputResponse;
+  readonly settlement: UserInputSettlement;
 }
 
 export interface UserInputState {
@@ -2494,6 +2505,8 @@ export type AgentCoreNotification =
       readonly turnId: TurnId;
       readonly items: readonly ThreadItem[];
       readonly completedAt: number;
+      /** Atomically accepts a discussion message and settles its question in one Rollout entry. */
+      readonly userInput?: UserInputResolution;
     }
   | {
       readonly type: 'turn/completed';

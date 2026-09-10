@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { mkdir } from 'node:fs/promises';
@@ -15,12 +15,21 @@ const questions = [
   ] },
 ];
 
-test('real tool delivery recovers dropped notification and reload, then expires with all unsent steps intact', async () => {
+async function openQuestions(page: Page) {
+  const form = page.getByRole('form', { name: 'Input needed' });
+  const answer = page.getByRole('button', { name: 'Answer questions', exact: true });
+  await expect(form.or(answer)).toBeVisible();
+  if (await answer.isVisible()) await answer.click();
+  await expect(form).toBeVisible();
+}
+
+test('real tool delivery recovers loss, preserves expired drafts, and atomically continues with answers or discussion', async () => {
   test.setTimeout(180_000);
   let smoke: SmokeApp | undefined;
   let releaseQuestion: (() => void) | undefined;
   let continuationCount = 0;
   const outputs: string[] = [];
+  const discussionRequests: any[][] = [];
   const server = createServer(async (request, response) => {
     if (request.url === '/v1/models') {
       response.setHeader('content-type', 'application/json');
@@ -32,7 +41,9 @@ test('real tool delivery recovers dropped notification and reload, then expires 
     const body = JSON.parse(raw || '{}');
     const toolName = body.tools?.find((tool: any) => tool.function.name === 'request_user_input')?.function.name;
     const last = body.messages?.at(-1);
-    const toolResult = last?.role === 'tool';
+    const discussion = last?.role === 'user' && JSON.stringify(last).includes('Please discuss this explanation.');
+    const lastTool = body.messages?.findLast((message: any) => message.role === 'tool');
+    const toolResult = last?.role === 'tool' || (discussion && lastTool);
     const emit = () => {
       response.writeHead(200, { 'content-type': 'text/event-stream', connection: 'close' });
       const send = (delta: unknown, finish_reason: string | null) => response.write(`data: ${JSON.stringify({
@@ -41,8 +52,9 @@ test('real tool delivery recovers dropped notification and reload, then expires 
       })}\n\n`);
       if (toolResult) {
         continuationCount += 1;
-        outputs.push(JSON.stringify(last.content));
-        const outcome = JSON.stringify(last.content).includes('timedOut') ? 'timedOut' : 'answered';
+        outputs.push(JSON.stringify(lastTool.content));
+        if (discussion) discussionRequests.push(body.messages);
+        const outcome = JSON.stringify(lastTool.content).includes('timedOut') ? 'timedOut' : discussion ? 'discussed' : 'answered';
         send({ role: 'assistant', content: `Continued once: ${outcome}` }, null);
         send({}, 'stop');
       } else if (toolName) {
@@ -79,7 +91,7 @@ test('real tool delivery recovers dropped notification and reload, then expires 
     await composer.fill('Ask about the pass.');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     const form = page.getByRole('form', { name: 'Input needed' });
-    await expect(form).toBeVisible();
+    await openQuestions(page);
     const first = await page.evaluate(async () => {
       const threads = await window.lin!.agentCoreRequest('thread/list', {});
       return window.lin!.agentCoreRequest('userInput/read', { threadId: threads.data[0]!.id });
@@ -87,14 +99,14 @@ test('real tool delivery recovers dropped notification and reload, then expires 
     expect(first.state.pending?.autoResolutionMs).toBe(60_000);
     const threadId = first.state.threadId;
     await page.reload();
-    await expect(form).toBeVisible();
+    await openQuestions(page);
     const restored = await page.evaluate((threadId) => window.lin!.agentCoreRequest('userInput/read', { threadId }), threadId);
     expect(restored.state.pending).toEqual(first.state.pending);
     await form.getByRole('radio', { name: /Complete/ }).check();
     await form.getByRole('button', { name: 'Next', exact: true }).click();
-    await form.getByRole('radio', { name: 'Other', exact: true }).check();
-    await form.getByRole('textbox', { name: 'Other', exact: true }).fill('Tomorrow morning');
-    await form.getByRole('button', { name: 'Submit', exact: true }).click();
+    await form.getByRole('textbox', { name: 'Write an answer', exact: true }).fill('Tomorrow morning');
+    await form.getByRole('button', { name: 'Review answers', exact: true }).last().click();
+    await form.getByRole('button', { name: 'Send answers', exact: true }).click();
     await expect(page.getByText('Continued once: answered', { exact: true })).toBeVisible();
     expect(continuationCount).toBe(1);
 
@@ -103,14 +115,18 @@ test('real tool delivery recovers dropped notification and reload, then expires 
     await expect.poll(() => Boolean(releaseQuestion)).toBe(true);
     await composer.fill('Keep the ordinary draft.');
     releaseQuestion!();
-    await expect(form).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Answer questions', exact: true })).toBeVisible();
+    await expect(composer).toBeFocused();
+    await openQuestions(page);
     await form.getByRole('radio', { name: /Complete/ }).check();
     await form.getByRole('button', { name: 'Next', exact: true }).click();
-    await form.getByRole('radio', { name: 'Other', exact: true }).check();
-    await form.getByRole('textbox', { name: 'Other', exact: true }).fill('Still typing when it expires');
+    const answerEditor = page.getByRole('textbox', { name: 'Write an answer', exact: true });
+    await answerEditor.fill('Still typing when it expires');
     await page.getByRole('button', { name: 'Collapse agent', exact: true }).click();
     await page.getByRole('button', { name: 'Expand agent', exact: true }).click();
-    await expect(form.getByRole('textbox', { name: 'Other', exact: true })).toHaveValue('Still typing when it expires');
+    await expect(answerEditor).toHaveValue('Still typing when it expires');
+    await answerEditor.focus();
+    const editor = await answerEditor.elementHandle();
     const artifacts = join(REPO_ROOT, 'tmp/user-input-recovery');
     await mkdir(artifacts, { recursive: true });
     for (const theme of ['light', 'dark'] as const) {
@@ -119,16 +135,21 @@ test('real tool delivery recovers dropped notification and reload, then expires 
       await page.locator('.agent-dock').screenshot({ path: join(artifacts, `${theme}-form.png`) });
     }
     await expect(form).toHaveCount(0, { timeout: 65_000 });
+    expect(await answerEditor.evaluate((element, original) => element === original, editor)).toBe(true);
+    await expect(answerEditor).toBeFocused();
+    await answerEditor.press('End');
+    await answerEditor.pressSequentially(' locally');
     await expect(page.getByText('Continued once: timedOut', { exact: true })).toBeVisible();
     expect(continuationCount).toBe(2);
     expect(outputs[1]).toContain('timedOut');
     expect(outputs[1]).not.toContain('answers');
     expect(outputs[1]).not.toContain('Still typing');
     const recovery = page.locator('.thread-user-input-recovery');
+    await page.locator('.thread-user-input-recoveries > summary').click();
     await recovery.locator('summary').click();
     await expect(recovery).toContainText('Complete');
-    await expect(recovery).toContainText('Still typing when it expires');
-    await expect(composer).toHaveText('Keep the ordinary draft.');
+    await expect(recovery).toContainText('Still typing when it expires locally');
+    await expect(page.getByRole('textbox', { name: 'Message this Thread', includeHidden: true })).toHaveText('Keep the ordinary draft.');
     for (const theme of ['light', 'dark'] as const) {
       await smoke.app.evaluate(({ nativeTheme }, theme) => { nativeTheme.themeSource = theme; }, theme);
       await page.emulateMedia({ colorScheme: theme });
@@ -144,25 +165,49 @@ test('real tool delivery recovers dropped notification and reload, then expires 
     expect(turns.data).toHaveLength(2);
     await composer.fill('Ask and allow a skip.');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
-    await expect(form).toBeVisible();
+    await openQuestions(page);
     await form.getByRole('radio', { name: /Complete/ }).check();
     await form.getByRole('button', { name: 'Next', exact: true }).click();
-    await form.getByRole('radio', { name: 'Other', exact: true }).check();
-    await form.getByRole('textbox', { name: 'Other', exact: true }).fill('Withheld by Skip');
-    await form.getByRole('button', { name: 'Skip and submit', exact: true }).click();
+    await form.getByRole('textbox', { name: 'Write an answer', exact: true }).fill('Withheld by Skip');
+    await form.getByRole('button', { name: 'Skip question', exact: true }).click();
+    expect(continuationCount).toBe(2);
+    await form.getByRole('button', { name: 'Send answers', exact: true }).click();
     await expect(form).toHaveCount(0);
     await expect.poll(() => continuationCount).toBe(3);
     expect(outputs[2]).toContain('skipped');
     expect(outputs[2]).toContain('Complete');
     expect(outputs[2]).not.toContain('Withheld by Skip');
+    await page.locator('.thread-user-input-recoveries > summary').click();
     await recovery.locator('summary').click();
     await expect(recovery).toContainText('Withheld by Skip');
-    await expect(recovery).not.toContainText('How broad');
+    await expect(recovery.locator('pre')).not.toContainText('How broad');
     await recovery.getByRole('button', { name: 'Discard', exact: true }).click();
     await expect(page.getByText('Continued once: answered', { exact: true })).toHaveCount(2);
+    await composer.fill('Ask and discuss.');
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    await openQuestions(page);
+    await form.getByRole('radio', { name: /Complete/ }).check();
+    const beforeDiscussion = await page.evaluate((threadId) => window.lin!.agentCoreRequest('userInput/read', { threadId }), threadId);
+    await form.getByRole('button', { name: 'More question actions', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Chat about this', exact: true }).click();
+    expect(continuationCount).toBe(3);
+    await composer.fill('Please discuss this explanation.');
+    await page.getByRole('button', { name: 'Send and discuss', exact: true }).click();
+    await expect(page.getByText('Continued once: discussed', { exact: true })).toBeVisible();
+    expect(continuationCount).toBe(4);
+    expect(outputs[3]).toContain('discussed');
+    expect(outputs[3]).toContain('Complete');
+    expect(outputs[3]).not.toContain('Please discuss');
+    expect(discussionRequests).toHaveLength(1);
+    expect(discussionRequests[0]!.filter((message) => message.role === 'user' && JSON.stringify(message).includes('Please discuss this explanation.'))).toHaveLength(1);
+    const afterDiscussion = await page.evaluate((threadId) => window.lin!.agentCoreRequest('thread/turns/list', { threadId }), threadId);
+    expect(afterDiscussion.data).toHaveLength(4);
+    const discussedTurn = afterDiscussion.data.find((turn) => turn.id === beforeDiscussion.state.pending!.turnId)!;
+    expect(discussedTurn.items.filter((item) => item.type === 'userMessage' && JSON.stringify(item).includes('Please discuss this explanation.'))).toHaveLength(1);
+    await expect(composer).toBeEmpty();
     await composer.fill('Ask before restart.');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
-    await expect(form).toBeVisible();
+    await openQuestions(page);
     const beforeRestart = await page.evaluate((threadId) => window.lin!.agentCoreRequest('userInput/read', { threadId }), threadId);
     const userDataDir = smoke.userDataDir;
     const closed = smoke.app.waitForEvent('close');
@@ -178,12 +223,13 @@ test('real tool delivery recovers dropped notification and reload, then expires 
     const rejected = await smoke.window.evaluate(async (old) => {
       try {
         await window.lin!.agentCoreRequest('userInput/respond', { hostGeneration: old.hostGeneration, threadId: old.threadId,
-          turnId: old.turnId, itemId: old.itemId, answers: [{ questionId: 'scope', optionLabel: 'Complete' }, { questionId: 'schedule', optionLabel: 'Now' }] });
+          turnId: old.turnId, itemId: old.itemId, submissionId: 'restart-reply', intent: 'answer',
+          answers: [{ questionId: 'scope', optionLabel: 'Complete' }, { questionId: 'schedule', optionLabel: 'Now' }] });
         return false;
       } catch { return true; }
     }, old);
     expect(rejected).toBe(true);
-    expect(continuationCount).toBe(3);
+    expect(continuationCount).toBe(4);
   } finally {
     if (smoke) await closeSmokeApp(smoke);
     server.closeAllConnections();

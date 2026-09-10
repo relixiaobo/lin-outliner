@@ -770,11 +770,18 @@ invalidate past results. Verification does not authorize publication.
 whole-request deadline by default; optional `autoResolutionMs` keeps the existing
 60–240-second bounds. Omission never means an infinite wait. Answered output has
 `outcome: "answered"`, the exact request identity/deadline and all validated
-answer-or-skip entries. Each entry contains exactly one option label, Other text,
+answer-or-skip entries. Each entry contains exactly one option label, free text,
 or `skipped: true`. An answered outcome records explicit form submission; it does
 not imply that every question received an answer. Users can skip individual
 questions, including all of them, without choosing an option or supplying text.
-Skipped entries contain no withheld local draft content. Timeout output has
+Skipped entries contain no withheld local draft content. Selecting, editing, and
+skipping stay local until explicit Send or Continue. The `continue` intent submits
+active answers and ends clarification; it preserves earlier answers. A `discussed`
+result has `intent: "discuss"`, active answers, and `messageItemId` referencing the
+actual reader message admitted atomically and delivered through steering in the
+same Turn. Chat about this itself is local; Send and discuss delivers the actual
+message without an empty model exchange. Discussion, skips, and Continue do not
+grant authorization. Timeout output has
 `outcome: "timedOut"`, identity/deadline and no
 `answers` field. Timeout is distinct from cancellation, failure, or approval; it
 never fabricates Other text or chooses an option. The Agent continues authorized

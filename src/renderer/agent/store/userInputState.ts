@@ -1,13 +1,15 @@
 import type {
-  RequestUserInputRequest, UserInputIdentity, UserInputState,
+  RequestUserInputRequest, RequestUserInputAnswer, UserInputIdentity, UserInputState,
   UserInputSettlement, UserInputReadResponse, RendererAgentCoreNotification,
 } from '../../../core/agent/protocol';
 import { sameUserInput, userInputKey } from '../../../core/agent/userInput';
 
 export interface UserInputDraft {
   readonly request: RequestUserInputRequest;
-  readonly answers: Readonly<Record<string, { readonly optionLabel?: string; readonly otherText?: string; readonly skipped?: true }>>;
+  readonly answers: Readonly<Record<string, { readonly optionLabel?: string; readonly otherText?: string; readonly skipped?: true; readonly selection?: 'option' | 'text' | 'skip' }>>;
   readonly step: number;
+  readonly view?: 'questions' | 'message';
+  readonly addedText?: string;
   readonly outcome: 'pending' | 'unknown' | 'invalidated' | 'skipped' | UserInputSettlement['outcome'];
   readonly addedToMessage: boolean;
 }
@@ -31,6 +33,7 @@ export class ThreadUserInputState {
   private readonly endedTurns = new Set<string>();
   private readonly reads = new Map<string, Promise<void>>();
   private readonly readInvalidations = new Map<string, number>();
+  private readonly receipts = new Map<string, UserInputSettlement>();
   private readonly deletedThreads = new Set<string>();
 
   constructor(
@@ -38,14 +41,15 @@ export class ThreadUserInputState {
     private readonly changed: (projection: UserInputProjection) => void,
     private readonly isWaiting: (threadId: string) => boolean,
     private readonly waitingChanged: (threadId: string, waiting: boolean) => void = () => undefined,
+    private readonly settled: (settlement: UserInputSettlement) => void = () => undefined,
   ) {}
 
   getSnapshot(): UserInputProjection { return this.projection; }
 
-  updateDraft(request: RequestUserInputRequest, update: Partial<Pick<UserInputDraft, 'answers' | 'step'>>): void {
+  updateDraft(request: RequestUserInputRequest, update: Partial<Pick<UserInputDraft, 'answers' | 'step' | 'view'>>): void {
     const key = userInputKey(request);
     const draft = this.projection.userInputDrafts.get(key);
-    if (!draft || draft.outcome !== 'pending') return;
+    if (!draft) return;
     const drafts = new Map(this.projection.userInputDrafts);
     drafts.set(key, { ...draft, ...update });
     this.patch({ userInputDrafts: drafts });
@@ -62,7 +66,7 @@ export class ThreadUserInputState {
     const drafts = new Map(this.projection.userInputDrafts);
     const draft = drafts.get(key);
     if (draft && draft.outcome !== 'pending') {
-      drafts.set(key, { ...draft, addedToMessage: true });
+      drafts.set(key, { ...draft, addedToMessage: true, addedText: recoveryText(draft) });
       this.patch({ userInputDrafts: drafts });
     }
   }
@@ -70,8 +74,24 @@ export class ThreadUserInputState {
   acceptMessage(threadId: string, keys: readonly string[]): void {
     for (const key of keys) {
       const draft = this.projection.userInputDrafts.get(key);
-      if (draft?.request.threadId === threadId && draft.addedToMessage) this.discard(key);
+      if (draft?.request.threadId === threadId && draft.addedToMessage && draft.addedText === recoveryText(draft)) this.discard(key);
     }
+  }
+
+  settlement(identity: UserInputIdentity): UserInputSettlement | undefined { return this.receipts.get(userInputKey(identity)); }
+
+  syncMessage(threadId: string, text: string): void {
+    const drafts = new Map(this.projection.userInputDrafts);
+    let changed = false;
+    for (const [key, draft] of drafts) {
+      if (draft.request.threadId !== threadId || !draft.addedText) continue;
+      const addedToMessage = text.includes(draft.addedText);
+      if (addedToMessage !== draft.addedToMessage) {
+        drafts.set(key, { ...draft, addedToMessage });
+        changed = true;
+      }
+    }
+    if (changed) this.patch({ userInputDrafts: drafts });
   }
 
   removeThread(threadId: string): void {
@@ -156,6 +176,11 @@ export class ThreadUserInputState {
   }
 
   notification(notification: RendererAgentCoreNotification): void {
+    if (notification.type === 'items/completed' && notification.userInput) {
+      this.notification({ type: 'userInput/resolved', threadId: notification.threadId, turnId: notification.turnId,
+        itemId: notification.userInput.settlement.itemId, ...notification.userInput });
+      return;
+    }
     if (notification.type === 'turn/completed') {
       this.endedTurns.add(`${notification.threadId}:${notification.turnId}`);
       const request = this.projection.userInputByThread.get(notification.threadId);
@@ -215,14 +240,28 @@ export class ThreadUserInputState {
     const current = requests.get(settlement.threadId);
     if (current && sameUserInput(current, settlement)) requests.delete(settlement.threadId);
     const draft = drafts.get(key);
-    if (settlement.outcome === 'answered' && settlement.skippedQuestionIds?.length && draft) {
-      // Acceptance releases submitted answers only. Text withheld by Skip stays local and unsent.
-      const answers = Object.fromEntries(Object.entries(draft.answers).filter(([id]) => settlement.skippedQuestionIds!.includes(id)));
+    const previous = this.receipts.get(key);
+    if (previous && previous.revision >= settlement.revision) return;
+    this.receipts.set(key, settlement);
+    this.settled(settlement);
+    while (this.receipts.size > 128) this.receipts.delete(this.receipts.keys().next().value!);
+    if (settlement.submitted && draft) {
+      const answers = { ...draft.answers };
+      for (const sent of settlement.submitted.answers) {
+        const local = answers[sent.questionId];
+        if (!local || sent.skipped) continue;
+        const retained = { ...local };
+        if (sent.optionLabel !== undefined && local.optionLabel === sent.optionLabel) delete retained.optionLabel;
+        if (sent.otherText !== undefined && local.otherText === sent.otherText) delete retained.otherText;
+        answers[sent.questionId] = retained;
+      }
       const retained = { ...draft, answers, outcome: 'skipped' as const };
       if (recoveryText(retained)) drafts.set(key, retained);
       else drafts.delete(key);
-    } else if (settlement.outcome === 'answered') drafts.delete(key);
-    else if (draft) drafts.set(key, { ...draft, outcome: settlement.outcome });
+    } else if (draft) {
+      if (recoveryText(draft)) drafts.set(key, { ...draft, outcome: settlement.outcome });
+      else drafts.delete(key);
+    }
     this.patch({ userInputByThread: requests, userInputDrafts: drafts });
   }
 
@@ -263,7 +302,17 @@ export function identityOf(request: UserInputIdentity): UserInputIdentity {
 export function recoveryText(draft: UserInputDraft): string {
   return draft.request.questions.flatMap((question) => {
     const answer = draft.answers[question.id];
-    const text = answer?.optionLabel ?? answer?.otherText;
+    const text = [answer?.optionLabel, answer?.otherText].filter((value) => value?.trim()).join('\n');
     return text ? [`${question.question}\n${text}`] : [];
   }).join('\n\n');
+}
+
+export function activeInputAnswers(draft: UserInputDraft): readonly RequestUserInputAnswer[] {
+  return draft.request.questions.map((question) => {
+    const answer = draft.answers[question.id];
+    if (!answer || answer.skipped || answer.selection === 'skip') return { questionId: question.id, skipped: true };
+    if (answer.selection !== 'text' && answer.optionLabel) return { questionId: question.id, optionLabel: answer.optionLabel };
+    if (answer.otherText?.trim()) return { questionId: question.id, otherText: answer.otherText };
+    return { questionId: question.id, skipped: true };
+  });
 }
