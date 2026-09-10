@@ -660,24 +660,44 @@ independently of the question drafts. Submission, close, and timeout restore tha
 draft unchanged. Arrival may focus the replacement form when the hidden composer
 held focus, but never steals another document's editing focus.
 
-The question header contains a previous arrow, question progress, quiet remaining
-time, and a close icon. The body contains the prompt, neutral option rows, and
-an editable field visibly labeled Other answer. Only selected/hovered options
-receive a fill. Typing activates free text; choosing an option preserves inactive
-text. Recommended options are never selected automatically. Previous and Next
-question navigate locally. Earlier Skip advances locally; final Skip and finish
-explicitly submits prior active answers and a skip for the final question. Submit
-answers sends directly from the last question, with typed skips for unanswered
-entries. All-skipped submission uses continue intent. There is no review page,
-question-tab navigator, More menu, or execution control inside the question form.
+The question surface has three stable regions. The header groups previous/next
+icon buttons around current / total, with Close at the opposite edge. Both icons
+remain visible and are disabled at the corresponding boundary; accessible names
+and native tooltips identify their directions. Navigation never submits.
+
+The scrollable body gives the question stronger type than option labels and
+descriptions. Other is a peer radio option that reveals and focuses a text editor
+when selected. Inactive text stays mounted but hidden, so switching to a preset
+never silently sends it. No option is selected automatically. Form height stays
+bounded and stable across questions and Other expansion; only this body scrolls,
+keeping navigation and footer controls visible at narrow sizes.
+
+The footer separates quiet deadline metadata from Skip all and Submit answers. Submit
+answers is available on every step with an active answer; it sends all active
+answers and typed skips for unanswered entries. Skip all is available on every
+step and sends only typed skips with continue intent, preserving all filled
+answers as local drafts. Navigation never changes an answer or sends a skip.
+There is no footer Next button, review page, question-tab bar, More menu, or
+execution control inside the form.
+
+Copy describes the user's action and known outcome. The waiting status is Waiting
+for your answers; the countdown is Continues in Ns. Activity rows say Questions
+for you / Questions asked without treating tool-call count as question count.
+Withheld content says This draft was not submitted, including after a partial
+submission; it never claims the whole request was skipped. Unknown receipts
+remain explicitly uncertain and offer Check status. Submission/skip failures
+explain that drafts remain available and invite retry without raw transport errors.
+In-flight labels are Submitting… / Skipping…. Recovery transfer says Add to
+message draft, followed by Added to draft, since neither action sends a message.
+English and Simplified Chinese use the same meanings.
 
 Close and Escape return to the original message without submitting or stopping.
-Only then show Resume questions beside the ordinary editor. Both drafts and the
+Only then show Back to questions beside the ordinary editor. Both drafts and the
 original deadline survive this local switch. Normal Send/Steer sends only the
 ordinary message through its usual admission route; it neither submits answers
 nor settles the pending question. Question failures and receipts cannot clear a
 message draft. Stop remains the ordinary composer's existing execution control.
-The explicit Add to message recovery action is the only cross-draft transfer.
+The explicit Add to message draft recovery action is the only cross-draft transfer.
 An uncertain request disables question submission, not ordinary message editing
 or admission after the form closes.
 
@@ -686,7 +706,7 @@ subscription reattachment, Thread selection, dock reopening, visible-window
 focus, and a waiting notification without question content. Reads coalesce per
 Thread; generations and revisions reject stale snapshots/events. Matching Turn
 termination fences submission, and an older settlement cannot erase a newer
-question. Restoring/error states offer Retry and Stop while retaining local drafts.
+question. Loading/error states offer Try again and Stop while retaining local drafts.
 Exact receipts distinguish accepted, discussed, timed-out, cancelled, and failed
 requests; discussion arrives with its canonical completed-message batch.
 
@@ -697,15 +717,16 @@ releases only content equal to the actual submitted answer; withheld text and
 subsequent edits remain. Ordinary rich message drafts and attachments are separate.
 At expiry, no local answers are sent. A focused non-empty answer editor keeps its
 DOM node, caret, selection, IME, and scroll while becoming an unsent draft with
-Add to message. A newer question cannot displace that editor. Other expired forms
+Add to message draft. A newer question cannot displace that editor. Other expired forms
 fold, and empty outcomes create no recovery entry. The timer is subdued and its
 ticks are not live screen-reader announcements; only authoritative expiry can
 claim that no answer was submitted.
 
-One Unsent answers shelf groups non-empty retained requests, including while a
-new question is visible. Entries offer Review, Copy, Add to message, and Discard.
+One Answer drafts shelf groups non-empty retained requests, including while a
+new question is visible. Entries expand to show their content and offer Copy
+answers, Add to message draft, and Delete draft.
 Adding appends question context and content to the ordinary rich draft, preserves
-existing text/attachments, and sends nothing. In message draft prevents repeated
+existing text/attachments, and sends nothing. Added to draft prevents repeated
 insertion. Failed Send retains recovery; deleting inserted content restores its
 availability rather than clearing the entry on a later unrelated Send. Successful
 explicit Send releases only included unchanged recovery content. Thread deletion

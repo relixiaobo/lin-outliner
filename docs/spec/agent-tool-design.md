@@ -774,13 +774,15 @@ answer-or-skip entries. Each entry contains exactly one option label, free text,
 or `skipped: true`. An answered outcome records explicit form submission; it does
 not imply that every question received an answer. Users can skip individual
 questions, including all of them, without choosing an option or supplying text.
-Skipped entries contain no withheld local draft content. Selecting, editing, and
-skipping stay local until explicit Send or Continue. The `continue` intent submits
-active answers and ends clarification; it preserves earlier answers. A `discussed`
+Skipped entries contain no withheld local draft content. Selection, editing, and
+navigation stay local. Submit answers sends active answers with typed skips for
+unanswered questions. Skip all sends only typed skips with `continue` intent and
+retains existing answers locally. The protocol can carry supplied answers with
+`continue` intent, but the Skip all UI never does so. A `discussed`
 result has `intent: "discuss"`, active answers, and `messageItemId` referencing the
 actual reader message admitted atomically and delivered through steering in the
 same Turn. This is an explicitly supplied composite API request; ordinary
-composer messages do not implicitly use it or submit question drafts. Discussion, skips, and Continue do not
+composer messages do not implicitly use it or submit question drafts. Discussion, skips, and continue intent do not
 grant authorization. Timeout output has
 `outcome: "timedOut"`, identity/deadline and no
 `answers` field. Timeout is distinct from cancellation, failure, or approval; it

@@ -16,7 +16,7 @@ const questions = [
 ];
 
 async function openQuestions(page: Page) {
-  const form = page.getByRole('form', { name: 'Input needed' });
+  const form = page.getByRole('form', { name: 'Questions' });
   await expect(form).toBeVisible();
   await expect(page.locator('.thread-user-input-strip')).toHaveCount(0);
 }
@@ -88,7 +88,7 @@ test('real tool delivery recovers loss and keeps ordinary messages independent o
     const composer = page.getByRole('textbox', { name: 'Message this Thread', includeHidden: true });
     await composer.fill('Ask about the pass.');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
-    const form = page.getByRole('form', { name: 'Input needed' });
+    const form = page.getByRole('form', { name: 'Questions' });
     await openQuestions(page);
     const first = await page.evaluate(async () => {
       const threads = await window.lin!.agentCoreRequest('thread/list', {});
@@ -102,7 +102,8 @@ test('real tool delivery recovers loss and keeps ordinary messages independent o
     expect(restored.state.pending).toEqual(first.state.pending);
     await form.getByRole('radio', { name: /Complete/ }).check();
     await form.getByRole('button', { name: 'Next question', exact: true }).click();
-    await form.getByRole('textbox', { name: 'Other answer', exact: true }).fill('Tomorrow morning');
+    await form.getByRole('radio', { name: 'Other', exact: true }).check();
+    await form.getByRole('textbox', { name: 'Your answer', exact: true }).fill('Tomorrow morning');
     await form.getByRole('button', { name: 'Submit answers', exact: true }).click();
     await expect(page.getByText('Continued once: answered', { exact: true })).toBeVisible();
     expect(continuationCount).toBe(1);
@@ -118,7 +119,8 @@ test('real tool delivery recovers loss and keeps ordinary messages independent o
     await openQuestions(page);
     await form.getByRole('radio', { name: /Complete/ }).check();
     await form.getByRole('button', { name: 'Next question', exact: true }).click();
-    const answerEditor = page.getByRole('textbox', { name: 'Other answer', exact: true });
+    await form.getByRole('radio', { name: 'Other', exact: true }).check();
+    const answerEditor = page.getByRole('textbox', { name: 'Your answer', exact: true });
     await answerEditor.fill('Still typing when it expires');
     await page.getByRole('button', { name: 'Collapse agent', exact: true }).click();
     await page.getByRole('button', { name: 'Expand agent', exact: true }).click();
@@ -154,11 +156,11 @@ test('real tool delivery recovers loss and keeps ordinary messages independent o
       await page.emulateMedia({ colorScheme: theme });
       await page.locator('.agent-dock').screenshot({ path: join(artifacts, `${theme}-recovery.png`) });
     }
-    await recovery.getByRole('button', { name: 'Add to message', exact: true }).click();
+    await recovery.getByRole('button', { name: 'Add to message draft', exact: true }).click();
     await expect(composer).toContainText('Keep the ordinary draft.');
     await expect(composer).toContainText('Still typing when it expires');
     expect(continuationCount).toBe(2);
-    await recovery.getByRole('button', { name: 'Discard', exact: true }).click();
+    await recovery.getByRole('button', { name: 'Delete draft', exact: true }).click();
     await expect(recovery).toHaveCount(0);
     const turns = await page.evaluate((threadId) => window.lin!.agentCoreRequest('thread/turns/list', { threadId }), threadId);
     expect(turns.data).toHaveLength(2);
@@ -167,18 +169,19 @@ test('real tool delivery recovers loss and keeps ordinary messages independent o
     await openQuestions(page);
     await form.getByRole('radio', { name: /Complete/ }).check();
     await form.getByRole('button', { name: 'Next question', exact: true }).click();
-    await form.getByRole('textbox', { name: 'Other answer', exact: true }).fill('Withheld by Skip');
-    await form.getByRole('button', { name: 'Skip and finish', exact: true }).click();
+    await form.getByRole('radio', { name: 'Other', exact: true }).check();
+    await form.getByRole('textbox', { name: 'Your answer', exact: true }).fill('Withheld by Skip');
+    await form.getByRole('button', { name: 'Skip all', exact: true }).click();
     await expect(form).toHaveCount(0);
     await expect.poll(() => continuationCount).toBe(3);
     expect(outputs[2]).toContain('skipped');
-    expect(outputs[2]).toContain('Complete');
+    expect(outputs[2]).not.toContain('Complete');
     expect(outputs[2]).not.toContain('Withheld by Skip');
     await page.locator('.thread-user-input-recoveries > summary').click();
     await recovery.locator('summary').click();
     await expect(recovery).toContainText('Withheld by Skip');
-    await expect(recovery.locator('pre')).not.toContainText('How broad');
-    await recovery.getByRole('button', { name: 'Discard', exact: true }).click();
+    await expect(recovery.locator('pre')).toContainText('How broad');
+    await recovery.getByRole('button', { name: 'Delete draft', exact: true }).click();
     await expect(page.getByText('Continued once: answered', { exact: true })).toHaveCount(2);
     await composer.fill('Ask while I send a separate message.');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
@@ -186,7 +189,7 @@ test('real tool delivery recovers loss and keeps ordinary messages independent o
     await form.getByRole('radio', { name: /Complete/ }).check();
     const beforeSteering = await page.evaluate((threadId) => window.lin!.agentCoreRequest('userInput/read', { threadId }), threadId);
     expect(continuationCount).toBe(3);
-    await form.getByRole('button', { name: 'Close questions', exact: true }).click();
+    await form.getByRole('button', { name: 'Back to message', exact: true }).click();
     await composer.fill('Keep this ordinary message separate.');
     await page.getByRole('button', { name: 'Steer', exact: true }).click();
     await expect(composer).toBeEmpty();
@@ -194,11 +197,11 @@ test('real tool delivery recovers loss and keeps ordinary messages independent o
     expect(afterMessage.state.pending).toEqual(beforeSteering.state.pending);
     expect(continuationCount).toBe(3);
     await composer.fill('Another unsent message.');
-    await page.getByRole('button', { name: 'Resume questions', exact: true }).click();
+    await page.getByRole('button', { name: 'Back to questions', exact: true }).click();
     await expect(form.getByRole('radio', { name: /Complete/ })).toBeChecked();
     await expect(composer).toBeHidden();
     await form.getByRole('button', { name: 'Next question', exact: true }).click();
-    await form.getByRole('button', { name: 'Skip and finish', exact: true }).click();
+    await form.getByRole('button', { name: 'Submit answers', exact: true }).click();
     await expect.poll(() => continuationCount).toBe(4);
     await expect(composer).toHaveText('Another unsent message.');
     expect(continuationCount).toBe(4);
@@ -225,7 +228,7 @@ test('real tool delivery recovers loss and keeps ordinary messages independent o
     const afterRestart = await smoke.window.evaluate((threadId) => window.lin!.agentCoreRequest('userInput/read', { threadId }), threadId);
     expect(afterRestart.state.hostGeneration).not.toBe(beforeRestart.state.hostGeneration);
     expect(afterRestart.state.pending).toBeNull();
-    await expect(smoke.window.getByRole('form', { name: 'Input needed' })).toHaveCount(0);
+    await expect(smoke.window.getByRole('form', { name: 'Questions' })).toHaveCount(0);
     const old = beforeRestart.state.pending!;
     const rejected = await smoke.window.evaluate(async (old) => {
       try {

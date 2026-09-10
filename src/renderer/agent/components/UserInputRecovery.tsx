@@ -21,7 +21,7 @@ export function UserInputRecovery({ drafts, canAdd, onAdd, onDiscard, onRetry }:
       const key = userInputKey(draft.request);
       const text = recoveryText(draft);
       const reason = draft.outcome === 'timedOut' ? t.agent.thread.inputExpired
-        : draft.outcome === 'skipped' ? t.agent.thread.inputSkippedRecovery
+        : draft.outcome === 'skipped' ? t.agent.thread.inputRetainedDraft
         : draft.outcome === 'cancelled' ? t.agent.thread.inputCancelled
         : draft.outcome === 'failed' ? t.agent.thread.inputFailed
         : draft.outcome === 'invalidated' ? t.agent.thread.inputInvalidated : t.agent.thread.inputUnknown;
@@ -37,7 +37,7 @@ export function UserInputRecovery({ drafts, canAdd, onAdd, onDiscard, onRetry }:
           <Button size="sm" disabled={!canAdd || draft.addedToMessage} onClick={() => onAdd(draft)}>
             {draft.addedToMessage ? t.agent.thread.inputInMessage : t.agent.thread.inputAddToMessage}
           </Button>
-          {draft.outcome === 'unknown' ? <Button size="sm" onClick={onRetry}>{t.agent.thread.inputRetry}</Button> : null}
+          {draft.outcome === 'unknown' ? <Button size="sm" onClick={onRetry}>{t.agent.thread.inputCheckStatus}</Button> : null}
           <Button size="sm" onClick={() => onDiscard(key)}>{t.agent.thread.inputDiscard}</Button>
         </div>
         {copyError === key ? <p role="alert">{t.agent.thread.inputCopyError}</p> : null}

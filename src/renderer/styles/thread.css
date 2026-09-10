@@ -2767,14 +2767,15 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: var(--space-3);
-  max-height: 50vh;
-  overflow-y: auto;
-  padding: var(--space-2) var(--space-1);
+  gap: var(--space-6);
+  height: min(50vh, calc(var(--space-8) * 24));
+  overflow: hidden;
+  padding: var(--space-3) var(--space-2);
 }
 
 .thread-user-input-heading {
   display: flex;
+  flex: 0 0 auto;
   min-width: 0;
   align-items: center;
   justify-content: space-between;
@@ -2794,9 +2795,13 @@
 
 .thread-user-input-step {
   display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
   min-width: 0;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-6);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
   border-radius: var(--radius-md);
   outline: none;
 }
@@ -2804,9 +2809,9 @@
 .thread-user-input-prompt {
   min-width: 0;
   color: var(--text-strong);
-  font-size: var(--font-ui-sm);
-  font-weight: 650;
-  line-height: var(--line-ui-sm-tight);
+  font-size: var(--font-content);
+  font-weight: 550;
+  line-height: var(--line-content);
   overflow-wrap: anywhere;
 }
 
@@ -2833,30 +2838,33 @@
   gap: var(--space-2);
 }
 
-.thread-user-input-options > label {
+.thread-user-input-option {
   display: grid;
   min-width: 0;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: var(--space-2);
+  grid-template-columns: var(--space-8) minmax(0, 1fr);
+  gap: var(--space-5);
   align-items: start;
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-soft);
-  font-size: var(--font-ui-sm);
-  line-height: var(--line-ui-sm);
-  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-ui-md);
+  line-height: var(--line-ui-md);
+  padding: var(--space-4);
 }
 
-.thread-user-input-options > label:hover {
+.thread-user-input-option:hover {
   background: var(--fill-2);
 }
 
-.thread-user-input-options > label:has(input:checked) {
+.thread-user-input-option:has(input:checked) {
   background: var(--fill-2);
 }
 
-.thread-user-input-options > label > input {
-  margin-block-start: 2px;
+.thread-user-input-option > input {
+  margin: var(--space-1) 0 0;
+  width: var(--space-8);
+  height: var(--space-8);
+  accent-color: var(--text-strong);
 }
 
 .thread-user-input-options label span,
@@ -2873,8 +2881,8 @@
 
 .thread-user-input-options label small {
   color: var(--text-faint);
-  font-size: var(--font-meta);
-  line-height: var(--line-meta-tight);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
 }
 
 .thread-user-input-other {
@@ -2894,7 +2902,7 @@
 }
 
 .thread-user-input-step:focus-visible,
-.thread-user-input-options > label:focus-within {
+.thread-user-input-option:focus-within {
   box-shadow: var(--focus-ring-shadow);
 }
 
@@ -3317,24 +3325,30 @@
 
 .thread-user-input-nav {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-1) var(--space-2);
+  gap: var(--space-2);
   min-width: 0;
 }
 
-.thread-user-input-nav {
-  flex: 1;
-  flex-wrap: nowrap;
-}
-
-.thread-user-input-heading > .thread-user-input-countdown {
-  flex: 0 0 auto;
+.thread-user-input-position {
+  min-width: calc(var(--space-8) * 3);
+  text-align: center;
+  color: var(--text-soft);
+  font-size: var(--font-meta);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
 }
 
 .thread-user-input-footer {
+  flex: 0 0 auto;
   justify-content: space-between;
   align-items: center;
+}
+
+.thread-user-input-submit-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .thread-user-input-other:focus-visible,
@@ -3342,12 +3356,8 @@
   box-shadow: var(--focus-ring-shadow);
 }
 
-.thread-user-input-text-label {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  color: var(--text-soft);
-  font-size: var(--font-meta);
+.thread-user-input-custom-editor {
+  padding: var(--space-2) var(--space-4) var(--space-4) calc(var(--space-4) + var(--space-8) + var(--space-5));
 }
 
 textarea.thread-user-input-other {

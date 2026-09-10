@@ -753,7 +753,7 @@ const coreControlToolContracts: readonly StaticModelToolContract[] = [{
   },
   {
     identity: { namespace: null, name: 'request_user_input' },
-    description: 'Request one to three short product questions. Default wait is 60 seconds. Users may skip individual questions; an answered result is an explicit form submission whose entries contain an option, free text, or skipped: true. A skipped entry supplies no answer. The continue intent ends clarification: use the supplied answers and available information without another interview round. A discussed outcome includes active answers and identifies the actual user message delivered through steering in this same Turn; respond to that message without an empty clarification invitation or repeating the questionnaire. A timedOut result means nothing was submitted, not approval or proof the user saw the question. Continue authorized independent work, state reversible assumptions, or explain the unresolved decision. Do not automatically re-ask skipped or expired questions. Directional, irreversible, or permission-dependent work still requires a real decision. Skipping and timeout grant no authorization; this never requests authorization.',
+    description: 'Request one to three short product questions. Default wait is 60 seconds. The UI opens the questions directly, with previous/next navigation, Other for free text, Submit answers, and Skip all. Submit answers sends the filled answers and skips unanswered questions. Skip all sends no answers and keeps existing drafts local. Do not invent review or continue buttons. Users may skip individual questions by leaving them unanswered; an answered result is an explicit form submission whose entries contain an option, free text, or skipped: true. A skipped entry supplies no answer. The continue intent ends clarification: use the supplied answers and available information without another interview round. A discussed outcome includes active answers and identifies the actual user message delivered through steering in this same Turn; respond to that message without an empty clarification invitation or repeating the questionnaire. A timedOut result means nothing was submitted, not approval or proof the user saw the question. Continue authorized independent work, state reversible assumptions, or explain the unresolved decision. Do not automatically re-ask skipped or expired questions. Directional, irreversible, or permission-dependent work still requires a real decision. Skipping and timeout grant no authorization; this never requests authorization.',
     scope: 'rootThread',
     schemaOwner: 'core',
     inputSchema: requestUserInputSchema,
@@ -762,7 +762,7 @@ const coreControlToolContracts: readonly StaticModelToolContract[] = [{
         questionId: stringSchema(),
         optionLabel: stringSchema(),
         otherText: stringSchema(),
-        skipped: booleanSchema('True only when the user explicitly skipped this question; no optionLabel or otherText accompanies it.'),
+        skipped: booleanSchema('True when this question was left unanswered in an explicit submission; no optionLabel or otherText accompanies it.'),
       }, ['questionId'])),
       outcome: enumSchema(['answered', 'discussed', 'timedOut']),
       intent: enumSchema(['answer', 'continue', 'discuss']),

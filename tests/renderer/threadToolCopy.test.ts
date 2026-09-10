@@ -111,7 +111,7 @@ describe('every built-in tool says what it did, not which API was called', () =>
     }, 'Searched the web'],
     ['web_fetch', dynamic('web_fetch', { url: 'https://example.com/a' }), 'Fetched https://example.com/a'],
     ['skill', dynamic('skill', { skill: 'dataviz' }), 'Used the dataviz skill'],
-    ['request_user_input', dynamic('request_user_input', { question: 'which?' }), 'Asked a question'],
+    ['request_user_input', dynamic('request_user_input', { questions: [{ question: 'Which scope?' }, { question: 'When?' }] }), 'Questions asked'],
     ['update_plan', dynamic('update_plan', { plan: [] }), 'Updated the plan'],
     ['command', shell('npm test'), 'Ran "npm test"'],
     ['file change', changes('/w/a.ts'), 'Changed a.ts'],

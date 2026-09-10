@@ -1591,7 +1591,7 @@ function toolActivityPhrase(
       : (running ? labels.searchingWebActivity : labels.searchedWebActivity);
     case 'webFetch': return running ? labels.fetchingPages({ count }) : labels.fetchedPages({ count });
     case 'skill': return running ? labels.usingSkills({ count }) : labels.usedSkills({ count });
-    case 'question': return running ? labels.askingQuestions({ count }) : labels.askedQuestions({ count });
+    case 'question': return running ? labels.askingQuestions : labels.askedQuestions;
     case 'tool': return running ? labels.usingTools({ count }) : labels.usedTools({ count });
     default: return assertNever(kind);
   }

@@ -122,7 +122,7 @@ composer is empty, contains text, or has focus. Keep the ordinary editor mounted
 but hidden: its text, attachments, and selection are independent of answer drafts.
 Question arrival never reads those contents into an answer. Submit, close, and
 expiry restore the original message draft unchanged. Closing the question is a
-local dismissal; only then show Resume questions beside the ordinary editor.
+local dismissal; only then show Back to questions beside the ordinary editor.
 Closing or reopening neither submits nor cancels the Host request or its deadline.
 The active input target may move into the visible form, but unrelated document
 focus is never stolen.
@@ -135,37 +135,43 @@ visibility, so a lost notification cannot produce an unlimited wait. The default
 is a concrete implementation choice for the user's bounded-wait requirement;
 there is no new Settings panel.
 
-DEC-4: Show question progress with a previous-question arrow and a close icon.
-Below it, show the prompt, neutral option rows, and an editable Other answer field
-with a visible label. Selected and hovered options alone receive a fill. The
-footer contains Skip and Next question. The final question contains Skip and
-finish and Submit answers. Submit directly from that question; there is no
-review page, question-tab bar, More menu, or execution terminology in the form.
-Choosing a recommended option is an explicit local choice, never a default answer.
-Typing activates free text and selecting an option preserves inactive text.
-Back restores prior choices and text without submitting.
+DEC-4: Separate navigation, answer content, and submission into three stable
+regions. The header groups previous/next icon buttons around a compact current /
+total indicator, with Close at the opposite edge. Both navigation buttons stay
+visible, with the unavailable direction disabled at each end. Accessible names
+and native tooltips identify the icons. Navigation never submits an answer.
+The body gives the question stronger type than option labels and descriptions.
+Other is an explicit peer radio option; selecting it reveals and focuses its
+text editor. Inactive text remains mounted but hidden and never submits with a
+preset option. The body alone scrolls inside a bounded, stable-height form, so
+navigation and footer actions do not move when Other opens or a question wraps.
+The footer places the quiet deadline apart from Skip all and Submit answers. Submit
+is available on every step once there is an active answer; it includes the
+request's active answers and typed skips for the rest. There is no footer Next,
+review page, tab bar, More menu, or execution terminology in the form. Choosing a
+recommended option is always an explicit local choice.
 
-DEC-5: Skip advances locally on earlier questions. On the final question, the
-explicit Skip and finish action submits earlier active answers and leaves the
-current question unanswered. This wording makes the final submission distinct
-from local navigation. With every question skipped, send only typed skips with
-continue intent. With any active answer, use answer intent. Close and Escape
-return to the unchanged ordinary draft without submitting. Stop remains the
-ordinary composer's existing execution control, available after leaving the form.
+DEC-5: Skip all is available on every question and ends the whole request with
+only typed skips and continue intent. It never submits existing answers or
+mutates their local drafts, including on failure. Submit answers uses answer
+intent, sending all active answers with typed skips for unanswered questions.
+Navigation is local and never changes the active answer. Close and Escape return
+to the message without settling questions or stopping work. Neither skipping nor
+silence grants authorization.
 
 DEC-6: Draft state and submission are independent even though the two editors
 occupy the same area. Ordinary Send/Steer keeps its existing message admission
 route after leaving questions; it never reads answers or settles the request.
 Answer, Skip, failure, and timeout never read or clear the ordinary draft.
 Message submission likewise leaves question drafts intact. The explicit Add to
-message recovery action is the only transfer between these drafts. The Host's
+message draft recovery action is the only transfer between these drafts. The Host's
 atomic discussion contract remains an explicit API operation, not an implicit
 interpretation of an ordinary message. No Thread lock is held while a user types.
 
 DEC-7: Expiry removes answerability, not an active editing gesture. Keep a focused
 non-empty answer editor and its selection mounted as an unsent draft. Its primary
-action becomes Add to message, which sends nothing. Otherwise return to the
-ordinary editor and expose non-empty retained content through one Unsent answers
+action becomes Add to message draft, which sends nothing. Otherwise return to the
+ordinary editor and expose non-empty retained content through one Answer drafts
 shelf. Do not create recovery rows for empty skips or empty timeouts. Use subdued
 remaining time and one factual expiry announcement, without flashing, warning
 colors, or per-second screen-reader announcements. Only an authoritative timeout
@@ -221,9 +227,9 @@ system resume before accepting another response.
 
 FR-8: When a known waiting state lacks request content, show a localized restoring
 state in the question area. If the read fails or the Host reports inconsistent state,
-show an inline error with Retry and the existing interrupt action. Preserve the
+show an inline error with Try again and the existing interrupt action. Preserve the
 ordinary editor and its normal sending route; disable only question submission
-while request validity is unknown. The visible recovery state offers Retry and Stop. The Host deadline continues during UI recovery;
+while request validity is unknown. The visible recovery state offers Try again and Stop. The Host deadline continues during UI recovery;
 failure to render a question cannot extend it. No failure path invents an answer.
 
 FR-9: Record bounded diagnostics for request publication, snapshot reconciliation,
@@ -279,12 +285,12 @@ separate and are never replaced by settlement of an older request.
 | Cancelled, interrupted, failed, or invalidated by Host restart | Fence submission and show the known reason; preserve an active local editor | Retain unsent content for manual recovery; it grants no authority to revive the tool |
 | Settlement cannot be determined | Disable submission and reconcile through the existing recovery state | Preserve the draft without claiming acceptance or automatically retrying submission |
 
-Use one compact Unsent answers shelf beside the composer, even while a newer
+Use one compact Answer drafts shelf beside the composer, even while a newer
 question is displayed. It contains only non-empty retained content, grouped by
-request, and offers Review, Copy, and Discard for the selected entry. An explicit Add to message
+request, and expands to show the selected draft, with Copy answers and Delete draft actions. An explicit Add to message draft
 action inserts the selected recovery content with its question context, preserving
 existing text and attachments, and restores the ordinary editor. It never
-sends the message or answers a newer question. Show In message draft after adding
+sends the message or answers a newer question. Show Added to draft after adding
 the content and prevent duplicate insertion. Only explicit ordinary Send/Steer can start or steer execution. Keep the recovery entry until discarded or
 its included message is accepted; send failure retains it. If the user removes
 the inserted content before sending, retain it in recovery. A new question or a
@@ -309,16 +315,15 @@ or uncertainty causes remain actionable under their existing owners. There is no
 scheduled-request timer or separate answer ledger; the scheduled-work plan owns
 only run presentation and admission around this shared lifecycle.
 
-FR-15: Earlier Skip marks the current question unanswered and advances locally.
-Previous question restores a skipped step; choosing or typing changes its active
-answer without deleting inactive text. Next and Previous do not submit.
-The final Skip and finish explicitly submits earlier active answers plus a skip
-for the current question. Submit answers directly sends active selections or
-non-empty free text with typed skips for remaining unanswered entries. Both
-settle exactly once with the existing identity/deadline boundary. Empty skips
-create no recovery item; skipped and inactive text remain local. All-skipped
-submission uses continue intent and ends clarification without granting approval.
-There is no review page, completeness warning, or confirmation dialog.
+FR-15: Previous and Next browse locally without answering, skipping, or submitting.
+An unanswered question becomes a typed skip only in an explicit submission.
+Submit answers is available from any step with an active answer and sends all
+active selections or non-empty free text, with typed skips for the rest. Skip all
+is a separate action on every step: send only typed skips with continue intent
+and retain every existing answer draft. Both routes settle once at the existing
+identity/deadline boundary. Failure preserves all local answers for retry. Empty
+skips create no recovery item; retained content stays available as an answer draft.
+Neither route reads or clears the ordinary message draft or grants authorization.
 
 FR-16: The control plane supports an explicit composite discussion response,
 distinct from answered, timed-out, and cancelled outcomes. The caller supplies
@@ -347,10 +352,11 @@ question response into a new Turn. Stop fences this route under FR-12 as well.
 ### Flows, UI behavior, and recovery
 
 FLOW-1: The Agent asks a valid question. The Host accepts it, publishes pending
-state, and awaits its result. The form directly replaces the composer and displays the question,
-options, direct free text, quiet remaining time, and local step controls. Selecting
-an option or typing does not submit. Previous/Next navigate locally, and the
-last question submits directly. The final skip is labeled Skip and finish.
+state, and awaits its result. The form directly replaces the composer and displays
+the question, options including Other for free text, quiet remaining time, and
+local step controls. Selecting an option or typing does not submit. Previous/Next
+navigate locally, and the separate Submit answers action submits the active
+answers from any question. Skip all ends the request without any answer content.
 Explicit submission resolves once and restores the ordinary draft while the same
 Turn continues. A user can skip any question or close the form and recover the original message draft.
 
@@ -366,7 +372,7 @@ clear the old form, and the model resumes at most once. A newer question is not
 removed by an old response. No polling, repeated model call, or auto-answer is
 used to unblock the control plane.
 
-FLOW-4: Snapshot recovery fails. The composer shows the recovery error, Retry,
+FLOW-4: Snapshot recovery fails. The composer shows the recovery error, Try again,
 and an interrupt route. A successful retry restores the live question or normal
 editor according to the new snapshot. A stopped or restarted Host produces the
 existing execution recovery state, not a restored historical question.
@@ -396,20 +402,21 @@ used as an answer. Close restores it unchanged. Resuming questions restores the
 answer step and answer drafts. Ordinary Send/Steer after closing sends only the
 message, while the independent question remains pending until its own settlement.
 
-FLOW-8: The person does not want to answer. They can skip an individual question
-or close the form without sending anything. Closing returns to their original
-message and exposes Resume questions only after that explicit choice. Sending a
+FLOW-8: The person does not want to answer. They can leave a question unanswered and move on, choose Skip all to end the whole request without answers,
+or close the form without settling it. Closing returns to their original
+message and exposes Back to questions only after that explicit choice. Sending a
 message does not submit accumulated answers. The question's deadline still applies;
 expiry sends no local drafts. No preliminary editor-choice invitation is shown.
 
-The action hierarchy is one primary Next question / Submit answers action and
-one secondary Skip / Skip and finish action, with previous/close in the header.
+The action hierarchy is one primary Submit answers action and one secondary
+Skip all action. Previous and Next are paired header icons around
+the position indicator; Close sits separately. The quiet deadline is footer metadata.
 Keep all controls reachable at narrow widths without horizontal scrolling. Use
 neutral tokenized states and ordinary user-facing language. A submitted outcome
 becomes a compact factual conversation record; timeout creates no synthetic user
 message or warning banner on every historical question.
 
-Respect focus within a displayed question step. Resume questions focuses the
+Respect focus within a displayed question step. Back to questions focuses the
 question. Arrival can focus the replacement form if the hidden composer held
 focus; it never overrides another document editing target.
 Background updates must not repeatedly reset selections or steal focus. Selection
@@ -423,6 +430,38 @@ protocol revisions or internal request IDs.
 Show a subdued countdown or remaining-time label; screen readers must not
 announce every tick. Expiry should visibly explain that no answer was submitted,
 without claiming a choice on the user's behalf.
+
+### UI copy contract
+
+Use sentence case and the same meanings in English and Simplified Chinese.
+Question text and options come from the Agent; interface labels come from the
+typed message catalog. Do not explain implementation terms in the form.
+
+| Surface | English copy | Meaning |
+| --- | --- | --- |
+| Waiting status | Waiting for your answers | Waiting for question answers, not a generic input task |
+| Activity row | Questions for you / Questions asked | Do not count tool calls as individual questions or claim answers were submitted |
+| Navigation | Previous question / Next question | Icon labels and tooltips; local browsing only |
+| Close / return | Back to message | Restore the ordinary draft; keep the question pending |
+| Reopen after closing | Back to questions | Restore the same question step and deadline |
+| Free text | Other; Write your answer… | Explicit free-text option and its editor |
+| Secondary action | Skip all | End the request without any answers; retain filled drafts |
+| Primary action | Submit answers | Submit active answers and skip unanswered entries |
+| In flight | Skipping… / Submitting… | Describe the requested operation while controls are disabled |
+| Countdown | Continues in Ns | State what happens when the wait ends; never submit drafts automatically |
+| Loading / failure | Loading questions… / Could not load the questions. Try again. | Offer Try again and Stop without protocol terminology |
+| Timeout | Time is up. No answers were submitted. | State the known result without blaming the person |
+| Recovery heading | Answer drafts (N) | Count retained request drafts; do not imply durable saving |
+| Withheld content | This draft was not submitted. | Do not label the whole request skipped after partial submission |
+| Unconfirmed receipt | Could not confirm whether your answers were submitted. Your draft is still here. | Keep uncertainty explicit; Check status only reconciles |
+| Copy / transfer | Copy answers / Add to message draft | Copying and adding never send or replace the ordinary message |
+| Transfer result | Added to draft | The text is in the composer but has not necessarily been sent |
+| Removal | Delete draft | Remove only the selected retained draft |
+
+Submission and skip failures use separate messages, explain draft retention,
+and invite retry; they do not expose raw transport errors. Cancellation, failure,
+and unavailable questions use distinct outcome text without promising that the
+Agent continued. No unused Skip, Skip and finish, or review labels remain.
 
 ### Implementation scope and dependencies
 
@@ -486,7 +525,7 @@ on the future scheduling UI to ship the conversation feature.
 | AC-4 | Reordered pending/empty snapshots and requested/cleared events cannot erase a newer question or resurrect an old one. |
 | AC-5 | Interrupt, tool cancellation, normal/error Turn termination, and owner shutdown remove the matching form and settle the wait without inventing an answer. |
 | AC-6 | Answer, Continue, or discussion racing with cancellation, double submission, or a lost acceptance reply produce at most one accepted response, one recorded discussion message where applicable, and one model resumption. |
-| AC-7 | A waiting-state/snapshot failure shows Retry and an interrupt route; successful recovery restores a form or editor, never an invisible indefinite wait. |
+| AC-7 | A waiting-state/snapshot failure shows Try again and an interrupt route; successful recovery restores a form or editor, never an invisible indefinite wait. |
 | AC-8 | Host restart does not revive historical questions; renderer reload under a live Host restores the request and retains its original deadline. |
 | AC-9 | Multi-step/Other answers, existing draft retention, focus, keyboard use, light/dark themes, and accessibility preferences remain functional. |
 | AC-10 | The reported event order reproduces neither a waiting Thread with no recoverable form nor an idle Thread with a stale form. Diagnostics identify transition boundaries without recording question/answer content. |
@@ -495,20 +534,21 @@ on the future scheduling UI to ship the conversation feature.
 | AC-13 | Answer versus deadline, delayed timer, system sleep/resume, cancellation, and late-response races yield one settlement; a stopped Turn is never revived. |
 | AC-14 | After timeout the Agent can continue reversible independent work, retains genuinely required decisions as unresolved, and does not automatically re-ask the same question or treat silence as approval. |
 | AC-15 | Automatic expiry while typing Other on a later step retains every edited step without Submit; hiding/remounting the form, Thread switching, and delayed snapshots do not lose that draft within the same renderer session. |
-| AC-16 | After expiry or interruption, Review/copy, Add to message, and Discard address the exact recovery entry. Adding preserves existing composer text/attachments and makes no model call; only explicit Send can execute, and failed Send retains the recovery content. |
+| AC-16 | After expiry or interruption, Expand/copy, Add to message draft, and Delete draft address the exact recovery entry. Adding preserves existing composer text/attachments and makes no model call; only explicit Send can execute, and failed Send retains the recovery content. |
 | AC-17 | A newer request, late settlement, or lost acceptance reply never moves or deletes another request's draft. Reconciled acceptance releases only content actually included in that submission, retaining inactive text and newer edits; unavailable settlement retains content without claiming acceptance. |
 | AC-18 | Timeout of a scheduled-run question removes its live form and active-question attention while preserving the same run and occupied foreground slot until actual execution settles. Unread results and unrelated issues remain unchanged; no timer or input owner is duplicated. |
-| AC-19 | A user can skip individual or all questions. Earlier skips and navigation are local; final Skip and finish submits once. Submitted answers exclude withheld text, and deadline/cancellation races settle once. |
+| AC-19 | Navigation leaves unanswered questions local. Submit answers includes typed skips for them. Skip all ends the request from any step with only skips and retains every existing answer draft. Deadline/cancellation races settle once. |
 | AC-20 | At 320 CSS pixels, all questions and actions remain reachable without horizontal scrolling. Light/dark, contrast, reduced motion/transparency, neutral states, and visible keyboard focus follow existing design guards. |
 | AC-21 | A pending question directly replaces the composer even when it contains text. The hidden editor keeps its DOM, text, attachments, and draft; closing or submitting restores it unchanged. No preliminary choice is required. |
-| AC-22 | Typing activates free text and selecting an option preserves inactive text. Previous/Next only navigate. The final question submits directly, without a review screen or auto-submitting a selected option. |
-| AC-23 | Final submission keeps earlier active answers. Final Skip and finish adds an explicit skip for the current question; all-skipped submission uses continue intent. Neither route reads the ordinary message draft or grants authorization. |
-| AC-24 | Close, Escape, and Resume questions make no model call and preserve both independent drafts and the original deadline. Ordinary Send/Steer sends only message content and does not settle questions or clear their answers. |
+| AC-22 | Typing activates free text and selecting an option preserves inactive text. Previous/Next icons only navigate and are disabled at their respective ends. Submit answers is independent of navigation and available on any step, without a review screen or auto-submitting a selected option. |
+| AC-23 | Submit answers includes earlier active answers. Skip all sends no answer content, uses continue intent, and retains both answer and ordinary message drafts. Neither route grants authorization. |
+| AC-24 | Close, Escape, and Back to questions make no model call and preserve both independent drafts and the original deadline. Ordinary Send/Steer sends only message content and does not settle questions or clear their answers. |
 | AC-25 | Injected ordinary Send failure retains its message and question drafts. Question submission failure or lost acknowledgement never clears the message draft. Explicit composite-API failure/replay remains exactly once. |
-| AC-26 | Expiry while typing preserves the actual editor, caret, selection, IME, and scroll while disabling the expired tool route. New typing remains local and Add to message sends nothing. A new question does not displace that active draft editor. |
-| AC-27 | Empty outcomes create no recovery item; several non-empty outcomes share one shelf. Add to message preserves existing rich content and attachments, cannot insert twice, and failed Send or removing the inserted content retains recoverability. |
+| AC-26 | Expiry while typing preserves the actual editor, caret, selection, IME, and scroll while disabling the expired tool route. New typing remains local and Add to message draft sends nothing. A new question does not displace that active draft editor. |
+| AC-27 | Empty outcomes create no recovery item; several non-empty outcomes share one shelf. Add to message draft preserves existing rich content and attachments, cannot insert twice, and failed Send or removing the inserted content retains recoverability. |
 | AC-28 | Escape dismisses local UI without answering, skipping, or stopping. Stop explicitly interrupts. The deadline is quiet and announced accessibly without per-second updates; outcome copy distinguishes submitted partial answers, discussion, timeout, and cancellation. |
-| AC-29 | The question surface contains progress, previous/close controls, options, labeled Other answer, and two footer actions. No question tabs, More menu, execution controls, or review page remain. |
+| AC-29 | The question surface has paired previous/next icons around progress, a separate close control, a scrollable question/answer body, an explicit Other option, and two fixed footer actions. No question tabs, More menu, execution controls, or review page remain. |
+| AC-30 | At 320 CSS pixels and with long wrapped questions, the header and footer stay visible. Selecting Other, typing, and moving between questions preserve form height and inactive drafts. Only the answer body scrolls. |
 
 Extend the service test titled `round-trips request_user_input through the control
 plane and active Thread flag`, codec/projection tests, renderer `ThreadStore`
@@ -522,7 +562,7 @@ timeout smoke; include missing `autoResolutionMs`, explicit bounds, no form
 delivery, multi-question partial drafts, and timer callbacks delayed by sleep.
 Drive draft tests through actual keystrokes and IME, timer expiry without Submit,
 form unmount/remount, a newer request, and ordinary Send and explicit composite API calls with
-failure/retry. Verify local earlier skips, explicit final Skip and finish, free-text/option
+failure/retry. Verify local navigation, explicit Skip all, partial submission, free-text/option
 switching, direct final submission, and closing/resuming the unchanged ordinary draft. Cover response-intent and discussion codecs, model projection,
 canonical conversation records, attachment validation, and exact receipt replay.
 Verify recovery preserves rich composer content and never emits an old-tool answer

@@ -3768,6 +3768,10 @@ test.describe('canonical agent Thread surface', () => {
         __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
       };
       const inputToolId = '01910000-0000-7000-8000-00000000c004';
+      const question = {
+        id: 'scope', header: 'Scope', question: 'Which scope should the review cover?',
+        options: [{ label: 'Focused', description: 'This module.' }, { label: 'Complete', description: 'All modules.' }],
+      };
       target.__LIN_E2E__?.emitAgentCoreNotification({
         type: 'turn/started',
         threadId,
@@ -3780,12 +3784,12 @@ test.describe('canonical agent Thread surface', () => {
             provenance: { originThreadId: threadId, originTurnId: liveTurnId, originItemId: inputToolId },
             namespace: null,
             tool: 'request_user_input',
-            arguments: { questions: [] },
+            arguments: { questions: [question] },
             modelCall: {
               disposition: 'replayable',
               identity: { namespace: null, name: 'request_user_input' },
               providerName: 'request_user_input',
-              arguments: { storage: 'inline', value: { questions: [] } },
+              arguments: { storage: 'inline', value: { questions: [question] } },
               schemaDigest: '0'.repeat(64),
             },
             status: 'inProgress',
@@ -3810,6 +3814,12 @@ test.describe('canonical agent Thread surface', () => {
         explanation: null,
         plan: [{ step: 'Answer the clarification', status: 'in_progress' }],
       });
+      // Waiting is backed by the Host's live request, not just a status hint.
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'userInput/requested', threadId, turnId: liveTurnId, itemId: inputToolId,
+        request: { hostGeneration: 'mock-host', threadId, turnId: liveTurnId, itemId: inputToolId,
+          revision: 1, deadlineAt: Date.now() + 60_000, autoResolutionMs: 60_000, questions: [question] },
+      });
       target.__LIN_E2E__?.emitAgentCoreNotification({
         type: 'thread/status/changed',
         threadId,
@@ -3818,17 +3828,15 @@ test.describe('canonical agent Thread surface', () => {
     }, { ...ids, liveTurnId });
 
     const live = page.locator(`[data-thread-turn-row="${liveTurnId}"] .thread-speaker`);
-    await expect(live.locator('.thread-process-title')).toHaveText('Waiting for input');
+    await expect(live.locator('.thread-process-title')).toHaveText('Waiting for your answers');
     await expect(live.locator('.working-text')).toHaveCount(0);
     const requestedInput = live.locator('.thread-tool-inProgress');
-    await expect(requestedInput).toContainText('Asking a question');
+    await expect(requestedInput).toContainText('Questions for you');
     await expect(requestedInput.locator('.working-text')).toHaveCount(0);
     const blockedPlan = page.locator('.thread-plan-progress-summary');
     await expect(blockedPlan).toHaveText('1/1 · Answer the clarification');
     await expect(blockedPlan.locator('.working-text')).toHaveCount(0);
-    const liveTurn = page.locator(`[data-thread-turn-row="${liveTurnId}"]`);
-    await expect(liveTurn.locator('.thread-streaming-shape')).toHaveCSS('animation-name', 'none');
-    await expect(liveTurn.locator('.thread-streaming-shape path')).toHaveCSS('animation-name', 'none');
+    await expect(live.locator('.thread-speaker-avatar svg')).toHaveAttribute('data-mood', 'needsYou');
   });
 
   test('states an interrupted Turn once, and never leaves an unlabelled timeline', async ({ page }) => {
@@ -5183,7 +5191,7 @@ test.describe('canonical agent Thread surface', () => {
       });
     });
 
-    const form = page.getByRole('form', { name: 'Input needed' });
+    const form = page.getByRole('form', { name: 'Questions' });
     await expect(composer).toBeHidden();
     await expect(form).toBeVisible();
     await expect(form.locator('.thread-user-input-step')).toBeFocused();
@@ -5198,7 +5206,8 @@ test.describe('canonical agent Thread surface', () => {
     await form.getByRole('button', { name: 'Previous question', exact: true }).click();
     await expect(form.getByRole('radio', { name: /Complete/ })).toBeChecked();
     await form.getByRole('button', { name: 'Next question' }).click();
-    await form.getByRole('textbox', { name: 'Other answer' }).fill('Every morning');
+    await form.getByRole('radio', { name: 'Other', exact: true }).check();
+    await form.getByRole('textbox', { name: 'Your answer' }).fill('Every morning');
     await form.getByRole('button', { name: 'Submit answers', exact: true }).click();
 
     const response = (await commandCalls(page)).filter((call) => call.cmd === 'userInput/respond').at(-1);

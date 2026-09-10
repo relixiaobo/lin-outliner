@@ -615,7 +615,7 @@ describe('ThreadItemView tool row status presentation', () => {
     await flush();
 
     const label = rendered.document.querySelector('.thread-tool-label');
-    expect(label?.textContent).toBe('Asking a question');
+    expect(label?.textContent).toBe('Questions for you');
     expect(label?.querySelector('.working-text')).toBeNull();
     expect(rendered.document.querySelector('.thread-tool-inProgress')).not.toBeNull();
   });
