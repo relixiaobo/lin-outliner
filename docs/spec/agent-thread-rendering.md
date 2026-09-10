@@ -666,20 +666,27 @@ The header shows a question icon and Question on the left. The right groups
 paired browsing arrows, compact N / M position, and the quiet clock. The position
 has a localized Question N of M accessible label. Arrows are disabled at the
 respective ends and omitted with the position for a single question. The question leads the scrollable body.
-Presets are light full-width rows with numbered circular markers on the left.
-A selected row uses neutral fill and a check marker while preserving native radio
-semantics and visible keyboard focus. No option is selected automatically. Selection uses the shared selection token,
-press uses the neutral active fill, and hover never changes geometry. Question
-and answer text use the content type pair; metadata uses the meta pair. Shared
-Textarea, Button, and IconButton own control skins and accessibility states.
+Preset labels remain full-row click targets, with compact neutral native radios
+aligned to the first text line. The same radio marks the custom response. No
+ordinal badges or swapping number/check icons occupy the narrow content column.
+Selection is carried by the radio, without a persistent filled row; hover and
+press use the neutral fill tokens. Native keyboard focus remains visible and
+no option is selected automatically. Question and answer text use the content
+type pair; metadata uses the meta pair. Shared Textarea, Button, and IconButton
+own control skins and accessibility states.
 
-A pencil-marked free-text field is directly editable below the presets. Focus expands the field without changing the selected answer;
-typing activates the free-text response; selecting a preset keeps the text visible but
-inactive, without sending it. The field expands while active and stays mounted
-when the Host settles. A pure-text question uses an empty options array and
-shows a full-width bordered Reply field without a pencil marker or preset rows.
-It starts at one line and grows with content up to a bounded height. There is no
-preceding Other choice or editor switch.
+A directly editable free-text field sits beside the custom radio. Clicking the
+field or selecting its radio activates that response, including retained text;
+typing also activates it. Keyboard focus alone does not change the answer. Native
+radio-group arrow keys can reactivate an existing text answer without editing it
+or moving focus out of the group. Clicking its radio enters the text editor.
+Selecting a preset keeps the custom text visible but inactive, without sending it.
+The editor remains mounted, and its height depends only on content, never on
+focus or the selected answer. Short replies stay one line and long replies grow
+to a bounded height before scrolling. Switching between a preset and retained
+text keeps the editor, caret, and control positions stable. A pure-text question
+uses an empty options array and shows only the shared boxed Reply field.
+There is no preceding Other choice or editor switch.
 The form fits its content up to the existing half-viewport cap; only the body
 scrolls after that cap, so short questions leave more conversation visible.
 

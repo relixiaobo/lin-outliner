@@ -2849,12 +2849,8 @@
   background: transparent;
 }
 
-.thread-user-input-choice:has(input:enabled:not(:checked)):hover {
+.thread-user-input-choice:has(input:enabled):hover {
   background: var(--fill-2);
-}
-
-.thread-user-input-choice:has(input:checked) {
-  background: var(--selection-bg);
 }
 
 .thread-user-input-choice:has(input:enabled):active {
@@ -2864,34 +2860,20 @@
 .thread-user-input-option {
   display: grid;
   min-width: 0;
-  grid-template-columns: var(--control-size-xl) minmax(0, 1fr);
+  grid-template-columns: var(--icon-size-sm) minmax(0, 1fr);
   gap: var(--space-4);
-  align-items: center;
-  border-radius: var(--radius-md);
+  align-items: start;
   color: var(--text-soft);
   font-size: var(--font-content);
   line-height: var(--line-content);
   padding: var(--space-3) var(--space-2);
 }
 
-.thread-user-input-marker {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--control-size-xl);
-  height: var(--control-size-xl);
-  flex: 0 0 auto;
-  border: 1px solid var(--separator);
-  border-radius: var(--radius-pill);
-  color: var(--text-soft);
-  font-size: var(--font-ui-sm);
-}
-
-.thread-user-input-choice:has(input:checked) .thread-user-input-marker,
-.thread-user-input-custom[data-selected="true"] .thread-user-input-marker {
-  background: var(--fill-3);
-  color: var(--text-strong);
-  border-color: var(--text-soft);
+.thread-user-input-radio {
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
+  margin: calc((var(--line-content) - var(--icon-size-sm)) / 2) 0 0;
+  accent-color: var(--text-strong);
 }
 
 .thread-user-input-option-text,
@@ -2922,8 +2904,7 @@
   justify-content: flex-end;
 }
 
-.thread-user-input-step:focus-visible,
-.thread-user-input-choice:has(input:focus-visible) {
+.thread-user-input-step:focus-visible {
   box-shadow: var(--focus-ring-shadow);
 }
 
@@ -3411,18 +3392,20 @@
 
 .thread-user-input-custom {
   display: grid;
-  grid-template-columns: var(--control-size-xl) minmax(0, 1fr);
+  grid-template-columns: var(--icon-size-sm) minmax(0, 1fr);
   gap: var(--space-4);
   align-items: start;
   padding: var(--space-3) var(--space-2);
 }
 
 textarea.thread-user-input-other {
-  min-height: var(--control-size-md);
+  field-sizing: content;
+  min-height: var(--line-content);
+  max-height: calc(var(--space-8) * 8);
   width: 100%;
   min-width: 0;
   margin: 0;
-  padding: var(--space-2);
+  padding: 0;
   font-size: var(--font-content);
   line-height: var(--line-content);
   resize: none;
@@ -3438,8 +3421,6 @@ textarea.thread-user-input-other {
 }
 
 .thread-user-input-text-only textarea {
-  field-sizing: content;
   min-height: var(--control-size-xl);
-  max-height: calc(var(--space-8) * 8);
   padding: var(--space-4);
 }

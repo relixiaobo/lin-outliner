@@ -100,7 +100,7 @@ test('Next only navigates and final submission includes answers retained through
   const other = form.getByRole('textbox', { name: 'Your answer' });
   await expect(other).toBeFocused();
   await other.fill('Tuesday morning');
-  expect((await form.boundingBox())!.height).toBeGreaterThan(initialHeight);
+  expect((await form.boundingBox())!.height).toBeCloseTo(initialHeight, 0);
   expect((await form.locator('.thread-user-input-footer').boundingBox())!.y).toBeCloseTo(footerY, 0);
   await next.click();
   await expect(next).toHaveCount(0);
@@ -184,6 +184,58 @@ test('tabbing into the response field preserves the selected option until text i
   await form.getByRole('button', { name: 'Submit answers', exact: true }).click();
   expect((await responses(page))[0]!.args.answers).toEqual([{ questionId: 'scope', otherText: 'Use my own scope.' }]);
 });
+
+for (const theme of ['light', 'dark'] as const) {
+  test(`preset and custom answers switch in place without editing the retained text in ${theme}`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' });
+    await openMockedApp(page);
+    const threadId = await createThread(page);
+    await page.locator('.agent-dock').evaluate((element: HTMLElement) => { element.style.width = '320px'; element.style.minWidth = '320px'; });
+    await ask(page, threadId, 'switch-answer', 1, true);
+    const form = await openQuestions(page);
+    const preset = form.getByRole('radio', { name: /Complete/ });
+    const custom = form.getByRole('radio', { name: 'Your answer', exact: true });
+    const response = form.getByRole('textbox', { name: 'Your answer' });
+    const submit = form.getByRole('button', { name: 'Submit answers', exact: true });
+    await preset.click();
+    const editor = await response.elementHandle();
+    const position = await response.boundingBox();
+    const height = (await form.boundingBox())!.height;
+    expect((await preset.boundingBox())!.width).toBeLessThanOrEqual(16);
+    await custom.click();
+    await expect(response).toBeFocused();
+    await expect(custom).toBeChecked();
+    await expect(preset).not.toBeChecked();
+    await expect(submit).toBeDisabled();
+    expect(await response.boundingBox()).toEqual(position);
+    await response.fill('A custom scope');
+    await preset.click();
+    await expect(preset).toBeChecked();
+    await expect(custom).not.toBeChecked();
+    await expect(response).toHaveValue('A custom scope');
+    expect(await response.boundingBox()).toEqual(position);
+    await page.mouse.move(0, 0);
+    await form.screenshot({ animations: 'disabled', path: `tmp/user-input-recovery/preset-with-text-${theme}.png` });
+    await response.click();
+    await expect(custom).toBeChecked();
+    await expect(response).toHaveValue('A custom scope');
+    await expect(submit).toBeEnabled();
+    expect(await response.evaluate((element, original) => element === original, editor)).toBe(true);
+    expect((await form.boundingBox())!.height).toBe(height);
+    await page.mouse.move(0, 0);
+    await form.screenshot({ animations: 'disabled', path: `tmp/user-input-recovery/custom-restored-${theme}.png` });
+    await preset.click();
+    await preset.press('ArrowDown');
+    await expect(custom).toBeChecked();
+    await expect(custom).toBeFocused();
+    await custom.press('Tab');
+    await expect(response).toBeFocused();
+    await expect(response).toHaveValue('A custom scope');
+    expect(await responses(page)).toHaveLength(0);
+    await submit.click();
+    expect((await responses(page))[0]!.args.answers).toEqual([{ questionId: 'scope', otherText: 'A custom scope' }]);
+  });
+}
 
 test('double-clicking Next cannot submit the final question', async ({ page }) => {
   await openMockedApp(page);
@@ -564,7 +616,7 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(form.getByRole('textbox', { name: 'Your answer' })).toBeInViewport();
     const choice = form.locator('.thread-user-input-choice').first();
     const label = choice.locator('strong');
-    expect((await choice.locator('.thread-user-input-marker').boundingBox())!.x).toBeLessThan((await label.boundingBox())!.x);
+    expect((await choice.getByRole('radio').boundingBox())!.x).toBeLessThan((await label.boundingBox())!.x);
     const rowBounds = await choice.boundingBox();
     await choice.hover();
     expect(await choice.boundingBox()).toEqual(rowBounds);
@@ -572,17 +624,17 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(choice.getByRole('radio')).toBeChecked();
     const tokens = await choice.evaluate((element) => {
       const probe = document.createElement('div');
-      probe.style.backgroundColor = 'var(--selection-bg)';
+      probe.style.color = 'var(--text-strong)';
       probe.style.fontSize = 'var(--font-content)';
       document.body.append(probe);
       const expected = getComputedStyle(probe);
       const actual = getComputedStyle(element);
-      const result = { actualFill: actual.backgroundColor, expectedFill: expected.backgroundColor,
+      const result = { actualAccent: getComputedStyle(element.querySelector('input')!).accentColor, expectedAccent: expected.color,
         actualFont: actual.fontSize, expectedFont: expected.fontSize, cursor: actual.cursor };
       probe.remove();
       return result;
     });
-    expect(tokens.actualFill).toBe(tokens.expectedFill);
+    expect(tokens.actualAccent).toBe(tokens.expectedAccent);
     expect(tokens.actualFont).toBe(tokens.expectedFont);
     expect(tokens.cursor).not.toBe('pointer');
     await expect(footer.getByRole('button', { name: 'Next', exact: true })).toBeEnabled();

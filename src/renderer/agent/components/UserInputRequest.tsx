@@ -4,7 +4,7 @@ import { useT } from '../../i18n/I18nProvider';
 import { Button } from '../../ui/primitives/Button';
 import { Textarea } from '../../ui/primitives/Textarea';
 import { IconButton } from '../../ui/primitives/IconButton';
-import { ICON_SIZE, CheckIcon, ChevronLeftIcon, ChevronRightIcon, PencilIcon, QuestionToolIcon } from '../../ui/icons';
+import { ICON_SIZE, ChevronLeftIcon, ChevronRightIcon, QuestionToolIcon } from '../../ui/icons';
 import { activeInputAnswers, type UserInputDraft } from '../store/userInputState';
 
 type DraftChange = Partial<Pick<UserInputDraft, 'answers' | 'step'>>;
@@ -48,8 +48,8 @@ export function UserInputRequest({ request, draft, disabled = false, onDraftChan
   const submitting = submissionIntent !== null;
   const submittingRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
-  const [editingText, setEditingText] = useState(false);
   const stepRef = useRef<HTMLDivElement>(null);
+  const replyRef = useRef<HTMLTextAreaElement>(null);
   const focusNext = useRef(false);
   const pending = draft.outcome === 'pending';
   const blocked = !pending || expired || disabled || submitting;
@@ -73,6 +73,12 @@ export function UserInputRequest({ request, draft, disabled = false, onDraftChan
     if (blocked) return;
     focusNext.current = true;
     onDraftChange({ step: Math.max(0, Math.min(request.questions.length - 1, step)) });
+  }
+  function selectText() {
+    if (blocked || otherSelected) return;
+    onDraftChange({ answers: { ...draft.answers, [question.id]: {
+      ...selected, skipped: undefined, selection: 'text',
+    } } });
   }
   function skipAll() {
     void submit(request.questions.map((entry) => ({ questionId: entry.id, skipped: true })));
@@ -128,22 +134,22 @@ export function UserInputRequest({ request, draft, disabled = false, onDraftChan
       <fieldset>
         <legend className="sr-only">{question.question}</legend>
         <div className="thread-user-input-options">
-          {question.options.map((option, index) => <label className="thread-user-input-choice thread-user-input-option" key={option.label}>
-            <input className="sr-only" type="radio" name={question.id} checked={activeAnswer?.optionLabel === option.label} disabled={!pending || expired || submitting}
+          {question.options.map((option) => <label className="thread-user-input-choice thread-user-input-option" key={option.label}>
+            <input className="thread-user-input-radio" type="radio" name={question.id} checked={activeAnswer?.optionLabel === option.label} disabled={blocked}
               onChange={() => onDraftChange({ answers: { ...draft.answers, [question.id]: {
                 ...selected, optionLabel: option.label, skipped: undefined, selection: 'option',
               } } })} />
-            <span className="thread-user-input-marker" aria-hidden="true">
-              {activeAnswer?.optionLabel === option.label ? <CheckIcon size={ICON_SIZE.toolbar} /> : index + 1}
-            </span>
             <span className="thread-user-input-option-text"><strong>{option.label}</strong><small>{option.description}</small></span>
           </label>)}
           <div className={`thread-user-input-custom${textOnly ? ' thread-user-input-text-only' : ''}`} data-selected={otherSelected}>
-            {!textOnly ? <span className="thread-user-input-marker" aria-hidden="true"><PencilIcon size={ICON_SIZE.toolbar} /></span> : null}
-            <Textarea variant={textOnly ? 'boxed' : 'bare'} className="thread-user-input-other" label={t.agent.thread.inputWriteAnswer} rows={!textOnly && (editingText || otherSelected) ? 3 : 1}
+            {!textOnly ? <input className="thread-user-input-radio" type="radio" name={question.id} aria-label={t.agent.thread.inputWriteAnswer}
+              checked={otherSelected} disabled={blocked} onChange={selectText} onClick={(event) => {
+                // Pointer selection enters the editor; arrow keys keep native radio-group navigation.
+                if (event.detail > 0) replyRef.current?.focus({ preventScroll: true });
+              }} /> : null}
+            <Textarea ref={replyRef} variant={textOnly ? 'boxed' : 'bare'} className="thread-user-input-other" label={t.agent.thread.inputWriteAnswer} rows={1}
               readOnly={submitting && pending} value={selected?.otherText ?? ''} placeholder={textOnly ? t.agent.thread.inputReplyPlaceholder : t.agent.thread.otherPlaceholder}
-              onFocus={() => setEditingText(true)}
-              onBlur={() => setEditingText(false)}
+              onClick={selectText}
               onChange={(event) => onDraftChange({ answers: { ...draft.answers, [question.id]: {
                 ...selected, otherText: event.target.value, skipped: undefined, selection: 'text',
               } } })} />

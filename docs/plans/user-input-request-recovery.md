@@ -136,15 +136,19 @@ there is no new Settings panel.
 DEC-4: Group context, answers, and actions into three regions. The header shows
 Question on the left, with paired browsing arrows, compact N / M position, and
 the quiet clock on the right. Arrows are disabled at the respective ends and
-omitted with the position for a single question. The question leads the body. Presets are light full-width
-rows with a numbered circular marker on the left; the selected row uses a neutral
-fill and a check marker. Native radio semantics and visible keyboard focus remain.
-A pencil-marked free-text field is directly available below the presets. Focusing expands the field without changing the answer.
-Typing activates it; choosing a preset leaves its text visible but inactive.
-The field expands while active and keeps its DOM at settlement. A pure-text
-question supplies an empty options array and directly shows a full-width bordered
-Reply field without a pencil marker or any preset choices. Non-empty option
-lists still require two or three choices.
+omitted with the position for a single question. The question leads the body.
+Presets remain full-row click targets with compact native radios aligned to the
+first text line. The custom field uses the same radio, with no ordinal badge or
+pencil column. Selection uses a neutral radio mark, not a persistent filled row;
+hover, press, and keyboard focus follow the existing neutral tokens.
+Clicking the custom field or selecting its radio activates the retained text
+without requiring an edit. Typing activates it too; keyboard focus alone does
+not. Clicking its radio enters the editor; native radio-group arrows keep focus
+in the group while switching to the custom response. Selecting a
+preset retains inactive text. The mounted editor grows with content only, so
+focus and answer switching do not change height or move controls. A pure-text
+question supplies an empty options array and directly shows a shared boxed Reply
+field. Non-empty option lists still require two or three choices.
 
 The form fits its content up to the existing half-viewport cap. Only the body
 scrolls after the cap. The footer places Skip all on the left and the primary
@@ -542,14 +546,14 @@ on the future scheduling UI to ship the conversation feature.
 | AC-19 | Navigation leaves unanswered questions local. Submit answers includes typed skips for them. Skip all ends the request from any step with only skips and retains every existing answer draft. Deadline/cancellation races settle once. |
 | AC-20 | At 320 CSS pixels, all questions and actions remain reachable without horizontal scrolling. Light/dark, contrast, reduced motion/transparency, neutral states, and visible keyboard focus follow existing design guards. |
 | AC-21 | A pending question directly replaces the composer even when it contains text. The hidden editor keeps its DOM, text, attachments, and draft; submission, Skip all, or settlement restores it unchanged. No preliminary choice or close/reopen switch exists. |
-| AC-22 | Typing activates free text and selecting an option preserves inactive text. Header arrows browse without changing answers and are disabled at their respective ends. Next requires an active answer for the current question and advances without submitting. Pure-text questions have no preset choices; empty or whitespace-only text keeps Next disabled. Only the final question shows Submit answers, with no review screen or auto-submission. |
+| AC-22 | Clicking the custom field, selecting its radio, or typing activates free text; keyboard focus alone does not. Selecting a preset preserves inactive text. Switching back can submit that retained text without modifying it. Focus and answer switching do not change editor height or control positions. Header arrows browse without changing answers and are disabled at their respective ends. Next requires an active answer for the current question and advances without submitting. Pure-text questions have no preset choices; empty or whitespace-only text keeps Next disabled. Only the final question shows Submit answers, with no review screen or auto-submission. |
 | AC-23 | Submit answers includes earlier active answers. Skip all sends no answer content, uses continue intent, and retains both answer and ordinary message drafts. Neither route grants authorization. |
 | AC-24 | Escape during a live question makes no model call and leaves the form visible. Ordinary Send/Steer after restoration sends only message content and cannot clear retained question drafts. |
 | AC-25 | Injected ordinary Send failure retains its message and question drafts. Question submission failure or lost acknowledgement never clears the message draft. Explicit composite-API failure/replay remains exactly once. |
 | AC-26 | Expiry while typing preserves the actual editor, caret, selection, IME, and scroll while disabling the expired tool route. New typing remains local. Blur or Escape after expiry shows the next pending question or restores the unchanged composer; a new request cannot interrupt active editing. |
 | AC-27 | Empty outcomes create no note; each non-empty retained draft stays with its original question, even while a newer question is visible. Ordinary Send success or failure never deletes or changes this content. No transfer or draft-management controls remain. |
 | AC-28 | Escape never answers, skips, or stops work. The existing composer owns Stop. The deadline is quiet without per-second announcements; outcome copy distinguishes acceptance, withheld content, timeout, and cancellation. |
-| AC-29 | The question surface contains a header with Question on the left and position, paired browse icons, and the clock on the right; a scrollable body with numbered presets and direct text entry or a pure-text reply field; and a footer containing Skip all and Next or final Submit answers. No close control, tabs, More menu, execution controls, or review page remain. |
+| AC-29 | The question surface contains a header with Question on the left and position, paired browse icons, and the clock on the right; a scrollable body with compact native radios and direct text entry or a pure-text reply field; and a footer containing Skip all and Next or final Submit answers. No close control, tabs, More menu, execution controls, or review page remain. |
 | AC-30 | Short questions fit their content with no large empty area before the footer. Height adapts to question length and free-text editing up to the existing cap; only the answer body then scrolls. At 320 CSS pixels the header browsing controls and footer actions remain visible, with the footer anchored at the dock bottom. Inactive drafts and focus remain intact. |
 
 Extend the service test titled `round-trips request_user_input through the control

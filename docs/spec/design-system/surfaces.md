@@ -318,7 +318,7 @@ shadow only where more content remains.
 Structured user-input requests replace the composer with bounded in-dock forms;
 the hidden message editor retains its independent draft. Header browsing, question
 content, and footer actions share the dock's existing inset and type hierarchy.
-Options use neutral selection tokens; reply fields and actions reuse Textarea,
+Options use compact neutral radio marks; reply fields and actions reuse Textarea,
 Button, and IconButton. The primary action uses the neutral filled-default idiom.
 The [question interaction contract](../agent-thread-rendering.md)
 owns navigation, submission, timeout, and draft restoration.
