@@ -166,7 +166,7 @@ export type RequestUserInputToolQuestion = RequestUserInputQuestion;
 
 export interface RequestUserInputToolInput {
   readonly questions: readonly RequestUserInputToolQuestion[];
-  readonly autoResolutionMs?: number;
+  readonly autoResolutionMs: number;
 }
 
 export interface TaskStopToolInput {
@@ -490,10 +490,10 @@ const requestUserInputSchema = objectSchema({
       label: stringSchema('User-facing label of one to five words.'),
       description: stringSchema('One sentence explaining the trade-off.'),
     }, ['label', 'description']),
-    'Provide 2-3 mutually exclusive choices. Put the recommended option first and suffix its label with "(Recommended)". Do not include an "Other" option in this list; the client will add a free-form "Other" option automatically.'),
+    'For a free-text question, provide an empty options array. Otherwise provide 2-3 mutually exclusive choices. Put the recommended option first and suffix its label with "(Recommended)". Do not include an "Other" option in this list; the client provides a separate free-text answer field.'),
   }, ['id', 'header', 'question', 'options'])),
   autoResolutionMs: numberSchema(
-    `Optional non-blocking timeout from ${REQUEST_USER_INPUT_MIN_AUTO_RESOLUTION_MS} to ${REQUEST_USER_INPUT_MAX_AUTO_RESOLUTION_MS} milliseconds.`,
+    `Whole-request timeout; defaults to 60000 milliseconds. Explicit bounds: ${REQUEST_USER_INPUT_MIN_AUTO_RESOLUTION_MS} to ${REQUEST_USER_INPUT_MAX_AUTO_RESOLUTION_MS} milliseconds.`,
   ),
 }, ['questions']);
 
@@ -753,7 +753,7 @@ const coreControlToolContracts: readonly StaticModelToolContract[] = [{
   },
   {
     identity: { namespace: null, name: 'request_user_input' },
-    description: 'Request one to three short product questions from the user. This never requests authorization.',
+    description: 'Request one to three short product questions. Default wait is 60 seconds. The UI opens the questions directly, with preset choices and a direct free-text field, or just a reply field when options is empty. Next is enabled after answering the current question; it saves the current draft and moves to the next question without sending. Only the final question shows Submit answers, which sends all filled answers and skips unanswered questions. Header arrows browse questions without requiring an answer or submitting; Previous revisits earlier drafts. Skip all sends no answers and keeps existing drafts local. Do not invent review or continue buttons. Users may skip individual questions by leaving them unanswered; an answered result is an explicit form submission whose entries contain an option, free text, or skipped: true. A skipped entry supplies no answer. The continue intent ends clarification: use the supplied answers and available information without another interview round. A discussed outcome includes active answers and identifies the actual user message delivered through steering in this same Turn; respond to that message without an empty clarification invitation or repeating the questionnaire. A timedOut result means nothing was submitted, not approval or proof the user saw the question. Continue authorized independent work, state reversible assumptions, or explain the unresolved decision. Do not automatically re-ask skipped or expired questions. Directional, irreversible, or permission-dependent work still requires a real decision. Skipping and timeout grant no authorization; this never requests authorization.',
     scope: 'rootThread',
     schemaOwner: 'core',
     inputSchema: requestUserInputSchema,
@@ -762,9 +762,17 @@ const coreControlToolContracts: readonly StaticModelToolContract[] = [{
         questionId: stringSchema(),
         optionLabel: stringSchema(),
         otherText: stringSchema(),
+        skipped: booleanSchema('True when this question was left unanswered in an explicit submission; no optionLabel or otherText accompanies it.'),
       }, ['questionId'])),
-      autoResolved: booleanSchema(),
-    }, ['answers', 'autoResolved']),
+      outcome: enumSchema(['answered', 'discussed', 'timedOut']),
+      intent: enumSchema(['answer', 'continue', 'discuss']),
+      messageItemId: stringSchema(),
+      hostGeneration: stringSchema(),
+      threadId: stringSchema(),
+      turnId: stringSchema(),
+      itemId: stringSchema(),
+      deadlineAt: numberSchema(),
+    }, ['outcome', 'hostGeneration', 'threadId', 'turnId', 'itemId', 'deadlineAt']),
     actionKinds: ['agent.user_input.request'],
   },
   {
@@ -1062,14 +1070,14 @@ export function normalizeRequestUserInputToolInput(value: unknown): RequestUserI
   const questions = decodeRequestUserInputQuestions(value.questions);
 
   const autoResolutionMs = value.autoResolutionMs === undefined
-    ? undefined
+    ? REQUEST_USER_INPUT_MIN_AUTO_RESOLUTION_MS
     : Math.round(Math.min(
       REQUEST_USER_INPUT_MAX_AUTO_RESOLUTION_MS,
       Math.max(REQUEST_USER_INPUT_MIN_AUTO_RESOLUTION_MS, finiteNumber(value.autoResolutionMs, 'autoResolutionMs')),
     ));
   return Object.freeze({
     questions: Object.freeze(questions),
-    ...(autoResolutionMs === undefined ? {} : { autoResolutionMs }),
+    autoResolutionMs,
   });
 }
 

@@ -432,9 +432,11 @@ same model an explicit pin to the newest model resolves to, so inferring the
 state after resolution would make the two indistinguishable and strand a Thread
 on a model it never chose to pin.
 
-Reopening the Agent rail restores focus to the composer of an editable Thread.
-An active `request_user_input` keeps focus in its current step instead; opening
-the rail never steals focus from that blocking form.
+Reopening the Agent rail restores focus to the composer of an editable Thread
+unless a question or retained-answer editor occupies that area. Questions appear
+directly and keep their current step; composer focus requests do not displace
+answer editing. The ordinary composer stays mounted but hidden, preserving its
+message draft and attachments independently.
 
 Collapsing the Agent rail keeps the same `ThreadView` mounted, preserving its
 composer draft, staged attachments, disclosure state, and scroll DOM. While
@@ -452,8 +454,9 @@ never strand focus outside the input. A click is claimed by a typing surface
 document or an external browser), a text selection the user still needs for
 copying, or any surface that installs its own focus target within a frame of
 the click (self-focusing popovers, dialogs, the inline message editor).
-Keyboard-activated clicks are never intercepted, and an active
-`request_user_input` suspends the hand-back entirely.
+Keyboard-activated clicks are never intercepted.
+A question or retained-answer editor suspends the hand-back. Normal composer
+focus behavior resumes when answer editing ends and the ordinary composer returns.
 
 The same terminal model governs input history. A focused composer offers plain Up at
 its first visual line and plain Down at its last visual line as semantic history
@@ -652,14 +655,110 @@ that the paste was not inserted; it never recreates a pending atom whose request
 Explicit removal cancels the request. Names increase monotonically within the mounted draft
 and reset after a successful Send.
 
-`request_user_input` replaces the editor inside the existing composer surface
-with an in-dock form tied to one Item. It is a product-input surface, never a
-permission prompt or a modal over the transcript. Multiple questions use the
-established one-at-a-time flow with progress, Back/Next navigation, retained
-answers, and focus moved into each newly shown step. The form adapts only the
-canonical option-or-Other contract. Removed question outcomes and rich-answer
-fields are not part of this contract. A response includes the exact Thread, Turn, and Item IDs
-and is rejected if the request is no longer active.
+`request_user_input` directly replaces the ordinary composer in the same dock
+area. Message text or focus never causes a preliminary choice of editor. The
+ordinary rich editor remains mounted but hidden, retaining text and attachments
+independently of question drafts. Submission, Skip all, or settlement restores it
+unchanged, except while preserving active answer editing at expiry. There is no
+close/reopen editor switch. Arrival can focus the replacement form when the
+hidden composer held focus, but never steals another document's editing focus.
+
+The question surface groups context, answers, and actions into three regions.
+The header shows a question icon and Question on the left. The right groups
+paired browsing arrows, compact N / M position, and the quiet clock. The position
+has a localized Question N of M accessible label. Arrows are disabled at the
+respective ends and omitted with the position for a single question. The question leads the scrollable body.
+Preset labels remain full-row click targets, with compact neutral native radios
+aligned to the first text line. The same radio marks the custom response. No
+ordinal badges or swapping number/check icons occupy the narrow content column.
+Selection is carried by the radio, without a persistent filled row; hover and
+press use the neutral fill tokens. Native keyboard focus remains visible and
+no option is selected automatically. Question and answer text use the content
+type pair; metadata uses the meta pair. Shared Textarea, Button, and IconButton
+own control skins and accessibility states.
+
+A directly editable free-text field sits beside the custom radio. Clicking the
+field or selecting its radio activates that response, including retained text;
+typing also activates it. Keyboard focus alone does not change the answer. Native
+radio-group arrow keys can reactivate an existing text answer without editing it
+or moving focus out of the group. Clicking its radio enters the text editor.
+Selecting a preset keeps the custom text visible but inactive, without sending it.
+The editor remains mounted, and its height depends only on content, never on
+focus or the selected answer. Short replies stay one line and long replies grow
+to a bounded height before scrolling. Switching between a preset and retained
+text keeps the editor, caret, and control positions stable. A pure-text question
+uses an empty options array and shows only the shared boxed Reply field.
+There is no preceding Other choice or editor switch.
+The form fits its content up to the existing half-viewport cap; only the body
+scrolls after that cap, so short questions leave more conversation visible.
+
+The footer places Skip all on the left and Next on the right. Next requires a
+selected option or non-blank free text for the current question. It only moves
+to the next question and never sends. Header arrows can browse unanswered
+questions without changing their answers. On the final question, Submit answers replaces
+Next. It is enabled when any question has an active answer and sends all active
+answers with typed skips for unanswered entries. Revisiting earlier steps restores
+their drafts. Skip all remains available on every step and sends only typed skips
+with continue intent, preserving filled answers locally. The footer stays anchored
+at the dock bottom while the body adapts to content and free-text editing. No
+early submission, review page, tab bar, More menu, close
+control, or execution control appears in the form. Escape during a live question
+leaves it visible and never submits or stops work.
+
+Copy describes the user's action and known outcome. Waiting status says Waiting
+for your answers; the countdown shows only minutes and seconds, such as 0:54.
+Its tooltip explains that the Agent continues without submitting drafts, and a
+localized accessible label states the remaining seconds. It uses tabular digits
+and does not announce each tick. Activity rows say Questions
+for you / Questions asked without treating tool-call count as question count.
+Retained content is marked Not submitted; its explanation says This draft was
+not submitted, including after partial submission. Unknown receipts remain
+explicitly uncertain while reconciliation determines their outcome; their
+retained-content summary says Answer draft instead of claiming Not submitted. Submission
+and skip failures explain that drafts remain available and invite retry without
+raw transport errors. In-flight labels are Submitting… / Skipping…. English and
+Simplified Chinese use the same meanings.
+
+Ordinary Send/Steer uses the existing message admission route when the composer
+returns, without reading answer drafts or settling a question. Question failures
+and receipts cannot clear a message draft. Stop remains the ordinary composer's
+existing execution control. There are no cross-draft transfer controls.
+
+ThreadStore subscribes before snapshot reads and reconciles on initial load,
+subscription reattachment, Thread selection, dock reopening, visible-window
+focus, and a waiting notification without question content. Reads coalesce per
+Thread; a notification from a different Host invalidates any in-flight snapshot
+so a fresh read establishes its generation. Generations and revisions reject
+stale snapshots/events. Matching Turn termination fences submission; an older
+settlement cannot erase a newer question.
+Loading is automatic. A load failure offers Try again, without duplicating the
+ordinary composer's Stop. Exact receipts distinguish accepted, discussed,
+timed-out, cancelled, and failed requests; discussion arrives with its canonical
+completed-message batch.
+
+Answer drafts belong to ThreadStore outside the form lifetime, keyed by exact
+request identity. Selection, inactive text, skips, and step survive remounting and
+Thread switches within the renderer session. Acceptance releases only content
+equal to the actual submitted answer; withheld text and later edits remain.
+Ordinary rich message drafts and attachments stay separate. At expiry, no local
+answers are sent. A focused non-empty answer editor keeps its DOM node, caret,
+selection, IME, and scroll while becoming an unsent draft. A newer question cannot
+displace it. Once focus leaves, or Escape ends retained editing after settlement,
+the next pending question appears or the ordinary composer returns unchanged.
+The timer is subdued without per-second screen-reader announcements; only an
+authoritative timeout permits a no-answer timeout claim.
+
+Non-empty retained answers appear as passive collapsed content at their original
+question in the transcript, outside collapsed process details. The summary shows
+the original question and Not submitted; expansion shows the known reason and
+retained question/answer text with native selection/copy. If an inspection-only
+Item is unavailable, the note remains within its owning Turn. There is no draft
+shelf, copy, transfer, delete, or status-check button. Empty outcomes add no note.
+Ordinary message sends, including failed sends, never delete or change retained
+answers. Thread deletion clears that Thread's entries. Full renderer reload or
+application exit may discard unsent drafts; these are never persisted in Rollout
+or sent before explicit submission. Reload still restores a live question from
+the Host with its original deadline; Host restart never revives the old request.
 
 Rename uses the shared `Dialog`; delete uses `ConfirmDialog`. Browser-native
 prompt and confirm APIs are not used. Fork creates and selects the new Thread

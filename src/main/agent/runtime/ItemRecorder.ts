@@ -107,7 +107,7 @@ export class ItemRecorder {
     return (await this.completedImmediatelyBatch([item], at))[0]!;
   }
 
-  async completedImmediatelyBatch(itemsInput: readonly ThreadItem[], at = Date.now()): Promise<readonly ThreadItem[]> {
+  async completedImmediatelyBatch(itemsInput: readonly ThreadItem[], at = Date.now(), writeNotification: NotificationWriter = this.writeNotification): Promise<readonly ThreadItem[]> {
     if (itemsInput.length === 0) return [];
     const items: ThreadItem[] = [];
     for (const itemInput of itemsInput) {
@@ -126,7 +126,7 @@ export class ItemRecorder {
     }
     for (const item of items) this.pendingItemIds.add(item.id);
     try {
-      await this.writeNotification({
+      await writeNotification({
         type: 'items/completed',
         threadId: this.threadId,
         turnId: this.turnId,

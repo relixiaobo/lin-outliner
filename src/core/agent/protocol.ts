@@ -2210,26 +2210,68 @@ export interface RequestUserInputQuestion {
   readonly options: readonly RequestUserInputOption[];
 }
 
-export interface RequestUserInputRequest {
+export interface UserInputIdentity {
+  readonly hostGeneration: string;
   readonly threadId: ThreadId;
   readonly turnId: TurnId;
   readonly itemId: ThreadItemId;
+}
+
+export interface RequestUserInputRequest extends UserInputIdentity {
+  readonly revision: number;
+  readonly deadlineAt: number;
   readonly questions: readonly RequestUserInputQuestion[];
-  readonly autoResolutionMs?: number;
+  readonly autoResolutionMs: number;
 }
 
 export interface RequestUserInputAnswer {
   readonly questionId: string;
   readonly optionLabel?: string;
   readonly otherText?: string;
+  /** Explicitly unanswered; mutually exclusive with optionLabel and otherText. */
+  readonly skipped?: true;
 }
 
-export interface RequestUserInputResponse {
-  readonly threadId: ThreadId;
-  readonly turnId: TurnId;
-  readonly itemId: ThreadItemId;
+export interface RequestUserInputResponse extends UserInputIdentity {
+  readonly submissionId: string;
+  readonly intent: 'answer' | 'continue' | 'discuss';
   readonly answers: readonly RequestUserInputAnswer[];
-  readonly autoResolved: boolean;
+  readonly message?: Omit<RendererTurnStartRequest, 'threadId' | 'clientUserMessageId'>;
+}
+
+export type RequestUserInputResult =
+  | (UserInputIdentity & { readonly outcome: 'answered' | 'discussed'; readonly deadlineAt: number;
+      readonly intent: RequestUserInputResponse['intent']; readonly answers: readonly RequestUserInputAnswer[];
+      readonly messageItemId?: string })
+  | (UserInputIdentity & { readonly outcome: 'timedOut'; readonly deadlineAt: number });
+
+export interface UserInputSettlement extends UserInputIdentity {
+  readonly revision: number;
+  readonly deadlineAt: number;
+  readonly outcome: 'answered' | 'discussed' | 'timedOut' | 'cancelled' | 'failed';
+  /** Exact submitted content; inactive local text and subsequent edits remain drafts. */
+  readonly submitted?: Pick<RequestUserInputResponse, 'submissionId' | 'intent' | 'answers'>;
+  readonly messageItemId?: string;
+}
+
+export interface UserInputResolution {
+  readonly response: RequestUserInputResponse;
+  readonly settlement: UserInputSettlement;
+}
+
+export interface UserInputState {
+  readonly threadId: ThreadId;
+  readonly hostGeneration: string;
+  readonly revision: number;
+  readonly activeTurnId: TurnId | null;
+  readonly pending: RequestUserInputRequest | null;
+  readonly settled: UserInputSettlement | null;
+}
+
+export interface UserInputReadResponse {
+  readonly state: UserInputState;
+  /** Exact prior request lookup; null means its settlement is not known. */
+  readonly observed: UserInputSettlement | null;
 }
 
 export type EmptyAgentCoreResponse = Readonly<Record<string, never>>;
@@ -2304,6 +2346,7 @@ export const AGENT_CORE_METHODS = [
   'goal/get',
   'goal/create',
   'goal/update',
+  'userInput/read',
   'userInput/respond',
   'identities/get',
 ] as const;
@@ -2352,6 +2395,7 @@ export interface AgentCoreRequestByMethod {
   readonly 'goal/create': CreateGoalInput;
   readonly 'goal/update': UpdateGoalInput;
   readonly 'userInput/respond': RequestUserInputResponse;
+  readonly 'userInput/read': { readonly threadId: ThreadId; readonly observed?: UserInputIdentity };
   readonly 'identities/get': AgentIdentityCatalogRequest;
 }
 
@@ -2396,7 +2440,8 @@ export interface AgentCoreResponseByMethod {
   readonly 'goal/get': GetGoalResponse;
   readonly 'goal/create': CreateGoalResponse;
   readonly 'goal/update': UpdateGoalResponse;
-  readonly 'userInput/respond': EmptyAgentCoreResponse;
+  readonly 'userInput/respond': UserInputReadResponse;
+  readonly 'userInput/read': UserInputReadResponse;
   readonly 'identities/get': AgentIdentityCatalogResponse;
 }
 
@@ -2460,6 +2505,8 @@ export type AgentCoreNotification =
       readonly turnId: TurnId;
       readonly items: readonly ThreadItem[];
       readonly completedAt: number;
+      /** Atomically accepts a discussion message and settles its question in one Rollout entry. */
+      readonly userInput?: UserInputResolution;
     }
   | {
       readonly type: 'turn/completed';
@@ -2491,6 +2538,14 @@ export type AgentCoreNotification =
       readonly turnId: TurnId;
       readonly itemId: ThreadItemId;
       readonly response: RequestUserInputResponse;
+      readonly settlement: UserInputSettlement;
+    }
+  | {
+      readonly type: 'userInput/cleared';
+      readonly threadId: ThreadId;
+      readonly turnId: TurnId;
+      readonly itemId: ThreadItemId;
+      readonly settlement: UserInputSettlement;
     }
   | ThreadGoalNotification;
 

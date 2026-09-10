@@ -97,7 +97,6 @@
   gap: var(--space-1);
 }
 
-
 .thread-dock-breadcrumb .thread-dock-title {
   flex: 0 1 auto;
   color: var(--text-secondary);
@@ -1869,8 +1868,7 @@
   object-fit: cover;
 }
 
-.thread-message-editor textarea,
-.thread-user-input-other {
+.thread-message-editor textarea {
   width: 100%;
   resize: none;
   border: 0;
@@ -2768,16 +2766,24 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-2) var(--space-1);
+  gap: var(--space-4);
+  max-height: min(50vh, calc(var(--space-8) * 24));
+  overflow: hidden;
+  padding: var(--space-3) var(--space-2);
 }
 
 .thread-user-input-heading {
   display: flex;
+  flex: 0 0 auto;
   min-width: 0;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-1) var(--space-3);
+}
+
+.thread-user-input-heading-controls > .thread-user-input-countdown {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
 }
 
 .thread-user-input-title {
@@ -2791,41 +2797,26 @@
   overflow-wrap: anywhere;
 }
 
-.thread-user-input-back.icon-button {
-  width: var(--control-size-md);
-  height: var(--control-size-md);
-  flex: 0 0 auto;
-  border-radius: var(--radius-pill);
-  color: var(--text-faint);
-}
-
-.thread-user-input-back.icon-button:hover:not(:disabled) {
-  color: var(--text-strong);
-}
-
 .thread-user-input-step {
   display: flex;
+  flex: 0 1 auto;
+  min-height: 0;
   min-width: 0;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-3);
+  overflow-y: auto;
   border-radius: var(--radius-md);
   outline: none;
-}
-
-.thread-user-input-header {
-  color: var(--text-faint);
-  font-size: var(--font-meta);
-  line-height: var(--line-meta-tight);
-  overflow-wrap: anywhere;
 }
 
 .thread-user-input-prompt {
   min-width: 0;
   color: var(--text-strong);
-  font-size: var(--font-ui-sm);
-  font-weight: 650;
-  line-height: var(--line-ui-sm-tight);
+  font-size: var(--font-content);
+  font-weight: 550;
+  line-height: var(--line-content);
   overflow-wrap: anywhere;
+  padding: 0 var(--space-1) var(--space-2);
 }
 
 .thread-user-input fieldset {
@@ -2848,32 +2839,44 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-3);
 }
 
-.thread-user-input-options > label {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: var(--space-2);
-  align-items: start;
+.thread-user-input-choice {
+  position: relative;
+  user-select: none;
   border-radius: var(--radius-md);
-  background: var(--fill-1);
-  color: var(--text-soft);
-  font-size: var(--font-ui-sm);
-  line-height: var(--line-ui-sm);
-  padding: var(--space-2) var(--space-3);
+  background: transparent;
 }
 
-.thread-user-input-options > label:hover {
+.thread-user-input-choice:has(input:enabled):hover {
   background: var(--fill-2);
 }
 
-.thread-user-input-options > label > input {
-  margin-block-start: 2px;
+.thread-user-input-choice:has(input:enabled):active {
+  background: var(--fill-4);
 }
 
-.thread-user-input-options label span,
+.thread-user-input-option {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: var(--icon-size-sm) minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+  color: var(--text-soft);
+  font-size: var(--font-content);
+  line-height: var(--line-content);
+  padding: var(--space-3) var(--space-2);
+}
+
+.thread-user-input-radio {
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
+  margin: calc((var(--line-content) - var(--icon-size-sm)) / 2) 0 0;
+  accent-color: var(--text-strong);
+}
+
+.thread-user-input-option-text,
 .thread-user-input-options label small {
   min-width: 0;
   display: block;
@@ -2886,15 +2889,9 @@
 }
 
 .thread-user-input-options label small {
-  color: var(--text-faint);
-  font-size: var(--font-meta);
-  line-height: var(--line-meta-tight);
-}
-
-.thread-user-input-other {
-  min-height: var(--control-size-md);
-  margin-top: var(--space-2);
-  border-bottom: 1px solid var(--separator);
+  color: var(--text-soft);
+  font-size: var(--font-description);
+  line-height: var(--line-description);
 }
 
 .thread-user-input-other::placeholder {
@@ -2907,9 +2904,7 @@
   justify-content: flex-end;
 }
 
-.thread-user-input-step:focus-visible,
-.thread-user-input-options > label:focus-within,
-.thread-user-input-back:focus-visible {
+.thread-user-input-step:focus-visible {
   box-shadow: var(--focus-ring-shadow);
 }
 
@@ -3080,7 +3075,6 @@
   background: var(--fill-2);
   color: var(--text-strong);
 }
-
 
 /* Full width under the header rather than a side-hung popover: 344px of deck
    has no side to hang one from. */
@@ -3282,4 +3276,151 @@
 .thread-composer-context-remove:focus-visible {
   box-shadow: var(--focus-ring-shadow);
   border-radius: var(--radius-sm);
+}
+
+.thread-user-input-countdown {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: var(--font-meta);
+}
+
+.thread-user-input-recovery-state {
+  padding: var(--space-3);
+  font-size: var(--font-ui-sm);
+  color: var(--text-soft);
+}
+
+.thread-user-input-recovery {
+  min-width: 0;
+  margin-block: var(--space-3);
+  color: var(--text-soft);
+  font-size: var(--font-ui-sm);
+}
+
+.thread-user-input-recovery-label {
+  margin-inline-start: var(--space-3);
+  color: var(--text-faint);
+  font-size: var(--font-meta);
+  white-space: nowrap;
+}
+
+.thread-user-input-recovery + .thread-user-input-recovery {
+  margin-top: var(--space-2);
+}
+
+.thread-user-input-recovery summary {
+  user-select: none;
+}
+
+.thread-user-input-recovery summary:focus-visible {
+  box-shadow: var(--focus-ring-shadow);
+}
+
+.thread-user-input-recovery pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  color: var(--text-strong);
+  user-select: text;
+}
+
+.thread-user-input .thread-user-input-actions {
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.thread-user-input [hidden],
+.thread-composer-main[hidden] {
+  display: none;
+}
+
+.thread-user-input-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.thread-user-input-browse.icon-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-size-xl);
+  height: var(--control-size-xl);
+  border-radius: var(--radius-pill);
+  color: var(--text-soft);
+}
+
+.thread-user-input-browse.icon-button:hover:not(:disabled) {
+  color: var(--text-strong);
+}
+
+.thread-user-input-browse.icon-button:disabled {
+  color: var(--text-quaternary);
+}
+
+.thread-user-input-heading-label,
+.thread-user-input-heading-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+  color: var(--text-soft);
+  font-size: var(--font-meta);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.thread-user-input-heading-label > svg {
+  flex: 0 0 auto;
+}
+
+.thread-user-input-position {
+  min-width: 0;
+  text-align: start;
+  color: var(--text-soft);
+  font-size: var(--font-meta);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+.thread-user-input-footer {
+  flex: 0 0 auto;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.thread-user-input-custom {
+  display: grid;
+  grid-template-columns: var(--icon-size-sm) minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+  padding: var(--space-3) var(--space-2);
+}
+
+textarea.thread-user-input-other {
+  field-sizing: content;
+  min-height: var(--line-content);
+  max-height: calc(var(--space-8) * 8);
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  font-size: var(--font-content);
+  line-height: var(--line-content);
+  resize: none;
+}
+
+.thread-user-input-custom[data-selected="false"] .input-bare {
+  color: var(--text-soft);
+}
+
+.thread-user-input-text-only {
+  display: block;
+  padding: var(--space-2);
+}
+
+.thread-user-input-text-only textarea {
+  min-height: var(--control-size-xl);
+  padding: var(--space-4);
 }

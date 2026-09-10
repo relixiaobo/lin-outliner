@@ -199,6 +199,7 @@ export interface AgentThreadCapability {
   subscribeRenderer: ThreadService['subscribeRenderer'];
   writeThreadResourceWithStatus: ThreadService['writeThreadResourceWithStatus'];
   waitForIdle: ThreadService['waitForIdle'];
+  reconcileUserInputsOnResume: ThreadService['reconcileUserInputsOnResume'];
   readThread: ThreadService['readThread'];
   threadRecordPath: ThreadService['threadRecordPath'];
   resolveAttachmentFile: ThreadService['resolveAttachmentFile'];
@@ -489,6 +490,7 @@ async function composeAgentHost(options: AgentHostOptions, acquisition: Resource
     subscribeRenderer: (...args) => threadService.subscribeRenderer(...args),
     writeThreadResourceWithStatus: (...args) => threadService.writeThreadResourceWithStatus(...args),
     waitForIdle: (...args) => threadService.waitForIdle(...args),
+    reconcileUserInputsOnResume: () => threadService.reconcileUserInputsOnResume(),
     readThread: (...args) => threadService.readThread(...args),
     threadRecordPath: (...args) => threadService.threadRecordPath(...args),
     resolveAttachmentFile: (...args) => threadService.resolveAttachmentFile(...args),

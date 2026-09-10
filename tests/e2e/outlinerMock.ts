@@ -1,3 +1,4 @@
+import type { RequestUserInputRequest, UserInputSettlement, UserInputReadResponse } from '../../src/core/agent/protocol';
 import type { ProviderApiKeyReadMode, ProviderApiKeyReadResult } from '../../src/core/providerApiKeyPreview';
 import { PREFERENCE_DEFINITIONS, preferenceDefault } from '../../src/core/settingsDefinitions';
 import { expect, type Page } from '@playwright/test';
@@ -51,6 +52,8 @@ export const ids = {
 } as const;
 
 interface MockFixtureOptions {
+  /** Drop discussion delivery after committing mock Host state for reconciliation tests. */
+  dropDiscussionNotifications?: boolean;
   initialLanguage?: 'en' | 'zh-Hans';
   dateField?: boolean;
   optionsField?: boolean;
@@ -464,6 +467,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       receivedBytes: number;
       chunks: Uint8Array[];
     }>();
+    const mockUserInputs = new Map<string, UserInputReadResponse>();
     const agentCoreListeners: Array<(notification: unknown) => void> = [];
     const automationListeners: Array<(notification: unknown) => void> = [];
     const documentListeners: Array<(event: unknown) => void> = [];
@@ -989,7 +993,32 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         turn?: unknown;
         thread?: unknown;
         task?: unknown;
+        request?: RequestUserInputRequest;
+        settlement?: UserInputSettlement;
+        userInput?: import('../../src/core/agent/protocol').UserInputResolution;
       };
+      if (event.type === 'userInput/requested' && event.request) {
+        const request = event.request;
+        mockUserInputs.set(request.threadId, { state: { threadId: request.threadId, hostGeneration: request.hostGeneration,
+          revision: request.revision, activeTurnId: request.turnId, pending: request, settled: null }, observed: null });
+        setTimeout(() => {
+          const current = mockUserInputs.get(request.threadId)?.state.pending;
+          if (current?.itemId !== request.itemId) return;
+          emitAgentCoreNotification({ type: 'userInput/cleared', threadId: request.threadId, turnId: request.turnId, itemId: request.itemId,
+            settlement: { hostGeneration: request.hostGeneration, threadId: request.threadId, turnId: request.turnId, itemId: request.itemId,
+              deadlineAt: request.deadlineAt, revision: request.revision + 1, outcome: 'timedOut' } });
+        }, Math.max(0, request.deadlineAt - Date.now()));
+      }
+      if (event.type === 'items/completed' && event.userInput) {
+        const settled = (event.userInput as any).settlement;
+        mockUserInputs.set(settled.threadId, { state: { threadId: settled.threadId, hostGeneration: settled.hostGeneration,
+          revision: settled.revision, activeTurnId: settled.turnId, pending: null, settled }, observed: settled });
+      }
+      if ((event.type === 'userInput/resolved' || event.type === 'userInput/cleared') && event.settlement) {
+        const settled = event.settlement;
+        mockUserInputs.set(settled.threadId, { state: { threadId: settled.threadId, hostGeneration: settled.hostGeneration,
+          revision: settled.revision, activeTurnId: settled.turnId, pending: null, settled }, observed: settled });
+      }
       // A started Thread is in the catalog, so the mock's catalog learns it
       // here rather than in every test that announces one. A delegated child
       // also has an execution record by then — the host publishes its start
@@ -1025,6 +1054,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           else turns[index] = turn;
         }
       }
+      if (options.dropDiscussionNotifications && event.type === 'items/completed' && event.userInput) return;
       for (const listener of agentCoreListeners) listener(clone(notification));
     };
     const emitAutomationNotification = (notification: unknown) => {
@@ -4294,6 +4324,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const thread = threadById(String(input.threadId));
           thread.name = typeof input.name === 'string' ? input.name : null;
           thread.updatedAt = ++now;
+          emitAgentCoreNotification({ type: 'thread/name/updated', threadId: thread.id, threadName: thread.name });
           return {} as T;
         }
         if (method === 'thread/archive' || method === 'thread/unarchive') return {} as T;
@@ -5133,7 +5164,28 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           emitAgentCoreNotification({ type: 'goal/updated', threadId, goal });
           return clone({ goal }) as T;
         }
-        if (method === 'userInput/respond') return clone({ response: input }) as T;
+        if (method === 'userInput/read') return clone(mockUserInputs.get(String(input.threadId)) ?? {
+          state: { threadId: input.threadId, hostGeneration: 'mock-host', revision: 0,
+            activeTurnId: null, pending: null, settled: null }, observed: null,
+        }) as T;
+        if (method === 'userInput/respond') {
+          const request = mockUserInputs.get(String(input.threadId))?.state.pending;
+          if (!request || request.itemId !== input.itemId) throw new Error('Question is no longer pending');
+          const submitted = { submissionId: input.submissionId, intent: input.intent, answers: input.answers };
+          const settlement = { hostGeneration: request.hostGeneration, threadId: request.threadId, turnId: request.turnId,
+            itemId: request.itemId, deadlineAt: request.deadlineAt, revision: request.revision + 1,
+            outcome: input.intent === 'discuss' ? 'discussed' : 'answered', submitted,
+            ...(input.intent === 'discuss' ? { messageItemId: `message-${input.submissionId}` } : {}) };
+          if (input.intent === 'discuss') {
+            emitAgentCoreNotification({ type: 'items/completed', threadId: request.threadId, turnId: request.turnId,
+              completedAt: ++now, items: [{ type: 'userMessage', id: settlement.messageItemId,
+                author: { kind: 'reader' }, content: (input.message as any).input, clientId: input.submissionId,
+                provenance: { originThreadId: request.threadId, originTurnId: request.turnId, originItemId: settlement.messageItemId } }],
+              userInput: { response: input, settlement } });
+          } else emitAgentCoreNotification({ type: 'userInput/resolved', threadId: request.threadId, turnId: request.turnId,
+            itemId: request.itemId, response: input, settlement });
+          return clone(mockUserInputs.get(request.threadId)) as T;
+        }
         throw new Error(`Unhandled Agent Core mock request: ${method}`);
       },
       onAgentCoreNotification: (listener) => {

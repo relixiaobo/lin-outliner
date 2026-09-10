@@ -909,7 +909,22 @@ Memory, delegation, and other feature prompts use `feature` with a stable
 reference when one exists. Rerun and fork preserve the author recorded on each
 source Item. A direct Skill invocation remains reader-authored because its
 structured input came from the renderer; `request_user_input` remains a
-control-plane record rather than a synthetic `userMessage`.
+control-plane record. An explicit composite discussion response records the actual reader
+message atomically with question settlement and delivers it through the same
+steering handler before releasing the tool. The ordinary composer uses normal
+message admission independently of pending questions. Ordinary answer/Continue and timeout
+do not create synthetic user messages. Its decoded tool result preserves
+`answered`, `discussed`, and `timedOut` through output validation and
+provider context projection. A timed-out result has no answer array, resumes the
+same active Turn once, and confers no authorization. Tool guidance forbids an
+automatic repeated-question loop and retains required decisions as unresolved.
+An explicit submission can contain per-question `skipped: true` entries instead
+of answers, including every question. The provider receives those typed skips
+and any other submitted answers, never skipped or inactive local text. The
+`continue` intent ends clarification using available information; `discuss`
+responds to the actual steered message, without an empty clarification invitation
+or an automatic repeat of the questionnaire.
+Skipping does not grant approval or trigger another question automatically.
 
 Delegated Turns use the same provider accounting as root Turns. The Agent
 Session freezes Runner, model, effort, profile, and access policy, while the

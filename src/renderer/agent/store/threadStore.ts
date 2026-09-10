@@ -1,3 +1,6 @@
+import { EMPTY_USER_INPUT, ThreadUserInputState, identityOf } from './userInputState';
+import type { UserInputProjection } from './userInputState';
+import { userInputKey } from '../../../core/agent/userInput';
 import { useCallback, useRef, useSyncExternalStore } from 'react';
 import {
   acknowledgeThreadComposerContext,
@@ -8,6 +11,8 @@ import type {
   RendererAgentCoreNotification,
   ProviderRetryStatus,
   RequestUserInputAnswer,
+  RequestUserInputResponse,
+  UserInputSettlement,
   RequestUserInputRequest,
   JsonValue,
   RendererUserViewHints,
@@ -54,7 +59,7 @@ export interface ActiveTurnPlan extends TurnPlanSnapshot {
   readonly turnId: TurnId;
 }
 
-export interface ThreadStoreSnapshot {
+export interface ThreadStoreSnapshot extends UserInputProjection {
   readonly threads: readonly Thread[];
   readonly selectedThreadId: ThreadId | null;
   readonly turnsByThread: ReadonlyMap<ThreadId, readonly Turn[]>;
@@ -81,7 +86,7 @@ const EMPTY_SNAPSHOT: ThreadStoreSnapshot = {
   latestTurnByThread: new Map(),
   configurationsByThread: new Map(),
   goalsByThread: new Map(),
-  userInputByThread: new Map(),
+  ...EMPTY_USER_INPUT,
   providerRetryByThread: new Map(),
   planByThread: new Map(),
   toolTasksById: new Map(),
@@ -97,6 +102,38 @@ export type ThreadStoreListenerScheduler = (flush: () => void) => void;
 type ThreadStoreListenerDelivery = 'immediate' | 'frame';
 
 export class ThreadStore {
+  private readonly inputMessageContexts = new Map<string, readonly string[]>();
+  readonly userInputs = new ThreadUserInputState(
+    (threadId, observed) => this.client.agentCoreRequest('userInput/read', { threadId, ...(observed ? { observed } : {}) }),
+    (projection) => this.patch(projection),
+    (threadId) => {
+      const thread = this.snapshot.threads.find((entry) => entry.id === threadId);
+      return thread?.status.type === 'active' && thread.status.activeFlags.includes('waitingOnUserInput');
+    },
+    (threadId, waiting) => this.updateThread(threadId, (thread) => ({ ...thread,
+      status: waiting ? { type: 'active', activeFlags: ['waitingOnUserInput'] }
+        : thread.status.type === 'active' ? { type: 'active', activeFlags: [] } : thread.status,
+    })),
+    (settlement) => {
+      const id = settlement.submitted?.submissionId;
+      if (id) {
+        for (const key of this.inputMessageContexts.get(id) ?? []) acknowledgeThreadComposerContext(key);
+        this.inputMessageContexts.delete(id);
+      }
+      if (!settlement.messageItemId) return;
+      queueMicrotask(() => {
+        const turns = this.snapshot.turnsByThread.get(settlement.threadId);
+        if (turns && !turns.some((turn) => turn.items.some((item) => item.id === settlement.messageItemId))) {
+          void this.loadTurns(settlement.threadId).catch(() => undefined);
+        }
+      });
+    },
+  );
+  private readonly reconcileFocusedInput = () => {
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+    if (this.snapshot.selectedThreadId) void this.userInputs.reconcile(this.snapshot.selectedThreadId);
+  };
+
   private snapshot = EMPTY_SNAPSHOT;
   private readonly listeners = new Set<() => void>();
   private unsubscribeNotifications: (() => void) | null = null;
@@ -129,6 +166,8 @@ export class ThreadStore {
   initialize(): Promise<void> {
     if (!this.unsubscribeNotifications) {
       this.unsubscribeNotifications = this.client.onAgentCoreNotification((notification) => this.applyNotification(notification));
+      if (typeof window !== 'undefined') window.addEventListener('focus', this.reconcileFocusedInput);
+      if (this.snapshot.selectedThreadId) void this.userInputs.reconcile(this.snapshot.selectedThreadId);
     }
     // Identities are configuration, so they change from the settings window
     // rather than through a Turn. Without this, a persona edited in the editor
@@ -194,6 +233,7 @@ export class ThreadStore {
   }
 
   dispose(): void {
+    if (typeof window !== 'undefined') window.removeEventListener('focus', this.reconcileFocusedInput);
     this.unsubscribeNotifications?.();
     this.unsubscribeNotifications = null;
     this.unsubscribeSettings?.();
@@ -368,6 +408,7 @@ export class ThreadStore {
     const toolTasksById = new Map(this.snapshot.toolTasksById);
     const identityCatalogByThread = new Map(this.snapshot.identityCatalogByThread);
     for (const deletedId of deletedIds) {
+      this.userInputs.removeThread(deletedId);
       this.loadGenerations.set(deletedId, (this.loadGenerations.get(deletedId) ?? 0) + 1);
       this.toolTaskLoadGenerations.set(deletedId, (this.toolTaskLoadGenerations.get(deletedId) ?? 0) + 1);
       this.identityCatalogGenerations.delete(deletedId);
@@ -607,18 +648,39 @@ export class ThreadStore {
     });
   }
 
+  async discussUserInput(request: RequestUserInputRequest, answers: readonly RequestUserInputAnswer[],
+    content: readonly ThreadUserContent[], userView: RendererUserViewHints, submissionId: string): Promise<TurnSubmitResponse> {
+    const additionalContext = pendingComposerAdditionalContext();
+    this.inputMessageContexts.set(submissionId, Object.keys(additionalContext));
+    while (this.inputMessageContexts.size > 128) this.inputMessageContexts.delete(this.inputMessageContexts.keys().next().value!);
+    const deduplicated = this.userInputs.settlement(request)?.submitted?.submissionId === submissionId;
+    const receipt = await this.respondToUserInput(request, answers, { intent: 'discuss', submissionId,
+      message: { input: normalizeUserContent(content), userView,
+        ...(Object.keys(additionalContext).length ? { additionalContext } : {}) } });
+    return { turn: null, turnId: request.turnId, acceptedItemId: receipt.messageItemId!, deduplicated };
+  }
+
   async respondToUserInput(
     request: RequestUserInputRequest,
     answers: readonly RequestUserInputAnswer[],
-  ): Promise<void> {
-    await this.client.agentCoreRequest('userInput/respond', {
-      threadId: request.threadId,
-      turnId: request.turnId,
-      itemId: request.itemId,
-      answers,
-      autoResolved: false,
-    });
+    options: { intent?: RequestUserInputResponse['intent']; submissionId?: string; message?: RequestUserInputResponse['message'] } = {},
+  ): Promise<UserInputSettlement> {
+    const submissionId = options.submissionId ?? crypto.randomUUID();
+    try {
+      const response = await this.client.agentCoreRequest('userInput/respond', { ...identityOf(request), answers,
+        submissionId, intent: options.intent ?? 'answer', ...(options.message ? { message: options.message } : {}) });
+      this.userInputs.applyRead(response, request);
+      const receipt = response.observed;
+      if (receipt?.submitted?.submissionId !== submissionId) throw new Error('The response was not accepted.');
+      return receipt;
+    } catch (error) {
+      await this.userInputs.reconcile(request.threadId);
+      const receipt = this.userInputs.settlement(request);
+      if (receipt?.submitted?.submissionId === submissionId) return receipt;
+      throw error;
+    }
   }
+
 
   readItemOutput(threadId: ThreadId, turnId: string, item: ThreadItem): Promise<string | null> {
     if (!('outputRef' in item) || !item.outputRef) return Promise.resolve(null);
@@ -677,6 +739,7 @@ export class ThreadStore {
   }
 
   private async loadTurns(threadId: ThreadId): Promise<void> {
+    void this.userInputs.reconcile(threadId);
     const generation = (this.loadGenerations.get(threadId) ?? 0) + 1;
     this.loadGenerations.set(threadId, generation);
     if (!this.snapshot.turnsByThread.has(threadId)) {
@@ -752,6 +815,7 @@ export class ThreadStore {
   }
 
   private applyNotification(notification: AgentCoreNotification): void {
+    this.userInputs.notification(notification);
     const historyNotification = (
       notification.type === 'turn/started'
       || notification.type === 'turn/completed'
@@ -783,6 +847,8 @@ export class ThreadStore {
         return;
       case 'thread/status/changed':
         this.updateThread(notification.threadId, (thread) => ({ ...thread, status: notification.status }));
+        if (notification.status.type === 'active' && notification.status.activeFlags.includes('waitingOnUserInput')
+          && !this.snapshot.userInputByThread.has(notification.threadId)) void this.userInputs.reconcile(notification.threadId, true);
         return;
       case 'turn/started': {
         const planByThread = new Map(this.snapshot.planByThread);
@@ -872,18 +938,10 @@ export class ThreadStore {
         if (!historyLoaded) return;
         this.updateItemDelta(notification.threadId, notification.turnId, notification.itemId, notification.delta);
         return;
-      case 'userInput/requested': {
-        const userInputByThread = new Map(this.snapshot.userInputByThread);
-        userInputByThread.set(notification.threadId, notification.request);
-        this.patch({ userInputByThread });
+      case 'userInput/requested':
+      case 'userInput/resolved':
+      case 'userInput/cleared':
         return;
-      }
-      case 'userInput/resolved': {
-        const userInputByThread = new Map(this.snapshot.userInputByThread);
-        userInputByThread.delete(notification.threadId);
-        this.patch({ userInputByThread });
-        return;
-      }
       case 'goal/updated': {
         const goalsByThread = new Map(this.snapshot.goalsByThread);
         goalsByThread.set(notification.threadId, notification.goal);
@@ -958,7 +1016,9 @@ export class ThreadStore {
     if (delivery === 'immediate') {
       this.listenerFlushScheduled = false;
       this.listenerFlushGeneration += 1;
-      for (const listener of this.listeners) listener();
+      for (const listener of this.listeners) {
+        try { listener(); } catch { console.error('[agent:user-input] renderer subscriber failed'); }
+      }
       return;
     }
     if (this.listeners.size === 0 || this.listenerFlushScheduled) return;
@@ -967,7 +1027,9 @@ export class ThreadStore {
     this.scheduleListenerFlush(() => {
       if (!this.listenerFlushScheduled || generation !== this.listenerFlushGeneration) return;
       this.listenerFlushScheduled = false;
-      for (const listener of this.listeners) listener();
+      for (const listener of this.listeners) {
+        try { listener(); } catch { console.error('[agent:user-input] renderer subscriber failed'); }
+      }
     });
   }
 }

@@ -125,6 +125,7 @@ export function projectAgentCoreResponse<Method extends AgentCoreMethod>(
     case 'goal/get':
     case 'goal/create':
     case 'goal/update':
+    case 'userInput/read':
     case 'userInput/respond':
     case 'identities/get':
     case 'project/inspect':
@@ -163,6 +164,7 @@ export function projectAgentCoreNotification(
     case 'toolTask/changed':
     case 'userInput/requested':
     case 'userInput/resolved':
+    case 'userInput/cleared':
     case 'goal/updated':
     case 'goal/cleared':
       return notification;

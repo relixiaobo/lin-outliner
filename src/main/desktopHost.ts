@@ -777,7 +777,9 @@ async function validateAutomationEffectiveConfiguration(
   validateAgentModelSelection(configuration.model, configuration.reasoningEffort, provider);
 }
 const wakeAutomationsOnResume = () => {
-  void lifecycle.ready('agent').then(() => requireAgentHost().automations.wake()).catch(() => undefined);
+  void lifecycle.ready('agent').then(() => Promise.all([
+    requireAgentHost().automations.wake(), requireAgentHost().threads.reconcileUserInputsOnResume(),
+  ])).catch(() => undefined);
 };
 async function initializeAgentHost(assertActive: () => void): Promise<void> {
   // A failed attempt must finish releasing its resources before a replacement opens.
@@ -788,9 +790,14 @@ async function initializeAgentHost(assertActive: () => void): Promise<void> {
   const subscriptions = new ResourceScope('agent-notifications');
   try {
     subscriptions.defer('threads', candidate.threads.subscribeRenderer((notification) => {
-      windowApplicationHost.windows.main()?.webContents.send(
-        AGENT_CORE_NOTIFICATION_CHANNEL, projectAgentCoreNotification(notification),
-      );
+      const target = windowApplicationHost.windows.main();
+      const input = notification.type === 'userInput/requested' ? notification.request
+        : notification.type === 'userInput/resolved' || notification.type === 'userInput/cleared' ? notification.settlement : null;
+      if (input) console.info('[agent:user-input]', target ? 'desktop-forward' : 'desktop-window-absent', {
+        threadId: input.threadId, turnId: input.turnId, itemId: input.itemId,
+        hostGeneration: input.hostGeneration, revision: input.revision,
+      });
+      target?.webContents.send(AGENT_CORE_NOTIFICATION_CHANNEL, projectAgentCoreNotification(notification));
     }));
     subscriptions.defer('automations', candidate.automations.subscribe((notification) => {
       windowApplicationHost.windows.main()?.webContents.send(AUTOMATION_NOTIFICATION_CHANNEL, notification);

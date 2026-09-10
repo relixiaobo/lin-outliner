@@ -1,3 +1,4 @@
+import { decodeRequestUserInputResult } from '../../../core/agent/codec';
 import type { TSchema } from 'typebox';
 import type { JsonValue } from '../../../core/agent/protocol';
 import {
@@ -272,7 +273,7 @@ export class ToolRuntime {
     const turnId = context.turn.id;
     return [
       coreTool('request_user_input', 'Request User Input', async (itemId, params, signal) => {
-        return this.service.requestUserInput(threadId, turnId, itemId, params, signal);
+        return decodeRequestUserInputResult(await this.service.requestUserInput(threadId, turnId, itemId, params, signal));
       }),
       coreTool('update_plan', 'Update Plan', async (_itemId, params) => {
         return this.service.updateTurnPlan(threadId, turnId, params);
@@ -602,8 +603,14 @@ function toolResult(tool: string, value: unknown): AgentToolResult<unknown> {
   }
   if (tool === 'request_user_input' && isRecord(details)) {
     return agentToolResult(successEnvelope(tool, details), {
-      answers: details.answers,
-      autoResolved: details.autoResolved,
+      outcome: details.outcome,
+      deadlineAt: details.deadlineAt,
+      hostGeneration: details.hostGeneration,
+      threadId: details.threadId,
+      turnId: details.turnId,
+      itemId: details.itemId,
+      ...(details.outcome === 'answered' || details.outcome === 'discussed'
+        ? { answers: details.answers, intent: details.intent, ...(details.messageItemId ? { messageItemId: details.messageItemId } : {}) } : {}),
     });
   }
   if (tool === 'task_stop' && isRecord(details)) {

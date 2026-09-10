@@ -398,9 +398,10 @@ const api = {
   ) => ipcRenderer.invoke(AGENT_CORE_REQUEST_CHANNEL, method, input)
     .then((response) => decodeRendererAgentCoreResponse(method, response)) as Promise<RendererAgentCoreResponseByMethod[Method]>,
   onAgentCoreNotification: (listener: (notification: RendererAgentCoreNotification) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, notification: unknown) => (
-      listener(decodeRendererAgentCoreNotification(notification))
-    );
+    const handler = (_event: Electron.IpcRendererEvent, notification: unknown) => {
+      try { listener(decodeRendererAgentCoreNotification(notification)); }
+      catch { console.error('[agent:user-input] preload notification decode/consumer failed'); }
+    };
     ipcRenderer.on(AGENT_CORE_NOTIFICATION_CHANNEL, handler);
     return () => ipcRenderer.removeListener(AGENT_CORE_NOTIFICATION_CHANNEL, handler);
   },

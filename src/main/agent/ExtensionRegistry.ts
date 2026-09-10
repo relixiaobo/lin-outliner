@@ -157,7 +157,10 @@ export class ExtensionRegistry {
   }
 
   async notification(notification: AgentCoreRecordedNotification): Promise<void> {
-    await this.invoke((extension) => extension.onNotification?.(notification));
+    const results = await Promise.allSettled(this.registrations.map(({ extension }) =>
+      Promise.resolve().then(() => extension.onNotification?.(notification))));
+    const failures = results.filter((result) => result.status === 'rejected');
+    if (failures.length) throw new AggregateError(failures.map((result) => result.reason), 'Notification observers failed');
   }
 
   private async invoke(
