@@ -315,9 +315,13 @@ the existing 1 px boundary and changes only its neutral colour; its radius-align
 control is unboxed and deepens only the glyph. Card gaps use the 8 px spacing rung, and
 the card-height viewport keeps a straight overflow cut with a narrow tokenized inner
 shadow only where more content remains.
-Structured user-input requests render above the editor as bounded in-dock forms,
-not permission prompts or floating overlays. The submit action uses the neutral
-filled-default idiom; secondary actions remain neutral.
+Structured user-input requests replace the composer with bounded in-dock forms;
+the hidden message editor retains its independent draft. Header browsing, question
+content, and footer actions share the dock's existing inset and type hierarchy.
+Options use neutral selection tokens; reply fields and actions reuse Textarea,
+Button, and IconButton. The primary action uses the neutral filled-default idiom.
+The [question interaction contract](../agent-thread-rendering.md)
+owns navigation, submission, timeout, and draft restoration.
 
 ### Settings Window
 

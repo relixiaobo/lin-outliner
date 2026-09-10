@@ -1868,8 +1868,7 @@
   object-fit: cover;
 }
 
-.thread-message-editor textarea,
-.thread-user-input-other {
+.thread-message-editor textarea {
   width: 100%;
   resize: none;
   border: 0;
@@ -2782,7 +2781,7 @@
   gap: var(--space-1) var(--space-3);
 }
 
-.thread-user-input-heading > .thread-user-input-countdown {
+.thread-user-input-heading-controls > .thread-user-input-countdown {
   text-align: end;
   font-variant-numeric: tabular-nums;
 }
@@ -2844,41 +2843,58 @@
 }
 
 .thread-user-input-choice {
-  border: 1px solid var(--separator);
+  position: relative;
+  user-select: none;
   border-radius: var(--radius-md);
-  background: var(--fill-1);
+  background: transparent;
 }
 
-.thread-user-input-choice:hover {
+.thread-user-input-choice:has(input:enabled:not(:checked)):hover {
   background: var(--fill-2);
 }
 
 .thread-user-input-choice:has(input:checked) {
-  border-color: var(--text-soft);
-  background: var(--fill-3);
+  background: var(--selection-bg);
+}
+
+.thread-user-input-choice:has(input:enabled):active {
+  background: var(--fill-4);
 }
 
 .thread-user-input-option {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(0, 1fr) var(--space-8);
+  grid-template-columns: var(--control-size-xl) minmax(0, 1fr);
   gap: var(--space-4);
   align-items: center;
   border-radius: var(--radius-md);
   color: var(--text-soft);
-  font-size: var(--font-ui-md);
-  line-height: var(--line-ui-md);
-  padding: var(--space-3) var(--space-5);
+  font-size: var(--font-content);
+  line-height: var(--line-content);
+  padding: var(--space-3) var(--space-2);
 }
 
-.thread-user-input-option > input {
-  margin: 0;
-  width: var(--space-8);
-  height: var(--space-8);
-  accent-color: var(--text-strong);
+.thread-user-input-marker {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-size-xl);
+  height: var(--control-size-xl);
+  flex: 0 0 auto;
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-pill);
+  color: var(--text-soft);
+  font-size: var(--font-ui-sm);
 }
 
-.thread-user-input-options label span,
+.thread-user-input-choice:has(input:checked) .thread-user-input-marker,
+.thread-user-input-custom[data-selected="true"] .thread-user-input-marker {
+  background: var(--fill-3);
+  color: var(--text-strong);
+  border-color: var(--text-soft);
+}
+
+.thread-user-input-option-text,
 .thread-user-input-options label small {
   min-width: 0;
   display: block;
@@ -2894,12 +2910,6 @@
   color: var(--text-soft);
   font-size: var(--font-description);
   line-height: var(--line-description);
-}
-
-.thread-user-input-other {
-  min-height: var(--control-size-md);
-  margin-top: var(--space-2);
-  border-bottom: 1px solid var(--separator);
 }
 
 .thread-user-input-other::placeholder {
@@ -3350,7 +3360,7 @@
   min-width: 0;
 }
 
-.thread-user-input-nav .icon-button {
+.thread-user-input-browse.icon-button {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3360,17 +3370,33 @@
   color: var(--text-soft);
 }
 
-.thread-user-input-nav .icon-button:hover:not(:disabled) {
+.thread-user-input-browse.icon-button:hover:not(:disabled) {
   color: var(--text-strong);
 }
 
-.thread-user-input-nav .icon-button:disabled {
+.thread-user-input-browse.icon-button:disabled {
   color: var(--text-quaternary);
 }
 
+.thread-user-input-heading-label,
+.thread-user-input-heading-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+  color: var(--text-soft);
+  font-size: var(--font-meta);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.thread-user-input-heading-label > svg {
+  flex: 0 0 auto;
+}
+
 .thread-user-input-position {
-  min-width: calc(var(--space-8) * 2);
-  text-align: center;
+  min-width: 0;
+  text-align: start;
   color: var(--text-soft);
   font-size: var(--font-meta);
   font-variant-numeric: tabular-nums;
@@ -3383,25 +3409,37 @@
   align-items: center;
 }
 
-.thread-user-input-other:focus-visible {
-  box-shadow: var(--focus-ring-shadow);
-}
-
-.thread-user-input-custom-editor {
-  padding: var(--space-1) var(--space-5) var(--space-5);
+.thread-user-input-custom {
+  display: grid;
+  grid-template-columns: var(--control-size-xl) minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+  padding: var(--space-3) var(--space-2);
 }
 
 textarea.thread-user-input-other {
+  min-height: var(--control-size-md);
   width: 100%;
   min-width: 0;
   margin: 0;
   padding: var(--space-2);
-  border: 1px solid var(--separator);
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--text-strong);
-  font: inherit;
-  font-size: var(--font-ui-sm);
-  line-height: var(--line-ui-sm);
-  resize: vertical;
+  font-size: var(--font-content);
+  line-height: var(--line-content);
+  resize: none;
+}
+
+.thread-user-input-custom[data-selected="false"] .input-bare {
+  color: var(--text-soft);
+}
+
+.thread-user-input-text-only {
+  display: block;
+  padding: var(--space-2);
+}
+
+.thread-user-input-text-only textarea {
+  field-sizing: content;
+  min-height: var(--control-size-xl);
+  max-height: calc(var(--space-8) * 8);
+  padding: var(--space-4);
 }

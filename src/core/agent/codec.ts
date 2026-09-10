@@ -3477,8 +3477,8 @@ export function decodeRequestUserInputQuestions(value: unknown): readonly Reques
     const header = stringValue(question.header, `questions[${index}].header`);
     if ([...header].length > 12) fail(`questions[${index}].header`, 'must not exceed 12 characters');
     const options = arrayValue(question.options, `questions[${index}].options`);
-    if (options.length < 2 || options.length > 3) {
-      fail(`questions[${index}].options`, 'requires two or three choices');
+    if (options.length === 1 || options.length > 3) {
+      fail(`questions[${index}].options`, 'requires no choices for free text, or two or three choices');
     }
     const labels = new Set<string>();
     return {

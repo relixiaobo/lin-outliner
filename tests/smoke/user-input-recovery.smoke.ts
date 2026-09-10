@@ -10,9 +10,7 @@ const questions = [
   { id: 'scope', header: 'Scope', question: 'How broad should the pass be?', options: [
     { label: 'Focused', description: 'Only this module.' }, { label: 'Complete', description: 'The full workflow.' },
   ] },
-  { id: 'schedule', header: 'Schedule', question: 'When should this run?', options: [
-    { label: 'Now', description: 'Run today.' }, { label: 'Later', description: 'Run tomorrow.' },
-  ] },
+  { id: 'schedule', header: 'Schedule', question: 'When should this run?', options: [] },
 ];
 
 async function openQuestions(page: Page) {
@@ -97,9 +95,9 @@ test('real tool delivery recovers loss and keeps ordinary messages independent o
     await openQuestions(page);
     const restored = await page.evaluate((threadId) => window.lin!.agentCoreRequest('userInput/read', { threadId }), threadId);
     expect(restored.state.pending).toEqual(first.state.pending);
-    await form.getByRole('radio', { name: /Complete/ }).check();
-    await form.getByRole('button', { name: 'Next question', exact: true }).click();
-    await form.getByRole('radio', { name: 'Other', exact: true }).check();
+    await form.getByRole('radio', { name: /Complete/ }).press('Space');
+    await form.getByRole('button', { name: 'Next', exact: true }).click();
+    await form.getByRole('textbox', { name: 'Your answer' }).focus();
     await form.getByRole('textbox', { name: 'Your answer', exact: true }).fill('Tomorrow morning');
     await form.getByRole('button', { name: 'Submit answers', exact: true }).click();
     await expect(page.getByText('Continued once: answered', { exact: true })).toBeVisible();
@@ -114,9 +112,9 @@ test('real tool delivery recovers loss and keeps ordinary messages independent o
     await expect(composer).toBeHidden();
     await expect(composer).toHaveText('Keep the ordinary draft.');
     await openQuestions(page);
-    await form.getByRole('radio', { name: /Complete/ }).check();
-    await form.getByRole('button', { name: 'Next question', exact: true }).click();
-    await form.getByRole('radio', { name: 'Other', exact: true }).check();
+    await form.getByRole('radio', { name: /Complete/ }).press('Space');
+    await form.getByRole('button', { name: 'Next', exact: true }).click();
+    await form.getByRole('textbox', { name: 'Your answer' }).focus();
     const answerEditor = page.getByRole('textbox', { name: 'Your answer', exact: true });
     await answerEditor.fill('Still typing when it expires');
     await page.getByRole('button', { name: 'Collapse agent', exact: true }).click();
@@ -161,9 +159,9 @@ test('real tool delivery recovers loss and keeps ordinary messages independent o
     await composer.fill('Ask and allow a skip.');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     await openQuestions(page);
-    await form.getByRole('radio', { name: /Complete/ }).check();
-    await form.getByRole('button', { name: 'Next question', exact: true }).click();
-    await form.getByRole('radio', { name: 'Other', exact: true }).check();
+    await form.getByRole('radio', { name: /Complete/ }).press('Space');
+    await form.getByRole('button', { name: 'Next', exact: true }).click();
+    await form.getByRole('textbox', { name: 'Your answer' }).focus();
     await form.getByRole('textbox', { name: 'Your answer', exact: true }).fill('Withheld by Skip');
     await form.getByRole('button', { name: 'Skip all', exact: true }).click();
     await expect(form).toHaveCount(0);
@@ -197,7 +195,7 @@ test('real tool delivery recovers loss and keeps ordinary messages independent o
       try {
         await window.lin!.agentCoreRequest('userInput/respond', { hostGeneration: old.hostGeneration, threadId: old.threadId,
           turnId: old.turnId, itemId: old.itemId, submissionId: 'restart-reply', intent: 'answer',
-          answers: [{ questionId: 'scope', optionLabel: 'Complete' }, { questionId: 'schedule', optionLabel: 'Now' }] });
+          answers: [{ questionId: 'scope', optionLabel: 'Complete' }, { questionId: 'schedule', otherText: 'Tomorrow morning' }] });
         return false;
       } catch { return true; }
     }, old);

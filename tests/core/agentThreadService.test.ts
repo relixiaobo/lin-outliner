@@ -6107,7 +6107,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
           { label: 'Local (Recommended)', description: 'Keep data on this device.' },
           { label: 'Cloud', description: 'Synchronize data remotely.' },
         ],
-      }],
+      }, { id: 'greeting', header: 'Greeting', question: 'What should it say?', options: [] }],
     });
     await waitUntil(() => fixture.service.readThread({ threadId: thread.id }).thread.status.type === 'active'
       && fixture.service.readThread({ threadId: thread.id }).thread.status.activeFlags.includes('waitingOnUserInput'));
@@ -6116,10 +6116,10 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       threadId: thread.id,
       turnId: turn.turn.id,
       itemId: 'question-item',
-      answers: [{ questionId: 'storage_mode', optionLabel: 'Local (Recommended)' }],
+      answers: [{ questionId: 'storage_mode', optionLabel: 'Local (Recommended)' }, { questionId: 'greeting', otherText: 'Hello' }],
       hostGeneration: (await fixture.service.request('userInput/read', { threadId: thread.id })).state.hostGeneration,
     });
-    expect(await responsePromise).toMatchObject({ answers: [{ optionLabel: 'Local (Recommended)' }], outcome: 'answered' });
+    expect(await responsePromise).toMatchObject({ answers: [{ optionLabel: 'Local (Recommended)' }, { questionId: 'greeting', otherText: 'Hello' }], outcome: 'answered' });
     expect(notifications.map((notification) => notification.type)).toContain('userInput/requested');
     expect(notifications.map((notification) => notification.type)).toContain('userInput/resolved');
     fixture.executor.finish();

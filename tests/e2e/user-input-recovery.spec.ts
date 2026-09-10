@@ -58,7 +58,7 @@ test('a focused empty composer immediately shows the first question without a pr
   const form = page.getByRole('form', { name: 'Questions' });
   await expect(form.getByRole('radio', { name: /Complete/ })).toBeVisible();
   await expect(form.locator('.thread-user-input-step')).toBeFocused();
-  await expect(form).toContainText('Question 1 of 3');
+  await expect(form.locator('.thread-user-input-position')).toContainText('Question 1 of 3');
   await expect(composer).toBeHidden();
   await expect(page.locator('.thread-user-input-strip')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Answer questions', exact: true })).toHaveCount(0);
@@ -68,13 +68,14 @@ test('a focused empty composer immediately shows the first question without a pr
     await page.locator('.agent-dock').screenshot({ animations: 'disabled', path: `tmp/user-input-recovery/direct-question-${colorScheme}.png` });
   }
   await expect(form.getByRole('button')).toHaveCount(4);
+  await expect(form.locator('.thread-user-input-heading').getByRole('button')).toHaveCount(2);
   await form.getByRole('button', { name: 'Skip all', exact: true }).click();
   await expect(form).toHaveCount(0);
   await expect(composer).toBeFocused();
   expect(await responses(page)).toHaveLength(1);
 });
 
-test('paired navigation browses every question without submitting and restores earlier answers', async ({ page }) => {
+test('Next only navigates and final submission includes answers retained through Previous', async ({ page }) => {
   await openMockedApp(page);
   await page.clock.install();
   const threadId = await createThread(page);
@@ -84,31 +85,36 @@ test('paired navigation browses every question without submitting and restores e
   await expect(form.getByRole('timer')).toHaveAttribute('title', getMessages('en').agent.thread.inputDeadlineHint);
   await page.clock.fastForward(6_000);
   await expect(form.getByRole('timer')).toHaveText('0:54');
-  const navigation = form.getByRole('navigation', { name: 'Question navigation' });
+  const navigation = form.locator('.thread-user-input-heading');
   const previous = navigation.getByRole('button', { name: 'Previous question', exact: true });
-  const next = navigation.getByRole('button', { name: 'Next question', exact: true });
+  const next = form.getByRole('button', { name: 'Next', exact: true });
   await expect(previous).toBeDisabled();
-  await expect(next).toBeEnabled();
-  await expect(form.locator('.thread-user-input-footer').getByRole('button', { name: 'Next question' })).toHaveCount(0);
+  await expect(next).toBeDisabled();
+  await expect(form.getByRole('button', { name: 'Submit answers', exact: true })).toHaveCount(0);
   const initialHeight = (await form.boundingBox())!.height;
   const footerY = (await form.locator('.thread-user-input-footer').boundingBox())!.y;
-  await form.getByRole('radio', { name: /Complete/ }).check();
+  await form.getByRole('radio', { name: /Complete/ }).press('Space');
   await next.click();
-  await expect(navigation).toContainText('2 / 3');
-  await form.getByRole('radio', { name: 'Other', exact: true }).check();
+  await expect(form.locator('.thread-user-input-position')).toContainText('2 / 3');
+  await form.getByRole('textbox', { name: 'Your answer' }).focus();
   const other = form.getByRole('textbox', { name: 'Your answer' });
   await expect(other).toBeFocused();
   await other.fill('Tuesday morning');
   expect((await form.boundingBox())!.height).toBeGreaterThan(initialHeight);
   expect((await form.locator('.thread-user-input-footer').boundingBox())!.y).toBeCloseTo(footerY, 0);
   await next.click();
-  await expect(next).toBeDisabled();
-  await form.getByRole('radio', { name: /Summary/ }).check();
+  await expect(next).toHaveCount(0);
+  await expect(form.getByRole('button', { name: 'Submit answers', exact: true })).toBeEnabled();
+  await form.getByRole('radio', { name: /Summary/ }).press('Space');
   await previous.click();
   await expect(other).toHaveValue('Tuesday morning');
   await previous.click();
   await expect(form.getByRole('radio', { name: /Complete/ })).toBeChecked();
   await expect(form.getByRole('timer')).toHaveText('0:54');
+  expect(await responses(page)).toHaveLength(0);
+  await expect(form.getByRole('button', { name: 'Submit answers', exact: true })).toHaveCount(0);
+  await next.click();
+  await next.click();
   expect(await responses(page)).toHaveLength(0);
   await form.getByRole('button', { name: 'Submit answers', exact: true }).click();
   expect((await responses(page))[0]!.args.answers).toEqual([
@@ -116,6 +122,82 @@ test('paired navigation browses every question without submitting and restores e
     { questionId: 'schedule', otherText: 'Tuesday morning' },
     { questionId: 'detail', optionLabel: 'Summary' },
   ]);
+});
+
+for (const theme of ['light', 'dark'] as const) {
+  test(`free-text questions require text for Next and retain it when browsing in ${theme}`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' });
+    await openMockedApp(page);
+    const threadId = await createThread(page);
+    const composer = page.getByRole('textbox', { name: 'Message this Thread', includeHidden: true });
+    await composer.fill('An independent message draft.');
+    await page.locator('.agent-dock').evaluate((element: HTMLElement) => { element.style.width = '344px'; element.style.minWidth = '344px'; });
+    await ask(page, threadId, 'free-text', 1, false, false, 'What should the greeting say?', []);
+    const form = await openQuestions(page);
+    const reply = form.getByRole('textbox', { name: 'Your answer' });
+    const next = form.getByRole('button', { name: 'Next', exact: true });
+    await expect(form.getByRole('radio')).toHaveCount(0);
+    await expect(reply).toHaveAttribute('placeholder', 'Reply…');
+    await expect(next).toBeDisabled();
+    await reply.fill('   ');
+    await expect(next).toBeDisabled();
+    await reply.fill('');
+    await form.screenshot({ animations: 'disabled', path: `tmp/user-input-recovery/free-text-empty-${theme}.png` });
+    const shortHeight = (await reply.boundingBox())!.height;
+    await reply.fill('A longer greeting that wraps naturally in the narrow dock. '.repeat(12));
+    expect((await reply.boundingBox())!.height).toBeGreaterThan(shortHeight);
+    expect(await reply.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+    await expect(next).toBeInViewport();
+    await reply.fill('Hello');
+    await expect(next).toBeEnabled();
+    await form.screenshot({ animations: 'disabled', path: `tmp/user-input-recovery/free-text-filled-${theme}.png` });
+    await next.click();
+    expect(await responses(page)).toHaveLength(0);
+    await expect(form.getByRole('button', { name: 'Next question', exact: true })).toBeDisabled();
+    await form.getByRole('button', { name: 'Previous question', exact: true }).click();
+    await expect(reply).toHaveValue('Hello');
+    await reply.fill('');
+    await expect(next).toBeDisabled();
+    await reply.fill('Hello again');
+    await next.click();
+    await form.getByRole('button', { name: 'Submit answers', exact: true }).click();
+    expect((await responses(page))[0]!.args.answers).toEqual([
+      { questionId: 'scope', otherText: 'Hello again' }, { questionId: 'schedule', skipped: true },
+    ]);
+    await expect(composer).toHaveText('An independent message draft.');
+  });
+}
+
+test('tabbing into the response field preserves the selected option until text is edited', async ({ page }) => {
+  await openMockedApp(page);
+  const threadId = await createThread(page);
+  await ask(page, threadId, 'keyboard-answer', 1, true);
+  const form = await openQuestions(page);
+  const option = form.getByRole('radio', { name: /Complete/ });
+  await option.press('Space');
+  await option.press('Tab');
+  const response = form.getByRole('textbox', { name: 'Your answer' });
+  await expect(response).toBeFocused();
+  await expect(option).toBeChecked();
+  await response.fill('Use my own scope.');
+  await expect(option).not.toBeChecked();
+  await form.getByRole('button', { name: 'Submit answers', exact: true }).click();
+  expect((await responses(page))[0]!.args.answers).toEqual([{ questionId: 'scope', otherText: 'Use my own scope.' }]);
+});
+
+test('double-clicking Next cannot submit the final question', async ({ page }) => {
+  await openMockedApp(page);
+  const threadId = await createThread(page);
+  await ask(page, threadId);
+  const form = await openQuestions(page);
+  await form.getByRole('radio', { name: /Complete/ }).press('Space');
+  await form.getByRole('button', { name: 'Next', exact: true }).dblclick();
+  await expect(form.locator('.thread-user-input-position')).toContainText('2 / 2');
+  const submit = form.getByRole('button', { name: 'Submit answers', exact: true });
+  await expect(submit).toBeEnabled();
+  expect(await responses(page)).toHaveLength(0);
+  await submit.click();
+  expect(await responses(page)).toHaveLength(1);
 });
 
 test('unanswered questions stay local during navigation and become skips only on submission', async ({ page }) => {
@@ -127,7 +209,7 @@ test('unanswered questions stay local during navigation and become skips only on
   await form.getByRole('button', { name: 'Previous question', exact: true }).click();
   await expect(form.getByRole('radio', { checked: true })).toHaveCount(0);
   await form.getByRole('button', { name: 'Next question', exact: true }).click();
-  await form.getByRole('radio', { name: /Now/ }).check();
+  await form.getByRole('radio', { name: /Now/ }).press('Space');
   expect(await responses(page)).toHaveLength(0);
   await form.getByRole('button', { name: 'Submit answers', exact: true }).click();
   await expect(form).toHaveCount(0);
@@ -146,9 +228,9 @@ for (const hasAnswers of [false, true]) {
     await ask(page, threadId);
     const form = await openQuestions(page);
     if (hasAnswers) {
-      await form.getByRole('radio', { name: /Complete/ }).check();
-      await form.getByRole('button', { name: 'Next question', exact: true }).click();
-      await form.getByRole('radio', { name: 'Other', exact: true }).check();
+      await form.getByRole('radio', { name: /Complete/ }).press('Space');
+      await form.getByRole('button', { name: 'Next', exact: true }).click();
+      await form.getByRole('textbox', { name: 'Your answer' }).focus();
       await form.getByRole('textbox', { name: 'Your answer' }).fill('Keep this answer draft.');
     }
     expect(await responses(page)).toHaveLength(0);
@@ -175,9 +257,9 @@ for (const action of ['Skip all', 'Submit answers'] as const) {
   test(`${action} explains a failed attempt and preserves the answers for retry`, async ({ page }) => {
     await openMockedApp(page);
     const threadId = await createThread(page);
-    await ask(page, threadId);
+    await ask(page, threadId, 'single-attempt', 1, true);
     const form = await openQuestions(page);
-    await form.getByRole('radio', { name: /Complete/ }).check();
+    await form.getByRole('radio', { name: /Complete/ }).press('Space');
     await page.evaluate(() => {
       const invoke = window.lin!.agentCoreRequest;
       let fail = true;
@@ -201,17 +283,17 @@ for (const action of ['Skip all', 'Submit answers'] as const) {
   });
 }
 
-test('direct submission sends earlier and current answers while preserving inactive text', async ({ page }) => {
+test('final submission sends earlier and current answers while preserving inactive text', async ({ page }) => {
   await openMockedApp(page);
   const threadId = await createThread(page);
   await ask(page, threadId);
   const form = await openQuestions(page);
-  await form.getByRole('radio', { name: 'Other', exact: true }).check();
+  await form.getByRole('textbox', { name: 'Your answer' }).focus();
   await form.getByRole('textbox', { name: 'Your answer' }).fill('A private alternative');
-  await form.getByRole('radio', { name: /Complete/ }).check();
+  await form.getByRole('radio', { name: /Complete/ }).press('Space');
   await expect(form.getByRole('textbox', { name: 'Your answer', includeHidden: true })).toHaveValue('A private alternative');
-  await form.getByRole('button', { name: 'Next question', exact: true }).click();
-  await form.getByRole('radio', { name: 'Other', exact: true }).check();
+  await form.getByRole('button', { name: 'Next', exact: true }).click();
+  await form.getByRole('textbox', { name: 'Your answer' }).focus();
   await form.getByRole('textbox', { name: 'Your answer' }).fill('Next Tuesday');
   await form.getByRole('button', { name: 'Submit answers', exact: true }).click();
   const submitted = await responses(page);
@@ -233,7 +315,7 @@ test('single choice never auto-selects or submits and Escape does not stop the t
   await ask(page, threadId, 'single', 1, true);
   const form = await openQuestions(page);
   await expect(form.getByRole('radio').first()).not.toBeChecked();
-  await form.getByRole('radio', { name: /Complete/ }).check();
+  await form.getByRole('radio', { name: /Complete/ }).press('Space');
   expect(await responses(page)).toHaveLength(0);
   await form.getByRole('radio', { name: /Complete/ }).press('Escape');
   await expect(form).toBeVisible();
@@ -261,7 +343,7 @@ test('message focus, IME, attachments, and sending remain independent of the que
   await expect(page.locator('.thread-user-input-strip')).toHaveCount(0);
   await composer.evaluate((element) => element.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '' })));
   const form = page.getByRole('form', { name: 'Questions' });
-  await form.getByRole('radio', { name: 'Other', exact: true }).check();
+  await form.getByRole('textbox', { name: 'Your answer' }).focus();
   await form.getByRole('textbox', { name: 'Your answer' }).fill('Keep this answer separate.');
   await form.getByRole('button', { name: 'Skip all', exact: true }).click();
   await expect(composer).toBeFocused();
@@ -281,9 +363,9 @@ test('answer submission and a lost acknowledgement never consume the ordinary me
   const threadId = await createThread(page);
   const composer = page.getByRole('textbox', { name: 'Message this Thread', includeHidden: true });
   await composer.fill('Unrelated message draft.');
-  await ask(page, threadId);
+  await ask(page, threadId, 'single-acknowledgement', 1, true);
   const form = await openQuestions(page);
-  await form.getByRole('radio', { name: /Complete/ }).check();
+  await form.getByRole('radio', { name: /Complete/ }).press('Space');
   await page.evaluate(() => {
     const invoke = window.lin!.agentCoreRequest;
     window.lin!.agentCoreRequest = (async (method: string, input: any) => {
@@ -312,9 +394,9 @@ test('expiry preserves the editing node and caret, then leaves a passive note in
   const originalMessage = await composer.textContent();
   await ask(page, threadId);
   const form = await openQuestions(page);
-  await form.getByRole('radio', { name: /Complete/ }).check();
-  await form.getByRole('button', { name: 'Next question', exact: true }).click();
-  await form.getByRole('radio', { name: 'Other', exact: true }).check();
+  await form.getByRole('radio', { name: /Complete/ }).press('Space');
+  await form.getByRole('button', { name: 'Next', exact: true }).click();
+  await form.getByRole('textbox', { name: 'Your answer' }).focus();
   const editor = form.getByRole('textbox', { name: 'Your answer' });
   await editor.fill('Still writing my answer');
   await editor.evaluate((element: HTMLTextAreaElement) => { element.dataset.beforeExpiry = 'same'; element.setSelectionRange(5, 5); });
@@ -354,7 +436,7 @@ test('ordinary message failure and retry leave skipped answers at the original q
   const threadId = await createThread(page);
   await ask(page, threadId);
   const form = await openQuestions(page);
-  await form.getByRole('radio', { name: 'Other', exact: true }).check();
+  await form.getByRole('textbox', { name: 'Your answer' }).focus();
   const answer = form.getByRole('textbox', { name: 'Your answer' });
   await answer.fill('Answer draft.');
   await form.getByRole('button', { name: 'Skip all', exact: true }).click();
@@ -386,7 +468,7 @@ test('a newer question leaves an expired editor in place and recovery stays avai
   const threadId = await createThread(page);
   await ask(page, threadId);
   const form = await openQuestions(page);
-  await form.getByRole('radio', { name: 'Other', exact: true }).check();
+  await form.getByRole('textbox', { name: 'Your answer' }).focus();
   const editor = form.getByRole('textbox', { name: 'Your answer' });
   await editor.fill('Still finishing this thought');
   await page.clock.fastForward(61_000);
@@ -411,7 +493,7 @@ test('an unavailable receipt retains answers without claiming that submission fa
   const threadId = await createThread(page);
   const request = await ask(page, threadId);
   const form = await openQuestions(page);
-  await form.getByRole('radio', { name: /Complete/ }).check();
+  await form.getByRole('radio', { name: /Complete/ }).press('Space');
   await page.evaluate(async (request) => {
     const invoke = window.lin!.agentCoreRequest;
     window.lin!.agentCoreRequest = ((method: string, input: any) => {
@@ -441,10 +523,10 @@ test('Chinese question and draft actions keep the same meanings in a narrow dock
   await ask(page, threadId);
   await page.locator('.agent-dock').evaluate((element: HTMLElement) => { element.style.width = '320px'; element.style.minWidth = '320px'; });
   const form = page.getByRole('form', { name: labels.inputNeeded, exact: true });
-  await form.getByRole('radio', { name: labels.other, exact: true }).check();
+  await form.getByRole('textbox', { name: labels.inputWriteAnswer }).focus();
   await form.getByRole('textbox', { name: labels.inputWriteAnswer }).fill('Keep this local draft.');
   await expect(form.getByRole('button', { name: labels.inputSkipAll, exact: true })).toBeInViewport();
-  await expect(form.getByRole('button', { name: labels.inputSendAnswers, exact: true })).toBeInViewport();
+  await expect(form.locator('.thread-user-input-footer').getByRole('button', { name: labels.inputNext, exact: true })).toBeInViewport();
   expect(await form.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
   await form.screenshot({ animations: 'disabled', path: 'tmp/user-input-recovery/question-copy-zh.png' });
   await form.getByRole('button', { name: labels.inputSkipAll, exact: true }).click();
@@ -479,21 +561,39 @@ for (const theme of ['light', 'dark'] as const) {
     expect(bounds.form.height).toBeLessThan(page.viewportSize()!.height * 0.5);
     expect(await body.evaluate((element) => element.scrollHeight - element.clientHeight)).toBeLessThanOrEqual(1);
     expect(bounds.footer.y - (bounds.body.y + bounds.body.height)).toBeLessThanOrEqual(12);
-    await expect(form.getByRole('radio', { name: 'Other', exact: true })).toBeInViewport();
+    await expect(form.getByRole('textbox', { name: 'Your answer' })).toBeInViewport();
     const choice = form.locator('.thread-user-input-choice').first();
     const label = choice.locator('strong');
-    expect((await choice.getByRole('radio').boundingBox())!.x).toBeGreaterThan((await label.boundingBox())!.x);
+    expect((await choice.locator('.thread-user-input-marker').boundingBox())!.x).toBeLessThan((await label.boundingBox())!.x);
+    const rowBounds = await choice.boundingBox();
+    await choice.hover();
+    expect(await choice.boundingBox()).toEqual(rowBounds);
     await label.click();
     await expect(choice.getByRole('radio')).toBeChecked();
-    await expect(footer.getByRole('button', { name: 'Submit answers', exact: true })).toBeEnabled();
+    const tokens = await choice.evaluate((element) => {
+      const probe = document.createElement('div');
+      probe.style.backgroundColor = 'var(--selection-bg)';
+      probe.style.fontSize = 'var(--font-content)';
+      document.body.append(probe);
+      const expected = getComputedStyle(probe);
+      const actual = getComputedStyle(element);
+      const result = { actualFill: actual.backgroundColor, expectedFill: expected.backgroundColor,
+        actualFont: actual.fontSize, expectedFont: expected.fontSize, cursor: actual.cursor };
+      probe.remove();
+      return result;
+    });
+    expect(tokens.actualFill).toBe(tokens.expectedFill);
+    expect(tokens.actualFont).toBe(tokens.expectedFont);
+    expect(tokens.cursor).not.toBe('pointer');
+    await expect(footer.getByRole('button', { name: 'Next', exact: true })).toBeEnabled();
     await form.screenshot({ animations: 'disabled', path: `tmp/user-input-recovery/compact-color-${theme}.png` });
     await page.locator('.agent-dock').screenshot({ animations: 'disabled', path: `tmp/user-input-recovery/compact-dock-${theme}.png` });
-    await form.getByRole('button', { name: 'Next question', exact: true }).click();
+    await form.getByRole('button', { name: 'Next', exact: true }).click();
     expect((await form.boundingBox())!.height).toBeLessThan(bounds.form.height);
     expect((await footer.boundingBox())!.y).toBeCloseTo(bounds.footer.y, 0);
-    await form.getByRole('radio', { name: 'Other', exact: true }).check();
+    await form.getByRole('textbox', { name: 'Your answer' }).focus();
     await expect(form.getByRole('textbox', { name: 'Your answer' })).toBeInViewport();
-    await expect(footer.getByRole('button', { name: 'Submit answers', exact: true })).toBeInViewport();
+    await expect(footer.getByRole('button', { name: 'Next', exact: true })).toBeInViewport();
     expect(await responses(page)).toHaveLength(0);
   });
 
@@ -510,16 +610,16 @@ for (const theme of ['light', 'dark'] as const) {
     const footer = form.locator('.thread-user-input-footer');
     const before = { form: (await form.boundingBox())!, header: (await header.boundingBox())!, footer: (await footer.boundingBox())! };
     expect(await body.evaluate((element) => element.scrollHeight - element.clientHeight)).toBeGreaterThan(0);
-    await form.getByRole('radio', { name: 'Other', exact: true }).check();
+    await form.getByRole('textbox', { name: 'Your answer' }).focus();
     await form.getByRole('textbox', { name: 'Your answer' }).fill('Start with the editor and revisit search afterward.');
     expect(await body.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
     expect((await header.boundingBox())!.y).toBeCloseTo(before.header.y, 0);
     expect((await footer.boundingBox())!.y).toBeCloseTo(before.footer.y, 0);
     expect((await form.boundingBox())!.height).toBeCloseTo(before.form.height, 0);
-    await expect(form.getByRole('button', { name: 'Next question', exact: true })).toBeInViewport();
-    await expect(form.getByRole('button', { name: 'Submit answers', exact: true })).toBeInViewport();
+    await expect(form.getByRole('button', { name: 'Next', exact: true })).toBeInViewport();
+    await expect(form.getByRole('button', { name: 'Submit answers', exact: true })).toHaveCount(0);
     await form.screenshot({ animations: 'disabled', path: `tmp/user-input-recovery/long-question-${theme}.png` });
-    await form.getByRole('button', { name: 'Next question', exact: true }).click();
+    await form.getByRole('button', { name: 'Next', exact: true }).click();
     expect((await form.boundingBox())!.height).toBeLessThan(before.form.height);
     expect((await footer.boundingBox())!.y).toBeCloseTo(before.footer.y, 0);
     await expect(form.getByRole('button', { name: 'Skip all', exact: true })).toBeInViewport();
@@ -537,7 +637,7 @@ for (const theme of ['light', 'dark'] as const) {
     await ask(page, threadId);
     const form = await openQuestions(page);
     await page.locator('.agent-dock').evaluate((element: HTMLElement) => { element.style.width = '320px'; element.style.minWidth = '320px'; });
-    await form.getByRole('radio', { name: 'Other', exact: true }).check();
+    await form.getByRole('textbox', { name: 'Your answer' }).focus();
     await form.getByRole('textbox', { name: 'Your answer' }).fill('A longer answer that remains editable in the narrow conversation dock.');
     const overflow = await form.evaluate((element) => element.scrollWidth - element.clientWidth);
     expect(overflow).toBeLessThanOrEqual(1);
@@ -550,7 +650,7 @@ for (const theme of ['light', 'dark'] as const) {
     await form.getByRole('textbox', { name: 'Your answer' }).press('Escape');
     await expect(form).toBeVisible();
     expect((await commandCalls(page)).filter((call) => call.cmd === 'turn/interrupt')).toHaveLength(0);
-    await form.getByRole('button', { name: 'Next question', exact: true }).click();
+    await form.getByRole('button', { name: 'Next', exact: true }).click();
     await expect(form.getByRole('button', { name: 'Submit answers', exact: true })).toBeVisible();
     await expect(page.locator('.thread-user-input-review')).toHaveCount(0);
     expect(await form.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);

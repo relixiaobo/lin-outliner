@@ -661,29 +661,40 @@ unchanged, except while preserving active answer editing at expiry. There is no
 close/reopen editor switch. Arrival can focus the replacement form when the
 hidden composer held focus, but never steals another document's editing focus.
 
-The question surface groups metadata, answers, and submission into three regions.
-The compact header groups previous/next icons around current / total on the left
-and the quiet countdown on the right. Both icons stay visible and are disabled at their
-corresponding boundary; accessible names and native tooltips identify them.
-Navigation never submits. The scrollable body gives the question stronger type
-than option labels and descriptions. Other is a peer radio option that reveals
-and focuses a text editor. Inactive text stays mounted but hidden, so choosing a
-preset never silently sends it. No option is selected automatically. Options are full-width choice rows with label and description on the left
-and a native selection indicator on the right. Neutral borders and fill make
-selection visible across the whole row. Other expands its editor within the same
-card; no extra action or decorative progress indicator is added. The form fits its content up to the existing half-viewport
-height cap. Short questions do not reserve an empty half-screen. Opening Other or
-moving between different-length questions adapts the height; only the body
-scrolls after the cap, keeping navigation and submission visible at narrow sizes.
+The question surface groups context, answers, and actions into three regions.
+The header shows a question icon and Question on the left. The right groups
+paired browsing arrows, compact N / M position, and the quiet clock. The position
+has a localized Question N of M accessible label. Arrows are disabled at the
+respective ends and omitted with the position for a single question. The question leads the scrollable body.
+Presets are light full-width rows with numbered circular markers on the left.
+A selected row uses neutral fill and a check marker while preserving native radio
+semantics and visible keyboard focus. No option is selected automatically. Selection uses the shared selection token,
+press uses the neutral active fill, and hover never changes geometry. Question
+and answer text use the content type pair; metadata uses the meta pair. Shared
+Textarea, Button, and IconButton own control skins and accessibility states.
 
-The footer contains only Skip all on the left and Submit answers on the right,
-anchored at the dock bottom while the question area adapts above it.
-Submit answers is available on every step with an active answer; it sends all
-active answers and typed skips for unanswered entries. Skip all sends only typed
-skips with continue intent, preserving all filled answers locally. Navigation
-never changes an answer or sends a skip. No close control, footer Next button,
-review page, tab bar, More menu, or execution control appears inside the form.
-Escape during a live question leaves it visible and never submits or stops work.
+A pencil-marked free-text field is directly editable below the presets. Focus expands the field without changing the selected answer;
+typing activates the free-text response; selecting a preset keeps the text visible but
+inactive, without sending it. The field expands while active and stays mounted
+when the Host settles. A pure-text question uses an empty options array and
+shows a full-width bordered Reply field without a pencil marker or preset rows.
+It starts at one line and grows with content up to a bounded height. There is no
+preceding Other choice or editor switch.
+The form fits its content up to the existing half-viewport cap; only the body
+scrolls after that cap, so short questions leave more conversation visible.
+
+The footer places Skip all on the left and Next on the right. Next requires a
+selected option or non-blank free text for the current question. It only moves
+to the next question and never sends. Header arrows can browse unanswered
+questions without changing their answers. On the final question, Submit answers replaces
+Next. It is enabled when any question has an active answer and sends all active
+answers with typed skips for unanswered entries. Revisiting earlier steps restores
+their drafts. Skip all remains available on every step and sends only typed skips
+with continue intent, preserving filled answers locally. The footer stays anchored
+at the dock bottom while the body adapts to content and free-text editing. No
+early submission, review page, tab bar, More menu, close
+control, or execution control appears in the form. Escape during a live question
+leaves it visible and never submits or stops work.
 
 Copy describes the user's action and known outcome. Waiting status says Waiting
 for your answers; the countdown shows only minutes and seconds, such as 0:54.

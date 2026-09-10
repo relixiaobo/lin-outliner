@@ -775,7 +775,9 @@ or `skipped: true`. An answered outcome records explicit form submission; it doe
 not imply that every question received an answer. Users can skip individual
 questions, including all of them, without choosing an option or supplying text.
 Skipped entries contain no withheld local draft content. Selection, editing, and
-navigation stay local. Submit answers sends active answers with typed skips for
+navigation stay local. Header arrows can browse unanswered questions. Next
+requires an active answer for the current question and only advances locally; Submit answers
+appears only on the final question and sends active answers with typed skips for
 unanswered questions. Skip all sends only typed skips with `continue` intent and
 retains existing answers locally. The protocol can carry supplied answers with
 `continue` intent, but the Skip all UI never does so. A `discussed`
@@ -792,8 +794,10 @@ the unresolved decision if nothing useful can proceed. Directional, irreversible
 and permission-dependent work still requires a real decision. Neither Host nor
 runtime automatically re-asks an expired or skipped question. Skipping supplies no
 answer and grants no authorization. Each
-question has a stable ID, short header, one sentence, and two or three mutually
-exclusive options. The model-facing schema asks for the recommended option first
+question has a stable ID, short header, one sentence, and an options array. An
+empty array requests a pure-text reply; a non-empty array requires two or three
+mutually exclusive choices. A one-option list is rejected. All questions can
+receive free text, and the same answer envelope and recovery lifecycle apply. The model-facing schema asks for the recommended option first
 and an English `(Recommended)` suffix, matching Codex. This is presentation
 guidance rather than a wire invariant: the host accepts localized or omitted
 suffixes and preserves labels verbatim for answer round-tripping.

@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import type { RequestUserInputAnswer, RequestUserInputRequest as Request } from '../../../core/agent/protocol';
 import { useT } from '../../i18n/I18nProvider';
 import { Button } from '../../ui/primitives/Button';
+import { Textarea } from '../../ui/primitives/Textarea';
 import { IconButton } from '../../ui/primitives/IconButton';
-import { ChevronLeftIcon, ChevronRightIcon } from '../../ui/icons';
+import { ICON_SIZE, CheckIcon, ChevronLeftIcon, ChevronRightIcon, PencilIcon, QuestionToolIcon } from '../../ui/icons';
 import { activeInputAnswers, type UserInputDraft } from '../store/userInputState';
 
 type DraftChange = Partial<Pick<UserInputDraft, 'answers' | 'step'>>;
@@ -47,9 +48,8 @@ export function UserInputRequest({ request, draft, disabled = false, onDraftChan
   const submitting = submissionIntent !== null;
   const submittingRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
+  const [editingText, setEditingText] = useState(false);
   const stepRef = useRef<HTMLDivElement>(null);
-  const otherRef = useRef<HTMLTextAreaElement>(null);
-  const focusOther = useRef(false);
   const focusNext = useRef(false);
   const pending = draft.outcome === 'pending';
   const blocked = !pending || expired || disabled || submitting;
@@ -61,6 +61,7 @@ export function UserInputRequest({ request, draft, disabled = false, onDraftChan
   const activeAnswer = answers.find((answer) => answer.questionId === question.id);
   const last = step === request.questions.length - 1;
   const otherSelected = selected?.selection === 'text';
+  const textOnly = question.options.length === 0;
 
   useEffect(() => {
     if (!focusNext.current) return;
@@ -68,13 +69,8 @@ export function UserInputRequest({ request, draft, disabled = false, onDraftChan
     stepRef.current?.focus();
   }, [draft.step]);
 
-  useEffect(() => {
-    if (!focusOther.current) return;
-    focusOther.current = false;
-    otherRef.current?.focus();
-  }, [otherSelected]);
-
   function move(step: number) {
+    if (blocked) return;
     focusNext.current = true;
     onDraftChange({ step: Math.max(0, Math.min(request.questions.length - 1, step)) });
   }
@@ -110,17 +106,20 @@ export function UserInputRequest({ request, draft, disabled = false, onDraftChan
       }
     }}>
     <div className="thread-user-input-heading">
-      <nav className="thread-user-input-nav" aria-label={t.agent.thread.inputNavigation}>
-        <IconButton icon={ChevronLeftIcon} label={t.agent.thread.inputBack} disabled={step === 0 || !pending || expired || submitting}
-          onClick={() => move(step - 1)} />
-        <span className="thread-user-input-position" aria-live="polite">
-          <span aria-hidden="true">{step + 1} / {request.questions.length}</span>
-          <span className="sr-only">{t.agent.thread.inputProgress({ current: step + 1, total: request.questions.length })}</span>
-        </span>
-        <IconButton icon={ChevronRightIcon} label={t.agent.thread.inputNext} disabled={last || !pending || expired || submitting}
-          onClick={() => move(step + 1)} />
-      </nav>
-      {pending && !expired ? <UserInputDeadline request={request} onExpired={() => { setExpired(true); onExpired(); }} /> : null}
+      <span className="thread-user-input-heading-label"><QuestionToolIcon size={ICON_SIZE.menu} />{t.agent.thread.inputQuestion}</span>
+      <div className="thread-user-input-heading-controls">
+        {request.questions.length > 1 ? <div className="thread-user-input-nav">
+          <IconButton className="thread-user-input-browse" icon={ChevronLeftIcon} label={t.agent.thread.inputBack}
+            disabled={step === 0 || blocked} onClick={() => move(step - 1)} />
+          <span className="thread-user-input-position" aria-live="polite">
+            <span aria-hidden="true">{step + 1} / {request.questions.length}</span>
+            <span className="sr-only">{t.agent.thread.inputProgress({ current: step + 1, total: request.questions.length })}</span>
+          </span>
+          <IconButton className="thread-user-input-browse" icon={ChevronRightIcon} label={t.agent.thread.inputForward}
+            disabled={last || blocked} onClick={() => move(step + 1)} />
+        </div> : null}
+        {pending && !expired ? <UserInputDeadline request={request} onExpired={() => { setExpired(true); onExpired(); }} /> : null}
+      </div>
     </div>
     {/* Keep this editor subtree mounted when the Host settles; only its sending authority changes. */}
     <div className="thread-user-input-step" key={question.id} ref={stepRef} tabIndex={-1}>
@@ -129,31 +128,25 @@ export function UserInputRequest({ request, draft, disabled = false, onDraftChan
       <fieldset>
         <legend className="sr-only">{question.question}</legend>
         <div className="thread-user-input-options">
-          {question.options.map((option) => <label className="thread-user-input-choice thread-user-input-option" key={option.label}>
-            <span><strong>{option.label}</strong><small>{option.description}</small></span>
-            <input type="radio" name={question.id} checked={activeAnswer?.optionLabel === option.label} disabled={!pending || expired || submitting}
+          {question.options.map((option, index) => <label className="thread-user-input-choice thread-user-input-option" key={option.label}>
+            <input className="sr-only" type="radio" name={question.id} checked={activeAnswer?.optionLabel === option.label} disabled={!pending || expired || submitting}
               onChange={() => onDraftChange({ answers: { ...draft.answers, [question.id]: {
                 ...selected, optionLabel: option.label, skipped: undefined, selection: 'option',
               } } })} />
+            <span className="thread-user-input-marker" aria-hidden="true">
+              {activeAnswer?.optionLabel === option.label ? <CheckIcon size={ICON_SIZE.toolbar} /> : index + 1}
+            </span>
+            <span className="thread-user-input-option-text"><strong>{option.label}</strong><small>{option.description}</small></span>
           </label>)}
-          <div className="thread-user-input-choice thread-user-input-custom">
-            <label className="thread-user-input-option">
-              <span><strong>{t.agent.thread.other}</strong></span>
-              <input type="radio" name={question.id} checked={otherSelected} disabled={!pending || expired || submitting}
-                onChange={() => {
-                  focusOther.current = true;
-                  onDraftChange({ answers: { ...draft.answers, [question.id]: {
-                    ...selected, skipped: undefined, selection: 'text',
-                  } } });
-                }} />
-            </label>
-            <div className="thread-user-input-custom-editor" hidden={!otherSelected}>
-              <textarea ref={otherRef} className="thread-user-input-other" aria-label={t.agent.thread.inputWriteAnswer} rows={3}
-                readOnly={submitting && pending} value={selected?.otherText ?? ''} placeholder={t.agent.thread.otherPlaceholder}
-                onChange={(event) => onDraftChange({ answers: { ...draft.answers, [question.id]: {
-                  ...selected, otherText: event.target.value, skipped: undefined, selection: 'text',
-                } } })} />
-            </div>
+          <div className={`thread-user-input-custom${textOnly ? ' thread-user-input-text-only' : ''}`} data-selected={otherSelected}>
+            {!textOnly ? <span className="thread-user-input-marker" aria-hidden="true"><PencilIcon size={ICON_SIZE.toolbar} /></span> : null}
+            <Textarea variant={textOnly ? 'boxed' : 'bare'} className="thread-user-input-other" label={t.agent.thread.inputWriteAnswer} rows={!textOnly && (editingText || otherSelected) ? 3 : 1}
+              readOnly={submitting && pending} value={selected?.otherText ?? ''} placeholder={textOnly ? t.agent.thread.inputReplyPlaceholder : t.agent.thread.otherPlaceholder}
+              onFocus={() => setEditingText(true)}
+              onBlur={() => setEditingText(false)}
+              onChange={(event) => onDraftChange({ answers: { ...draft.answers, [question.id]: {
+                ...selected, otherText: event.target.value, skipped: undefined, selection: 'text',
+              } } })} />
           </div>
         </div>
       </fieldset>
@@ -164,8 +157,13 @@ export function UserInputRequest({ request, draft, disabled = false, onDraftChan
       <Button size="sm" variant="ghost" disabled={blocked} title={t.agent.thread.inputSkipAllHint} onClick={skipAll}>
         {submissionIntent === 'continue' ? t.agent.thread.inputSkipping : t.agent.thread.inputSkipAll}
       </Button>
-      <Button size="sm" variant="primary" disabled={blocked || !count} title={t.agent.thread.inputSendAnswersHint} onClick={() => void submit()}>
-        {submissionIntent === 'answer' ? t.agent.thread.inputSubmitting : t.agent.thread.inputSendAnswers}
+      <Button size="sm" variant="primary" disabled={blocked || (last ? !count : !activeAnswer || activeAnswer.skipped)} title={last ? t.agent.thread.inputSendAnswersHint : undefined}
+        onClick={(event) => {
+          // A double-click on Next must not submit when the same control becomes Submit.
+          if (event.detail > 1) return;
+          if (last) void submit(); else move(step + 1);
+        }}>
+        {submissionIntent === 'answer' ? t.agent.thread.inputSubmitting : last ? t.agent.thread.inputSendAnswers : t.agent.thread.inputNext}
       </Button>
     </div> : null}
   </form>;

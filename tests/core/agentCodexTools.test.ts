@@ -141,6 +141,17 @@ describe('Codex Agent Core model-tool contract', () => {
       .toContain('Each mode takes exactly its own fields and rejects the rest');
   });
 
+  test('accepts free-text questions and rejects incomplete choice lists', () => {
+    const question = { id: 'greeting', header: 'Greeting', question: 'What should it say?', options: [] };
+    expect(normalizeRequestUserInputToolInput({ questions: [question] }).questions).toEqual([question]);
+    for (const count of [1, 4]) {
+      expect(() => normalizeRequestUserInputToolInput({ questions: [{ ...question,
+        options: Array.from({ length: count }, (_, index) => ({ label: `Choice ${index}`, description: 'A choice.' })),
+      }] })).toThrow('requires no choices for free text, or two or three choices');
+    }
+    expect(() => normalizeRequestUserInputToolInput({ questions: [{ ...question, options: undefined }] })).toThrow();
+  });
+
   test('keeps request_user_input root-only and normalizes its bounded contract', () => {
     expect(modelToolContract('request_user_input')?.scope).toBe('rootThread');
     expect(JSON.stringify(modelToolContract('request_user_input')?.inputSchema))

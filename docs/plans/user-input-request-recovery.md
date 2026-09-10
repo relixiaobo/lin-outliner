@@ -133,25 +133,30 @@ visibility, so a lost notification cannot produce an unlimited wait. The default
 is a concrete implementation choice for the user's bounded-wait requirement;
 there is no new Settings panel.
 
-DEC-4: Group context, answers, and submission into three regions. The compact
-header groups previous/next icons around current / total on the left and the quiet
-deadline on the right. Both navigation buttons stay
-visible, with the unavailable direction disabled at each end. Accessible names
-and native tooltips identify the icons. Navigation never submits an answer.
-The body gives the question stronger type than option labels and descriptions.
-Other is an explicit peer radio option; selecting it reveals and focuses its
-text editor. Inactive text remains mounted but hidden and never submits with a
-preset option. The form fits its content up to the existing half-viewport cap;
-short questions do not reserve an empty half-screen. Only the body scrolls after
-that cap. Each option is a full-width choice row: label and description align on the
-left, with the native selection indicator on the right. Neutral borders and fill
-distinguish the selected row. Other expands its editor within the same row card. The footer contains only Skip all on the
-left and Submit answers on the right. It stays anchored at the dock bottom while
-form height adapts to question length or an expanded Other editor. Submit
-is available on every step once there is an active answer; it includes the
-request's active answers and typed skips for the rest. There is no footer Next,
-review page, tab bar, More menu, or execution terminology in the form. Choosing a
-recommended option is always an explicit local choice.
+DEC-4: Group context, answers, and actions into three regions. The header shows
+Question on the left, with paired browsing arrows, compact N / M position, and
+the quiet clock on the right. Arrows are disabled at the respective ends and
+omitted with the position for a single question. The question leads the body. Presets are light full-width
+rows with a numbered circular marker on the left; the selected row uses a neutral
+fill and a check marker. Native radio semantics and visible keyboard focus remain.
+A pencil-marked free-text field is directly available below the presets. Focusing expands the field without changing the answer.
+Typing activates it; choosing a preset leaves its text visible but inactive.
+The field expands while active and keeps its DOM at settlement. A pure-text
+question supplies an empty options array and directly shows a full-width bordered
+Reply field without a pencil marker or any preset choices. Non-empty option
+lists still require two or three choices.
+
+The form fits its content up to the existing half-viewport cap. Only the body
+scrolls after the cap. The footer places Skip all on the left and the primary
+Next action on the right. Next requires a selected option or non-blank text for
+the current question and only advances locally. Header arrows can browse
+unanswered questions without changing their answers. On the final question, Next is replaced by
+Submit answers; that action is enabled when any question has an active answer.
+It submits all active answers and typed skips for the rest. There is no early
+submission, review page, More menu, close control, or extra
+editor-choice step. Footer controls stay anchored at the dock bottom as the body
+adapts to content. Selecting an option never submits or advances automatically. A double-click on
+Next cannot submit when the same control becomes Submit answers.
 
 DEC-5: Skip all is available on every question and ends the whole request with
 only typed skips and continue intent. It never submits existing answers or
@@ -319,9 +324,10 @@ or uncertainty causes remain actionable under their existing owners. There is no
 scheduled-request timer or separate answer ledger; the scheduled-work plan owns
 only run presentation and admission around this shared lifecycle.
 
-FR-15: Previous and Next browse locally without answering, skipping, or submitting.
+FR-15: Header arrows browse locally without answering, skipping, or submitting.
 An unanswered question becomes a typed skip only in an explicit submission.
-Submit answers is available from any step with an active answer and sends all
+Next is available before the last step, requires an active answer for that step,
+and only advances locally. Empty or whitespace-only free text keeps it disabled. Submit answers appears only on the final step and sends all
 active selections or non-empty free text, with typed skips for the rest. Skip all
 is a separate action on every step: send only typed skips with continue intent
 and retain every existing answer draft. Both routes settle once at the existing
@@ -333,7 +339,7 @@ FR-16: The control plane supports an explicit composite discussion response,
 distinct from answered, timed-out, and cancelled outcomes. The caller supplies
 the exact request identity, active answers/skips, and message content in one
 bounded envelope. This contract is not the ordinary composer's sending route;
-ordinary messages carry no implicit question response. Hidden inactive and
+ordinary messages carry no implicit question response. Inactive and
 skipped draft text must never enter a composite submission.
 
 Acceptance settles the request, records the user's message exactly once through
@@ -357,10 +363,10 @@ question response into a new Turn. Stop fences this route under FR-12 as well.
 
 FLOW-1: The Agent asks a valid question. The Host accepts it, publishes pending
 state, and awaits its result. The form directly replaces the composer and displays
-the question, options including Other for free text, quiet remaining time, and
-local step controls. Selecting an option or typing does not submit. Previous/Next
-navigate locally, and the separate Submit answers action submits the active
-answers from any question. Skip all ends the request without any answer content.
+the question, preset options, a directly editable response field, quiet remaining
+time, header browsing controls, and footer actions. Selecting or typing does not submit. Previous/Next
+navigate locally. Only the final question offers Submit answers, which submits
+the accumulated active answers. Skip all ends the request without any answer content.
 Explicit submission resolves once and restores the ordinary draft while the same
 Turn continues. Leaving a question blank skips it only when answers are submitted;
 Skip all restores the message draft without sending any answer content.
@@ -405,16 +411,20 @@ mounted but hidden, preserving its text and attachments; that content is never
 used as an answer. Submission, Skip all, or settlement restores it unchanged.
 
 FLOW-8: The person does not want to answer. They can leave a question unanswered
-and move on with the next icon, or choose Skip all to end the whole request without
+and browse forward with the header arrow, or choose Skip all to end the whole request without
 answers. The ordinary draft returns automatically. Answer content withheld by
 Skip all stays at the original question, with no extra recovery actions.
 
 The action hierarchy is one primary Submit answers action and one secondary
-Skip all action. Previous and Next are paired header icons around the position
-indicator. The quiet deadline shares the header; the footer contains only the
-two submission choices. Keep controls reachable at
+Skip all action. Next is the primary action before the last question, where
+Submit answers replaces it. The header groups question browsing arrows and
+position on the right, beside the quiet clock. Keep controls reachable at
 narrow widths without horizontal scrolling. Use neutral tokenized states and
-ordinary user-facing language. Timeout creates no synthetic user message.
+ordinary user-facing language. Reference screenshots inform layout only. Tenon's
+shared Textarea, Button, and IconButton own control skins; question/answer content
+uses the content type pair, metadata uses the meta pair, and selection/press/focus
+use the neutral state tokens. No new palette, elevated card, or component-specific
+theme is introduced. Timeout creates no synthetic user message.
 
 Respect focus within a displayed question. Arrival can focus the replacement form
 if the hidden composer held focus; it never overrides another document editing
@@ -438,10 +448,10 @@ typed message catalog. Do not explain implementation terms in the form.
 | --- | --- | --- |
 | Waiting status | Waiting for your answers | Waiting for question answers, not a generic input task |
 | Activity row | Questions for you / Questions asked | Do not count tool calls as individual questions or claim answers were submitted |
-| Navigation | Previous question / Next question | Icon labels and tooltips; local browsing only |
-| Free text | Other; Write your answer… | Explicit free-text option and its editor |
+| Navigation | Previous question / Next question / Next | Header arrows browse freely; the primary Next action requires an answer and advances locally |
+| Free text | Or write your own response… / Reply… | Direct text below presets; pure-text questions show only a bordered reply field |
 | Secondary action | Skip all | End the request without any answers; retain filled drafts |
-| Primary action | Submit answers | Submit active answers and skip unanswered entries |
+| Final action | Submit answers | Appears only on the last question; submits active answers and skips unanswered entries |
 | In flight | Skipping… / Submitting… | Describe the requested operation while controls are disabled |
 | Countdown | 0:54 | Minutes and seconds only; the tooltip explains automatic continuation, while a localized accessible label states the remaining seconds |
 | Loading / failure | Loading questions… / Could not load the questions. Try again. | Reconcile automatically; show Try again only on failure |
@@ -519,28 +529,28 @@ on the future scheduling UI to ship the conversation feature.
 | AC-6 | Answer, Continue, or discussion racing with cancellation, double submission, or a lost acceptance reply produce at most one accepted response, one recorded discussion message where applicable, and one model resumption. |
 | AC-7 | A waiting-state/snapshot failure shows Try again; the existing composer retains its execution controls without a duplicate Stop. Successful recovery restores the form or editor. |
 | AC-8 | Host restart does not revive historical questions; renderer reload under a live Host restores the request and retains its original deadline. |
-| AC-9 | Multi-step/Other answers, existing draft retention, focus, keyboard use, light/dark themes, and accessibility preferences remain functional. |
+| AC-9 | Multi-step preset/free-text answers, existing draft retention, focus, keyboard use, light/dark themes, and accessibility preferences remain functional. |
 | AC-10 | The reported event order reproduces neither a waiting Thread with no recoverable form nor an idle Thread with a stale form. Diagnostics identify transition boundaries without recording question/answer content. |
 | AC-11 | An omitted timeout releases an unanswered request after 60 seconds; explicit durations retain the 60-to-240-second bounds, and hiding/reloading the form or losing its notification cannot extend the deadline. |
 | AC-12 | Timeout fences live submission and clears the waiting flag, returns a typed no-answer result, and resumes the same active Turn once without sending local drafts, selecting an option, fabricating text, or creating another Turn. |
 | AC-13 | Answer versus deadline, delayed timer, system sleep/resume, cancellation, and late-response races yield one settlement; a stopped Turn is never revived. |
 | AC-14 | After timeout the Agent can continue reversible independent work, retains genuinely required decisions as unresolved, and does not automatically re-ask the same question or treat silence as approval. |
-| AC-15 | Automatic expiry while typing Other on a later step retains every edited step without Submit; hiding/remounting the form, Thread switching, and delayed snapshots do not lose that draft within the same renderer session. |
+| AC-15 | Automatic expiry while typing a free-text answer on a later step retains every edited step without Submit; hiding/remounting the form, Thread switching, and delayed snapshots do not lose that draft within the same renderer session. |
 | AC-16 | After expiry or interruption, retained content expands at the original question in the transcript with native selection/copy and no action buttons. It never changes the ordinary message draft or emits a model call. |
 | AC-17 | A newer request, late settlement, or lost acceptance reply never moves or deletes another request's draft. Reconciled acceptance releases only content actually included in that submission, retaining inactive text and newer edits; unavailable settlement retains content without claiming acceptance. |
 | AC-18 | Timeout of a scheduled-run question removes its live form and active-question attention while preserving the same run and occupied foreground slot until actual execution settles. Unread results and unrelated issues remain unchanged; no timer or input owner is duplicated. |
 | AC-19 | Navigation leaves unanswered questions local. Submit answers includes typed skips for them. Skip all ends the request from any step with only skips and retains every existing answer draft. Deadline/cancellation races settle once. |
 | AC-20 | At 320 CSS pixels, all questions and actions remain reachable without horizontal scrolling. Light/dark, contrast, reduced motion/transparency, neutral states, and visible keyboard focus follow existing design guards. |
 | AC-21 | A pending question directly replaces the composer even when it contains text. The hidden editor keeps its DOM, text, attachments, and draft; submission, Skip all, or settlement restores it unchanged. No preliminary choice or close/reopen switch exists. |
-| AC-22 | Typing activates free text and selecting an option preserves inactive text. Previous/Next icons only navigate and are disabled at their respective ends. Submit answers is independent of navigation and available on any step, without a review screen or auto-submitting a selected option. |
+| AC-22 | Typing activates free text and selecting an option preserves inactive text. Header arrows browse without changing answers and are disabled at their respective ends. Next requires an active answer for the current question and advances without submitting. Pure-text questions have no preset choices; empty or whitespace-only text keeps Next disabled. Only the final question shows Submit answers, with no review screen or auto-submission. |
 | AC-23 | Submit answers includes earlier active answers. Skip all sends no answer content, uses continue intent, and retains both answer and ordinary message drafts. Neither route grants authorization. |
 | AC-24 | Escape during a live question makes no model call and leaves the form visible. Ordinary Send/Steer after restoration sends only message content and cannot clear retained question drafts. |
 | AC-25 | Injected ordinary Send failure retains its message and question drafts. Question submission failure or lost acknowledgement never clears the message draft. Explicit composite-API failure/replay remains exactly once. |
 | AC-26 | Expiry while typing preserves the actual editor, caret, selection, IME, and scroll while disabling the expired tool route. New typing remains local. Blur or Escape after expiry shows the next pending question or restores the unchanged composer; a new request cannot interrupt active editing. |
 | AC-27 | Empty outcomes create no note; each non-empty retained draft stays with its original question, even while a newer question is visible. Ordinary Send success or failure never deletes or changes this content. No transfer or draft-management controls remain. |
 | AC-28 | Escape never answers, skips, or stops work. The existing composer owns Stop. The deadline is quiet without per-second announcements; outcome copy distinguishes acceptance, withheld content, timeout, and cancellation. |
-| AC-29 | The question surface contains paired previous/next icons around progress, a scrollable question/answer body with Other, and two fixed footer actions. No close control, tabs, More menu, execution controls, or review page remain. |
-| AC-30 | Short questions fit their content with no large empty area before the footer. Height adapts to question length and Other expansion up to the existing cap; only the answer body then scrolls. At 320 CSS pixels the metadata header and two footer actions remain visible, with the footer anchored at the dock bottom. Inactive drafts and focus remain intact. |
+| AC-29 | The question surface contains a header with Question on the left and position, paired browse icons, and the clock on the right; a scrollable body with numbered presets and direct text entry or a pure-text reply field; and a footer containing Skip all and Next or final Submit answers. No close control, tabs, More menu, execution controls, or review page remain. |
+| AC-30 | Short questions fit their content with no large empty area before the footer. Height adapts to question length and free-text editing up to the existing cap; only the answer body then scrolls. At 320 CSS pixels the header browsing controls and footer actions remain visible, with the footer anchored at the dock bottom. Inactive drafts and focus remain intact. |
 
 Extend the service test titled `round-trips request_user_input through the control
 plane and active Thread flag`, codec/projection tests, renderer `ThreadStore`
