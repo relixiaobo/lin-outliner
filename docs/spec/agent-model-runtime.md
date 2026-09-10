@@ -909,9 +909,10 @@ Memory, delegation, and other feature prompts use `feature` with a stable
 reference when one exists. Rerun and fork preserve the author recorded on each
 source Item. A direct Skill invocation remains reader-authored because its
 structured input came from the renderer; `request_user_input` remains a
-control-plane record. Explicit Send and discuss records the actual reader
+control-plane record. An explicit composite discussion response records the actual reader
 message atomically with question settlement and delivers it through the same
-steering handler before releasing the tool. Ordinary answer/Continue and timeout
+steering handler before releasing the tool. The ordinary composer uses normal
+message admission independently of pending questions. Ordinary answer/Continue and timeout
 do not create synthetic user messages. Its decoded tool result preserves
 `answered`, `discussed`, and `timedOut` through output validation and
 provider context projection. A timed-out result has no answer array, resumes the

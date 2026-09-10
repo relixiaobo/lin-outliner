@@ -452,7 +452,7 @@ never strand focus outside the input. A click is claimed by a typing surface
 document or an external browser), a text selection the user still needs for
 copying, or any surface that installs its own focus target within a frame of
 the click (self-focusing popovers, dialogs, the inline message editor).
-Keyboard-activated clicks are never intercepted, and an active
+Keyboard-activated clicks are never intercepted.
 An open question or retained-answer editor suspends the hand-back; a compact
 pending-question strip leaves normal composer focus behavior available.
 
@@ -653,34 +653,33 @@ that the paste was not inserted; it never recreates a pending atom whose request
 Explicit removal cancels the request. Names increase monotonically within the mounted draft
 and reset after a successful Send.
 
-`request_user_input` uses one contextual surface inside the existing composer,
-never a permission prompt or a modal. One question appears at a time with compact
-navigation and quiet remaining time on one line, neutral option rows, and directly
-editable free text. The footer exposes only Skip question, the primary Next /
-Review answers / Send action, and an unboxed More trigger. Chat, Continue, and
-Stop are menu actions; review is not repeated in the navigator. Only selected or
-hovered option rows have a fill. Recommended options are not selected automatically. Typing activates free
-text; choosing an option preserves inactive text. Navigation and Skip question
-change only local state. The last skip opens review; multi-question review lists
-answered and unanswered questions without a completeness gate. A single selected
-answer also requires explicit Send answer.
+`request_user_input` directly replaces the ordinary composer in the same dock
+area. Message text or focus never causes a preliminary choice of editor. The
+ordinary rich editor remains mounted but hidden, retaining text and attachments
+independently of the question drafts. Submission, close, and timeout restore that
+draft unchanged. Arrival may focus the replacement form when the hidden composer
+held focus, but never steals another document's editing focus.
 
-Continue with answers is available in More from every question, review, and the
-compact pending strip. It submits active answers, including the current field, skips the remaining
-questions, and tells the Agent to end clarification. With no active answer it reads
-Continue without answers. It never discards earlier active answers. Stop is a
-separate execution action; Escape dismisses local question UI without submitting
-or stopping.
+The question header contains a previous arrow, question progress, quiet remaining
+time, and a close icon. The body contains the prompt, neutral option rows, and
+an editable field visibly labeled Other answer. Only selected/hovered options
+receive a fill. Typing activates free text; choosing an option preserves inactive
+text. Recommended options are never selected automatically. Previous and Next
+question navigate locally. Earlier Skip advances locally; final Skip and finish
+explicitly submits prior active answers and a skip for the final question. Submit
+answers sends directly from the last question, with typed skips for unanswered
+entries. All-skipped submission uses continue intent. There is no review page,
+question-tab navigator, More menu, or execution control inside the question form.
 
-An incoming question preserves an active editor, IME, existing message, and
-attachments. A compact pending strip offers Answer questions and More.
-An idle empty composer can reveal the question when focus is unclaimed. Chat
-about this locally folds the form and focuses the preserved ordinary editor.
-The strip describes the answer context accompanying the message. Send and discuss
-atomically submits the actual message and active answers, then resumes the same
-Turn in discussion; no preliminary empty clarification call is made. A pending
-question does not require answering/skipping before a message can be sent.
-Unknown request validity temporarily disables sending, not local typing.
+Close and Escape return to the original message without submitting or stopping.
+Only then show Resume questions beside the ordinary editor. Both drafts and the
+original deadline survive this local switch. Normal Send/Steer sends only the
+ordinary message through its usual admission route; it neither submits answers
+nor settles the pending question. Question failures and receipts cannot clear a
+message draft. Stop remains the ordinary composer's existing execution control.
+The explicit Add to message recovery action is the only cross-draft transfer.
+An uncertain request disables question submission, not ordinary message editing
+or admission after the form closes.
 
 ThreadStore subscribes before snapshot reads and reconciles on initial load,
 subscription reattachment, Thread selection, dock reopening, visible-window

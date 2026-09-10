@@ -17,19 +17,17 @@ const questions = [
 
 async function openQuestions(page: Page) {
   const form = page.getByRole('form', { name: 'Input needed' });
-  const answer = page.getByRole('button', { name: 'Answer questions', exact: true });
-  await expect(form.or(answer)).toBeVisible();
-  if (await answer.isVisible()) await answer.click();
   await expect(form).toBeVisible();
+  await expect(page.locator('.thread-user-input-strip')).toHaveCount(0);
 }
 
-test('real tool delivery recovers loss, preserves expired drafts, and atomically continues with answers or discussion', async () => {
+test('real tool delivery recovers loss and keeps ordinary messages independent of question answers', async () => {
   test.setTimeout(180_000);
   let smoke: SmokeApp | undefined;
   let releaseQuestion: (() => void) | undefined;
   let continuationCount = 0;
   const outputs: string[] = [];
-  const discussionRequests: any[][] = [];
+  const steeringRequests: any[][] = [];
   const server = createServer(async (request, response) => {
     if (request.url === '/v1/models') {
       response.setHeader('content-type', 'application/json');
@@ -41,9 +39,9 @@ test('real tool delivery recovers loss, preserves expired drafts, and atomically
     const body = JSON.parse(raw || '{}');
     const toolName = body.tools?.find((tool: any) => tool.function.name === 'request_user_input')?.function.name;
     const last = body.messages?.at(-1);
-    const discussion = last?.role === 'user' && JSON.stringify(last).includes('Please discuss this explanation.');
+    const steering = last?.role === 'user' && JSON.stringify(last).includes('Keep this ordinary message separate.');
     const lastTool = body.messages?.findLast((message: any) => message.role === 'tool');
-    const toolResult = last?.role === 'tool' || (discussion && lastTool);
+    const toolResult = last?.role === 'tool' || (steering && lastTool);
     const emit = () => {
       response.writeHead(200, { 'content-type': 'text/event-stream', connection: 'close' });
       const send = (delta: unknown, finish_reason: string | null) => response.write(`data: ${JSON.stringify({
@@ -53,8 +51,8 @@ test('real tool delivery recovers loss, preserves expired drafts, and atomically
       if (toolResult) {
         continuationCount += 1;
         outputs.push(JSON.stringify(lastTool.content));
-        if (discussion) discussionRequests.push(body.messages);
-        const outcome = JSON.stringify(lastTool.content).includes('timedOut') ? 'timedOut' : discussion ? 'discussed' : 'answered';
+        if (steering) steeringRequests.push(body.messages);
+        const outcome = JSON.stringify(lastTool.content).includes('timedOut') ? 'timedOut' : 'answered';
         send({ role: 'assistant', content: `Continued once: ${outcome}` }, null);
         send({}, 'stop');
       } else if (toolName) {
@@ -87,7 +85,7 @@ test('real tool delivery recovers loss, preserves expired drafts, and atomically
     });
     await page.getByRole('button', { name: 'Show Threads', exact: true }).click();
     await page.getByRole('dialog', { name: 'Threads' }).getByRole('button', { name: 'New Thread', exact: true }).click();
-    const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+    const composer = page.getByRole('textbox', { name: 'Message this Thread', includeHidden: true });
     await composer.fill('Ask about the pass.');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     const form = page.getByRole('form', { name: 'Input needed' });
@@ -103,10 +101,9 @@ test('real tool delivery recovers loss, preserves expired drafts, and atomically
     const restored = await page.evaluate((threadId) => window.lin!.agentCoreRequest('userInput/read', { threadId }), threadId);
     expect(restored.state.pending).toEqual(first.state.pending);
     await form.getByRole('radio', { name: /Complete/ }).check();
-    await form.getByRole('button', { name: 'Next', exact: true }).click();
-    await form.getByRole('textbox', { name: 'Write an answer', exact: true }).fill('Tomorrow morning');
-    await form.getByRole('button', { name: 'Review answers', exact: true }).last().click();
-    await form.getByRole('button', { name: 'Send answers', exact: true }).click();
+    await form.getByRole('button', { name: 'Next question', exact: true }).click();
+    await form.getByRole('textbox', { name: 'Other answer', exact: true }).fill('Tomorrow morning');
+    await form.getByRole('button', { name: 'Submit answers', exact: true }).click();
     await expect(page.getByText('Continued once: answered', { exact: true })).toBeVisible();
     expect(continuationCount).toBe(1);
 
@@ -115,12 +112,13 @@ test('real tool delivery recovers loss, preserves expired drafts, and atomically
     await expect.poll(() => Boolean(releaseQuestion)).toBe(true);
     await composer.fill('Keep the ordinary draft.');
     releaseQuestion!();
-    await expect(page.getByRole('button', { name: 'Answer questions', exact: true })).toBeVisible();
-    await expect(composer).toBeFocused();
+    await expect(form).toBeVisible();
+    await expect(composer).toBeHidden();
+    await expect(composer).toHaveText('Keep the ordinary draft.');
     await openQuestions(page);
     await form.getByRole('radio', { name: /Complete/ }).check();
-    await form.getByRole('button', { name: 'Next', exact: true }).click();
-    const answerEditor = page.getByRole('textbox', { name: 'Write an answer', exact: true });
+    await form.getByRole('button', { name: 'Next question', exact: true }).click();
+    const answerEditor = page.getByRole('textbox', { name: 'Other answer', exact: true });
     await answerEditor.fill('Still typing when it expires');
     await page.getByRole('button', { name: 'Collapse agent', exact: true }).click();
     await page.getByRole('button', { name: 'Expand agent', exact: true }).click();
@@ -134,6 +132,7 @@ test('real tool delivery recovers loss, preserves expired drafts, and atomically
       await page.emulateMedia({ colorScheme: theme });
       await page.locator('.agent-dock').screenshot({ path: join(artifacts, `${theme}-form.png`) });
     }
+    await answerEditor.focus();
     await expect(form).toHaveCount(0, { timeout: 65_000 });
     expect(await answerEditor.evaluate((element, original) => element === original, editor)).toBe(true);
     await expect(answerEditor).toBeFocused();
@@ -167,11 +166,9 @@ test('real tool delivery recovers loss, preserves expired drafts, and atomically
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     await openQuestions(page);
     await form.getByRole('radio', { name: /Complete/ }).check();
-    await form.getByRole('button', { name: 'Next', exact: true }).click();
-    await form.getByRole('textbox', { name: 'Write an answer', exact: true }).fill('Withheld by Skip');
-    await form.getByRole('button', { name: 'Skip question', exact: true }).click();
-    expect(continuationCount).toBe(2);
-    await form.getByRole('button', { name: 'Send answers', exact: true }).click();
+    await form.getByRole('button', { name: 'Next question', exact: true }).click();
+    await form.getByRole('textbox', { name: 'Other answer', exact: true }).fill('Withheld by Skip');
+    await form.getByRole('button', { name: 'Skip and finish', exact: true }).click();
     await expect(form).toHaveCount(0);
     await expect.poll(() => continuationCount).toBe(3);
     expect(outputs[2]).toContain('skipped');
@@ -183,28 +180,38 @@ test('real tool delivery recovers loss, preserves expired drafts, and atomically
     await expect(recovery.locator('pre')).not.toContainText('How broad');
     await recovery.getByRole('button', { name: 'Discard', exact: true }).click();
     await expect(page.getByText('Continued once: answered', { exact: true })).toHaveCount(2);
-    await composer.fill('Ask and discuss.');
+    await composer.fill('Ask while I send a separate message.');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     await openQuestions(page);
     await form.getByRole('radio', { name: /Complete/ }).check();
-    const beforeDiscussion = await page.evaluate((threadId) => window.lin!.agentCoreRequest('userInput/read', { threadId }), threadId);
-    await form.getByRole('button', { name: 'More question actions', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Chat about this', exact: true }).click();
+    const beforeSteering = await page.evaluate((threadId) => window.lin!.agentCoreRequest('userInput/read', { threadId }), threadId);
     expect(continuationCount).toBe(3);
-    await composer.fill('Please discuss this explanation.');
-    await page.getByRole('button', { name: 'Send and discuss', exact: true }).click();
-    await expect(page.getByText('Continued once: discussed', { exact: true })).toBeVisible();
-    expect(continuationCount).toBe(4);
-    expect(outputs[3]).toContain('discussed');
-    expect(outputs[3]).toContain('Complete');
-    expect(outputs[3]).not.toContain('Please discuss');
-    expect(discussionRequests).toHaveLength(1);
-    expect(discussionRequests[0]!.filter((message) => message.role === 'user' && JSON.stringify(message).includes('Please discuss this explanation.'))).toHaveLength(1);
-    const afterDiscussion = await page.evaluate((threadId) => window.lin!.agentCoreRequest('thread/turns/list', { threadId }), threadId);
-    expect(afterDiscussion.data).toHaveLength(4);
-    const discussedTurn = afterDiscussion.data.find((turn) => turn.id === beforeDiscussion.state.pending!.turnId)!;
-    expect(discussedTurn.items.filter((item) => item.type === 'userMessage' && JSON.stringify(item).includes('Please discuss this explanation.'))).toHaveLength(1);
+    await form.getByRole('button', { name: 'Close questions', exact: true }).click();
+    await composer.fill('Keep this ordinary message separate.');
+    await page.getByRole('button', { name: 'Steer', exact: true }).click();
     await expect(composer).toBeEmpty();
+    const afterMessage = await page.evaluate((threadId) => window.lin!.agentCoreRequest('userInput/read', { threadId }), threadId);
+    expect(afterMessage.state.pending).toEqual(beforeSteering.state.pending);
+    expect(continuationCount).toBe(3);
+    await composer.fill('Another unsent message.');
+    await page.getByRole('button', { name: 'Resume questions', exact: true }).click();
+    await expect(form.getByRole('radio', { name: /Complete/ })).toBeChecked();
+    await expect(composer).toBeHidden();
+    await form.getByRole('button', { name: 'Next question', exact: true }).click();
+    await form.getByRole('button', { name: 'Skip and finish', exact: true }).click();
+    await expect.poll(() => continuationCount).toBe(4);
+    await expect(composer).toHaveText('Another unsent message.');
+    expect(continuationCount).toBe(4);
+    expect(outputs[3]).not.toContain('discussed');
+    expect(outputs[3]).toContain('Complete');
+    expect(outputs[3]).not.toContain('Keep this ordinary message');
+    expect(steeringRequests).toHaveLength(1);
+    expect(steeringRequests[0]!.filter((message) => message.role === 'user' && JSON.stringify(message).includes('Keep this ordinary message separate.'))).toHaveLength(1);
+    const afterSteering = await page.evaluate((threadId) => window.lin!.agentCoreRequest('thread/turns/list', { threadId }), threadId);
+    expect(afterSteering.data).toHaveLength(4);
+    const steeredTurn = afterSteering.data.find((turn) => turn.id === beforeSteering.state.pending!.turnId)!;
+    expect(steeredTurn.items.filter((item) => item.type === 'userMessage' && JSON.stringify(item).includes('Keep this ordinary message separate.'))).toHaveLength(1);
+    await expect(composer).toHaveText('Another unsent message.');
     await composer.fill('Ask before restart.');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     await openQuestions(page);

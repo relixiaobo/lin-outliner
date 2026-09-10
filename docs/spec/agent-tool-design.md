@@ -779,8 +779,8 @@ skipping stay local until explicit Send or Continue. The `continue` intent submi
 active answers and ends clarification; it preserves earlier answers. A `discussed`
 result has `intent: "discuss"`, active answers, and `messageItemId` referencing the
 actual reader message admitted atomically and delivered through steering in the
-same Turn. Chat about this itself is local; Send and discuss delivers the actual
-message without an empty model exchange. Discussion, skips, and Continue do not
+same Turn. This is an explicitly supplied composite API request; ordinary
+composer messages do not implicitly use it or submit question drafts. Discussion, skips, and Continue do not
 grant authorization. Timeout output has
 `outcome: "timedOut"`, identity/deadline and no
 `answers` field. Timeout is distinct from cancellation, failure, or approval; it

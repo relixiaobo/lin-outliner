@@ -1,18 +1,19 @@
 import { expect, test, type Page } from '@playwright/test';
 import { openMockedApp, commandCalls } from './outlinerMock';
 
-async function ask(page: Page, threadId: string, itemId = 'input-1', revision = 1, single = false) {
-  return page.evaluate(({ threadId, itemId, revision, single }) => {
+async function ask(page: Page, threadId: string, itemId = 'input-1', revision = 1, single = false, third = false) {
+  return page.evaluate(({ threadId, itemId, revision, single, third }) => {
     const request = { hostGeneration: 'mock-host', threadId, turnId: '01910000-0000-7000-8000-00000000ab01', itemId, revision,
       deadlineAt: Date.now() + 60_000, autoResolutionMs: 60_000,
       questions: [
         { id: 'scope', header: 'Scope', question: 'How broad?', options: [{ label: 'Focused', description: 'One module.' }, { label: 'Complete', description: 'All modules.' }] },
         ...(!single ? [{ id: 'schedule', header: 'Schedule', question: 'When?', options: [{ label: 'Now', description: 'Today.' }, { label: 'Later', description: 'Tomorrow.' }] }] : []),
+        ...(third ? [{ id: 'detail', header: 'Detail', question: 'How much detail?', options: [{ label: 'Summary', description: 'Main findings.' }, { label: 'Full', description: 'Every finding.' }] }] : []),
       ],
     };
     (window as any).__LIN_E2E__.emitAgentCoreNotification({ type: 'userInput/requested', threadId, turnId: request.turnId, itemId, request });
     return request;
-  }, { threadId, itemId, revision, single });
+  }, { threadId, itemId, revision, single, third });
 }
 async function createThread(page: Page) {
   await page.getByRole('button', { name: 'Show Threads', exact: true }).click();
@@ -21,16 +22,12 @@ async function createThread(page: Page) {
 }
 async function openQuestions(page: Page) {
   const form = page.getByRole('form', { name: 'Input needed' });
-  await expect.poll(async () => await form.isVisible() || await page.getByRole('button', { name: 'Answer questions', exact: true }).isVisible()).toBe(true);
-  if (!await form.isVisible()) await page.getByRole('button', { name: 'Answer questions', exact: true }).click();
+  const back = page.getByRole('button', { name: 'Resume questions', exact: true });
+  if (await back.isVisible()) await back.click();
   await expect(form).toBeVisible();
   return form;
 }
 async function responses(page: Page) { return (await commandCalls(page)).filter((call) => call.cmd === 'userInput/respond'); }
-async function chooseQuestionAction(page: Page, name: string) {
-  await page.getByRole('button', { name: 'More question actions', exact: true }).click();
-  await page.getByRole('menuitem', { name, exact: true }).click();
-}
 async function openRecovery(page: Page) {
   const shelf = page.locator('.thread-user-input-recoveries');
   await shelf.locator(':scope > summary').click();
@@ -39,22 +36,49 @@ async function openRecovery(page: Page) {
   return recovery;
 }
 
-test('skip stays local through review and only explicit submission sends partial answers', async ({ page }) => {
+test('a focused empty composer immediately shows the first question without a preliminary choice', async ({ page }) => {
+  await openMockedApp(page);
+  const threadId = await createThread(page);
+  const composer = page.getByRole('textbox', { name: 'Message this Thread', includeHidden: true });
+  await composer.focus();
+  await expect(composer).toBeEmpty();
+  await ask(page, threadId, 'three-questions', 1, false, true);
+  const form = page.getByRole('form', { name: 'Input needed' });
+  await expect(form.getByRole('radio', { name: /Complete/ })).toBeVisible();
+  await expect(form.locator('.thread-user-input-step')).toBeFocused();
+  await expect(form).toContainText('Question 1 of 3');
+  await expect(composer).toBeHidden();
+  await expect(page.locator('.thread-user-input-strip')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Answer questions', exact: true })).toHaveCount(0);
+  expect(await responses(page)).toHaveLength(0);
+  for (const colorScheme of ['light', 'dark'] as const) {
+    await page.emulateMedia({ colorScheme });
+    await page.locator('.agent-dock').screenshot({ animations: 'disabled', path: `tmp/user-input-recovery/direct-question-${colorScheme}.png` });
+  }
+  await form.getByRole('button', { name: 'Close questions', exact: true }).click();
+  await expect(form).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Resume questions', exact: true })).toBeVisible();
+  await expect(page.getByText('Send your message and the active answers to discuss these questions.', { exact: true })).toHaveCount(0);
+  await expect(composer).toBeFocused();
+  await page.getByRole('button', { name: 'Resume questions', exact: true }).click();
+  await expect(form.getByRole('radio', { name: /Complete/ })).toBeVisible();
+  expect(await responses(page)).toHaveLength(0);
+});
+
+test('skipping a question stays local and the last question submits directly', async ({ page }) => {
   await openMockedApp(page);
   const threadId = await createThread(page);
   await ask(page, threadId);
   const form = await openQuestions(page);
-  await form.getByRole('textbox', { name: 'Write an answer' }).fill('Not ready to share this');
-  await form.getByRole('button', { name: 'Skip question', exact: true }).click();
-  await form.getByRole('button', { name: 'Scope', exact: true }).click();
-  await expect(form.getByRole('textbox', { name: 'Write an answer' })).toHaveValue('Not ready to share this');
+  await form.getByRole('textbox', { name: 'Other answer' }).fill('Not ready to share this');
+  await form.getByRole('button', { name: 'Skip', exact: true }).click();
+  await form.getByRole('button', { name: 'Previous question', exact: true }).click();
+  await expect(form.getByRole('textbox', { name: 'Other answer' })).toHaveValue('Not ready to share this');
   await expect(form).toContainText('Unanswered');
-  await form.getByRole('button', { name: 'Schedule', exact: true }).click();
+  await form.getByRole('button', { name: 'Next question', exact: true }).click();
   await form.getByRole('radio', { name: /Now/ }).check();
-  await form.getByRole('button', { name: 'Review answers', exact: true }).last().click();
   expect(await responses(page)).toHaveLength(0);
-  await expect(form.locator('.thread-user-input-review')).toContainText('Unanswered');
-  await form.getByRole('button', { name: 'Send answers', exact: true }).click();
+  await form.getByRole('button', { name: 'Submit answers', exact: true }).click();
   await expect(form).toHaveCount(0);
   const submitted = await responses(page);
   expect(submitted).toHaveLength(1);
@@ -65,44 +89,43 @@ test('skip stays local through review and only explicit submission sends partial
 });
 
 for (const skipFirst of [true, false]) {
-  test(`last skip opens review without submitting (${skipFirst ? 'all skipped' : 'partial answers'})`, async ({ page }) => {
+  test(`last Skip and finish explicitly submits once (${skipFirst ? 'all skipped' : 'partial answers'})`, async ({ page }) => {
     await openMockedApp(page);
     const threadId = await createThread(page);
     await ask(page, threadId);
     const form = await openQuestions(page);
-    if (skipFirst) await form.getByRole('button', { name: 'Skip question', exact: true }).click();
+    if (skipFirst) await form.getByRole('button', { name: 'Skip', exact: true }).click();
     else {
       await form.getByRole('radio', { name: /Complete/ }).check();
-      await form.getByRole('button', { name: 'Next', exact: true }).click();
+      await form.getByRole('button', { name: 'Next question', exact: true }).click();
     }
-    await form.getByRole('button', { name: 'Skip question', exact: true }).click();
     expect(await responses(page)).toHaveLength(0);
-    await expect(form.locator('.thread-user-input-review')).toBeVisible();
-    await expect(form.locator('.thread-user-input-review')).toBeFocused();
-    await form.getByRole('button', { name: skipFirst ? 'Continue without answers' : 'Send answers', exact: true }).click();
+    await form.getByRole('button', { name: 'Skip and finish', exact: true }).click();
     await expect(form).toHaveCount(0);
     await expect(page.locator('.thread-user-input-recoveries')).toHaveCount(0);
-    expect((await responses(page))[0]!.args.answers).toEqual([
+    const submitted = await responses(page);
+    expect(submitted).toHaveLength(1);
+    expect(submitted[0]!.args.answers).toEqual([
       { questionId: 'scope', ...(skipFirst ? { skipped: true } : { optionLabel: 'Complete' }) },
       { questionId: 'schedule', skipped: true },
     ]);
   });
 }
 
-test('Continue sends active earlier and current answers while preserving inactive text', async ({ page }) => {
+test('direct submission sends earlier and current answers while preserving inactive text', async ({ page }) => {
   await openMockedApp(page);
   const threadId = await createThread(page);
   await ask(page, threadId);
   const form = await openQuestions(page);
-  await form.getByRole('textbox', { name: 'Write an answer' }).fill('A private alternative');
+  await form.getByRole('textbox', { name: 'Other answer' }).fill('A private alternative');
   await form.getByRole('radio', { name: /Complete/ }).check();
-  await expect(form.getByRole('textbox', { name: 'Write an answer' })).toHaveValue('A private alternative');
-  await form.getByRole('button', { name: 'Next', exact: true }).click();
-  await form.getByRole('textbox', { name: 'Write an answer' }).fill('Next Tuesday');
-  await chooseQuestionAction(page, 'Continue with answers');
+  await expect(form.getByRole('textbox', { name: 'Other answer' })).toHaveValue('A private alternative');
+  await form.getByRole('button', { name: 'Next question', exact: true }).click();
+  await form.getByRole('textbox', { name: 'Other answer' }).fill('Next Tuesday');
+  await form.getByRole('button', { name: 'Submit answers', exact: true }).click();
   const submitted = await responses(page);
   expect(submitted).toHaveLength(1);
-  expect(submitted[0]!.args).toMatchObject({ intent: 'continue', answers: [
+  expect(submitted[0]!.args).toMatchObject({ intent: 'answer', answers: [
     { questionId: 'scope', optionLabel: 'Complete' }, { questionId: 'schedule', otherText: 'Next Tuesday' },
   ] });
   expect(JSON.stringify(submitted[0]!.args)).not.toContain('private alternative');
@@ -119,50 +142,56 @@ test('single choice never auto-selects or submits and Escape does not stop the t
   await expect(form.getByRole('radio').first()).not.toBeChecked();
   await form.getByRole('radio', { name: /Complete/ }).check();
   expect(await responses(page)).toHaveLength(0);
-  await form.getByRole('textbox', { name: 'Write an answer' }).press('Escape');
+  await form.getByRole('textbox', { name: 'Other answer' }).press('Escape');
   await expect(form).toHaveCount(0);
   expect((await commandCalls(page)).filter((call) => call.cmd === 'turn/interrupt')).toHaveLength(0);
   await openQuestions(page);
   await expect(form.getByRole('radio', { name: /Complete/ })).toBeChecked();
-  await form.getByRole('button', { name: 'Send answer', exact: true }).click();
+  await form.getByRole('button', { name: 'Submit answers', exact: true }).click();
   expect(await responses(page)).toHaveLength(1);
 });
 
-test('an incoming question preserves message focus, IME, and attachments and permits direct discussion', async ({ page }) => {
+test('message focus, IME, attachments, and sending remain independent of the question', async ({ page }) => {
   await openMockedApp(page);
   const threadId = await createThread(page);
-  const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+  const composer = page.getByRole('textbox', { name: 'Message this Thread', includeHidden: true });
   await composer.fill('I have more context.');
   await page.locator('.thread-composer-file-input').setInputFiles({ name: 'context.txt', mimeType: 'text/plain', buffer: Buffer.from('Read this context.') });
   await composer.focus();
   await composer.evaluate((element) => element.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true, data: 'context' })));
+  const originalComposer = await composer.elementHandle();
   await ask(page, threadId);
-  await expect(composer).toBeFocused();
+  await expect(composer).toBeHidden();
+  expect(await composer.evaluate((element, original) => element === original, originalComposer)).toBe(true);
   await expect(composer).toContainText('I have more context.');
   await expect(page.locator('.thread-composer-attachment-item')).toHaveCount(1);
-  await expect(page.getByRole('form', { name: 'Input needed' })).toHaveCount(0);
-  await composer.evaluate((element) => element.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '' })));
-  await page.getByRole('button', { name: 'Send and discuss', exact: true }).click();
-  const submitted = await responses(page);
-  expect(submitted).toHaveLength(1);
-  expect(submitted[0]!.args.intent).toBe('discuss');
-  expect(JSON.stringify(submitted[0]!.args.message)).toContain('I have more context.');
-  expect(JSON.stringify(submitted[0]!.args.message)).toContain('context.txt');
-  expect((await commandCalls(page)).filter((call) => call.cmd === 'turn/submit')).toHaveLength(0);
+  await expect(page.getByRole('form', { name: 'Input needed' })).toBeVisible();
   await expect(page.locator('.thread-user-input-strip')).toHaveCount(0);
+  await composer.evaluate((element) => element.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '' })));
+  const form = page.getByRole('form', { name: 'Input needed' });
+  await form.getByRole('textbox', { name: 'Other answer' }).fill('Keep this answer separate.');
+  await form.getByRole('textbox', { name: 'Other answer' }).press('Escape');
+  await expect(composer).toBeFocused();
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  expect(await responses(page)).toHaveLength(0);
+  const sends = (await commandCalls(page)).filter((call) => call.cmd === 'turn/submit');
+  expect(sends).toHaveLength(1);
+  expect(JSON.stringify(sends[0]!.args)).toContain('I have more context.');
+  expect(JSON.stringify(sends[0]!.args)).toContain('context.txt');
+  expect(JSON.stringify(sends[0]!.args)).not.toContain('Keep this answer separate.');
+  await openQuestions(page);
+  await expect(form.getByRole('textbox', { name: 'Other answer' })).toHaveValue('Keep this answer separate.');
+  await expect(composer).toBeEmpty();
 });
 
-test('Chat stays local and a lost discussion acknowledgement reconciles the one accepted message', async ({ page }) => {
+test('answer submission and a lost acknowledgement never consume the ordinary message draft', async ({ page }) => {
   await openMockedApp(page);
   const threadId = await createThread(page);
+  const composer = page.getByRole('textbox', { name: 'Message this Thread', includeHidden: true });
+  await composer.fill('Unrelated message draft.');
   await ask(page, threadId);
   const form = await openQuestions(page);
   await form.getByRole('radio', { name: /Complete/ }).check();
-  await chooseQuestionAction(page, 'Chat about this');
-  expect(await responses(page)).toHaveLength(0);
-  const composer = page.getByRole('textbox', { name: 'Message this Thread' });
-  await expect(composer).toBeFocused();
-  await composer.fill('What does the second question mean?');
   await page.evaluate(() => {
     const invoke = window.lin!.agentCoreRequest;
     window.lin!.agentCoreRequest = (async (method: string, input: any) => {
@@ -171,12 +200,14 @@ test('Chat stays local and a lost discussion acknowledgement reconciles the one 
       return response;
     }) as typeof invoke;
   });
-  await page.getByRole('button', { name: 'Send and discuss', exact: true }).click();
-  await expect(page.locator('.thread-user-input-strip')).toHaveCount(0);
-  await expect(composer).toBeEmpty();
+  await form.getByRole('button', { name: 'Next question', exact: true }).click();
+  await form.getByRole('button', { name: 'Submit answers', exact: true }).click();
+  await expect(form).toHaveCount(0);
+  await expect(composer).toHaveText('Unrelated message draft.');
   const submitted = await responses(page);
   expect(submitted).toHaveLength(1);
-  expect(submitted[0]!.args.answers).toEqual([{ questionId: 'scope', optionLabel: 'Complete' }, { questionId: 'schedule', skipped: true }]);
+  expect(submitted[0]!.args.intent).toBe('answer');
+  expect(JSON.stringify(submitted[0]!.args)).not.toContain('Unrelated message draft.');
   expect((await commandCalls(page)).filter((call) => call.cmd === 'turn/submit')).toHaveLength(0);
 });
 
@@ -184,18 +215,18 @@ test('expiry preserves the same editing node, caret, every step, and explicit re
   await openMockedApp(page);
   await page.clock.install();
   const threadId = await createThread(page);
-  const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+  const composer = page.getByRole('textbox', { name: 'Message this Thread', includeHidden: true });
   await composer.fill('Existing message.');
   await page.locator('.thread-composer-file-input').setInputFiles({ name: 'kept.txt', mimeType: 'text/plain', buffer: Buffer.from('Keep this attachment.') });
   await ask(page, threadId);
   const form = await openQuestions(page);
   await form.getByRole('radio', { name: /Complete/ }).check();
-  await form.getByRole('button', { name: 'Next', exact: true }).click();
-  const editor = form.getByRole('textbox', { name: 'Write an answer' });
+  await form.getByRole('button', { name: 'Next question', exact: true }).click();
+  const editor = form.getByRole('textbox', { name: 'Other answer' });
   await editor.fill('Still writing my answer');
   await editor.evaluate((element: HTMLTextAreaElement) => { element.dataset.beforeExpiry = 'same'; element.setSelectionRange(5, 5); });
   await page.clock.fastForward(61_000);
-  const retainedEditor = page.getByRole('form', { name: 'Unsent answer draft' }).getByRole('textbox', { name: 'Write an answer' });
+  const retainedEditor = page.getByRole('form', { name: 'Unsent answer draft' }).getByRole('textbox', { name: 'Other answer' });
   await expect(retainedEditor).toBeFocused();
   await expect(retainedEditor).toHaveAttribute('data-before-expiry', 'same');
   expect(await retainedEditor.evaluate((element: HTMLTextAreaElement) => element.selectionStart)).toBe(5);
@@ -225,32 +256,37 @@ test('expiry preserves the same editing node, caret, every step, and explicit re
   await expect(page.locator('.thread-user-input-recoveries')).toHaveCount(0);
 });
 
-test('late receipt recovery clears only the accepted message when notification, response, and first read were lost', async ({ page }) => {
-  await openMockedApp(page, { dropDiscussionNotifications: true });
+test('ordinary message failure and retry preserve both drafts without answering the question', async ({ page }) => {
+  await openMockedApp(page);
   const threadId = await createThread(page);
   await ask(page, threadId);
-  const composer = page.getByRole('textbox', { name: 'Message this Thread' });
-  await composer.fill('Please discuss this once.');
+  const form = await openQuestions(page);
+  const answer = form.getByRole('textbox', { name: 'Other answer' });
+  await answer.fill('Answer draft.');
+  await answer.press('Escape');
+  const composer = page.getByRole('textbox', { name: 'Message this Thread', includeHidden: true });
+  await composer.fill('Message draft.');
   await page.evaluate(() => {
     const invoke = window.lin!.agentCoreRequest;
-    let accepted = false;
-    (window as any).__allowInputReads = false;
-    window.lin!.agentCoreRequest = (async (method: string, input: any) => {
-      if (method === 'userInput/read' && accepted && !(window as any).__allowInputReads) throw new Error('Synthetic read loss');
-      const response = await invoke(method as any, input);
-      if (method === 'userInput/respond') { accepted = true; throw new Error('Synthetic unconfirmed submission'); }
-      return response;
+    let failed = false;
+    window.lin!.agentCoreRequest = ((method: string, input: any) => {
+      if (method === 'turn/submit' && !failed) { failed = true; return Promise.reject(new Error('Synthetic Send failure')); }
+      return invoke(method as any, input);
     }) as typeof invoke;
   });
-  await page.getByRole('button', { name: 'Send and discuss', exact: true }).click();
-  await expect(composer).toContainText('Please discuss this once.');
-  await expect(page.getByRole('button', { name: 'Send and discuss', exact: true })).toBeDisabled();
-  await page.evaluate(() => { (window as any).__allowInputReads = true; });
-  await page.locator('.thread-user-input-recovery-state').getByRole('button', { name: 'Retry', exact: true }).click();
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText('Synthetic Send failure', { exact: true })).toBeVisible();
+  await expect(composer).toHaveText('Message draft.');
+  await openQuestions(page);
+  await expect(answer).toHaveValue('Answer draft.');
+  await answer.press('Escape');
+  expect(await responses(page)).toHaveLength(0);
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(composer).toBeEmpty();
-  await expect(page.locator('.thread-user-input-strip')).toHaveCount(0);
-  expect(await responses(page)).toHaveLength(1);
-  expect((await commandCalls(page)).filter((call) => call.cmd === 'turn/submit')).toHaveLength(0);
+  await openQuestions(page);
+  await expect(answer).toHaveValue('Answer draft.');
+  await answer.press('Escape');
+  expect(await responses(page)).toHaveLength(0);
 });
 
 test('a newer question leaves an expired editor in place and recovery stays available beside it', async ({ page }) => {
@@ -259,50 +295,49 @@ test('a newer question leaves an expired editor in place and recovery stays avai
   const threadId = await createThread(page);
   await ask(page, threadId);
   const form = await openQuestions(page);
-  const editor = form.getByRole('textbox', { name: 'Write an answer' });
+  const editor = form.getByRole('textbox', { name: 'Other answer' });
   await editor.fill('Still finishing this thought');
   await page.clock.fastForward(61_000);
-  const retained = page.getByRole('form', { name: 'Unsent answer draft' }).getByRole('textbox', { name: 'Write an answer' });
+  const retained = page.getByRole('form', { name: 'Unsent answer draft' }).getByRole('textbox', { name: 'Other answer' });
   await expect(retained).toBeFocused();
   await ask(page, threadId, 'next-input', 3);
   await expect(retained).toBeFocused();
-  await expect(page.getByRole('button', { name: 'Answer questions', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'How broad?', exact: true })).toBeVisible();
   await retained.pressSequentially('.');
   await expect(retained).toHaveValue('Still finishing this thought.');
-  await page.getByRole('button', { name: 'Answer questions', exact: true }).click();
+  await page.getByRole('button', { name: 'How broad?', exact: true }).click();
   await expect(page.getByRole('form', { name: 'Input needed' })).toBeVisible();
   const recovery = await openRecovery(page);
   await expect(recovery).toContainText('Still finishing this thought.');
   await recovery.getByRole('button', { name: 'Add to message', exact: true }).click();
-  await expect(page.getByRole('textbox', { name: 'Message this Thread' })).toContainText('Still finishing this thought.');
+  await expect(page.getByRole('textbox', { name: 'Message this Thread', includeHidden: true })).toContainText('Still finishing this thought.');
   expect(await responses(page)).toHaveLength(0);
 });
 
 for (const theme of ['light', 'dark'] as const) {
-  test(`question, review, and recovery controls fit a narrow ${theme} dock`, async ({ page }) => {
+  test(`question and recovery controls fit a narrow ${theme} dock`, async ({ page }) => {
     await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' });
     await openMockedApp(page);
     const threadId = await createThread(page);
     await ask(page, threadId);
     const form = await openQuestions(page);
     await page.locator('.agent-dock').evaluate((element: HTMLElement) => { element.style.width = '320px'; element.style.minWidth = '320px'; });
-    await form.getByRole('textbox', { name: 'Write an answer' }).fill('A longer answer that remains editable in the narrow conversation dock.');
+    await form.getByRole('textbox', { name: 'Other answer' }).fill('A longer answer that remains editable in the narrow conversation dock.');
     const overflow = await form.evaluate((element) => element.scrollWidth - element.clientWidth);
     expect(overflow).toBeLessThanOrEqual(1);
     await expect(form.getByRole('button', { name: 'Interrupt Turn', exact: true })).toHaveCount(0);
-    await expect(form.locator('.thread-user-input-footer').getByRole('button')).toHaveCount(3);
-    await page.locator('.agent-dock').screenshot({ path: `tmp/user-input-recovery/ux-320-${theme}.png` });
-    await form.screenshot({ path: `tmp/user-input-recovery/simplified-question-${theme}.png` });
-    await form.getByRole('button', { name: 'More question actions', exact: true }).click();
-    const menu = page.getByRole('menu', { name: 'More question actions', exact: true });
-    await expect(menu.getByRole('menuitem', { name: 'Chat about this', exact: true })).toBeFocused();
-    await expect(menu.getByRole('menuitem', { name: 'Continue with answers', exact: true })).toBeVisible();
-    await menu.press('Escape');
-    await expect(menu).toHaveCount(0);
-    await expect(form).toBeVisible();
+    await expect(form.locator('.thread-user-input-footer').getByRole('button')).toHaveCount(2);
+    await page.locator('.agent-dock').screenshot({ animations: 'disabled', path: `tmp/user-input-recovery/ux-320-${theme}.png` });
+    await form.screenshot({ animations: 'disabled', path: `tmp/user-input-recovery/simplified-question-${theme}.png` });
+    await expect(form.getByRole('button', { name: 'More question actions', exact: true })).toHaveCount(0);
+    await expect(form.getByRole('button', { name: 'Previous question', exact: true })).toBeDisabled();
+    await form.getByRole('textbox', { name: 'Other answer' }).press('Escape');
+    await expect(form).toHaveCount(0);
     expect((await commandCalls(page)).filter((call) => call.cmd === 'turn/interrupt')).toHaveLength(0);
-    await form.getByRole('button', { name: 'Next', exact: true }).click();
-    await form.getByRole('button', { name: 'Review answers', exact: true }).click();
+    await openQuestions(page);
+    await form.getByRole('button', { name: 'Next question', exact: true }).click();
+    await expect(form.getByRole('button', { name: 'Submit answers', exact: true })).toBeVisible();
+    await expect(page.locator('.thread-user-input-review')).toHaveCount(0);
     expect(await form.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
   });
 }

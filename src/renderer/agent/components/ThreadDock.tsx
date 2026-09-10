@@ -473,7 +473,6 @@ export const ThreadDock = memo(function ThreadDock({
               onInputAdded={(key) => threadStore.userInputs.markAdded(key)}
               onInputMessageAccepted={(keys) => threadStore.userInputs.acceptMessage(thread.id, keys)}
               onInputMessageChanged={(text) => threadStore.userInputs.syncMessage(thread.id, text)}
-              onInputSettlement={(request) => threadStore.userInputs.settlement(request)}
               waitingOnUserInput={thread.status.type === 'active'
                 && thread.status.activeFlags.includes('waitingOnUserInput')}
               key={thread.id}
@@ -496,7 +495,6 @@ export const ThreadDock = memo(function ThreadDock({
               onReadToolArguments={(turnId, item) => threadStore.readToolArguments(thread.id, turnId, item)}
               onSend={(content, clientMessageId) => threadStore.send(content, getUserView(), clientMessageId)}
               onSubmitUserInput={(request, answers, intent) => threadStore.respondToUserInput(request, answers, { intent }).then(() => undefined)}
-              onDiscussUserInput={(request, answers, content, submissionId) => threadStore.discussUserInput(request, answers, content, getUserView(), submissionId)}
               providerSettings={providerSettings}
               providerSettingsLoaded={providerSettingsLoaded}
               providerRetry={providerRetry}
