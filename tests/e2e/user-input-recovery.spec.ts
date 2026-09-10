@@ -3,7 +3,7 @@ import { openMockedApp, commandCalls } from './outlinerMock';
 import { getMessages } from '../../src/core/i18n';
 
 async function ask(page: Page, threadId: string, itemId = 'input-1', revision = 1, single = false, third = false, question = 'How broad?') {
-  return page.evaluate(({ threadId, itemId, revision, single, third, question }) => {
+  return page.evaluate(async ({ threadId, itemId, revision, single, third, question }) => {
     const request = { hostGeneration: 'mock-host', threadId, turnId: '01910000-0000-7000-8000-00000000ab01', itemId, revision,
       deadlineAt: Date.now() + 60_000, autoResolutionMs: 60_000,
       questions: [
@@ -12,6 +12,19 @@ async function ask(page: Page, threadId: string, itemId = 'input-1', revision = 
         ...(third ? [{ id: 'detail', header: 'Detail', question: 'How much detail?', options: [{ label: 'Summary', description: 'Main findings.' }, { label: 'Full', description: 'Every finding.' }] }] : []),
       ],
     };
+    const previous = (await window.lin!.agentCoreRequest('thread/turns/list', { threadId })).data.find((turn) => turn.id === request.turnId);
+    (window as any).__LIN_E2E__.emitAgentCoreNotification({ type: 'turn/started', threadId, turnId: request.turnId, turn: {
+      id: request.turnId, itemsView: 'full', status: 'inProgress', error: null,
+      provenance: { originThreadId: threadId, originTurnId: request.turnId, trigger: { kind: 'user' } },
+      startedAt: Date.now(), completedAt: null, durationMs: null,
+      items: [...(previous?.items ?? []), {
+        id: itemId, type: 'dynamicToolCall', namespace: null, tool: 'request_user_input', arguments: { questions: request.questions },
+        provenance: { originThreadId: threadId, originTurnId: request.turnId, originItemId: itemId },
+        modelCall: { disposition: 'replayable', identity: { namespace: null, name: 'request_user_input' }, providerName: 'request_user_input',
+          arguments: { storage: 'inline', value: { questions: request.questions } }, schemaDigest: '0'.repeat(64) },
+        status: 'inProgress', outputRef: null, contentItems: null, success: null, durationMs: null,
+      }],
+    } });
     (window as any).__LIN_E2E__.emitAgentCoreNotification({ type: 'userInput/requested', threadId, turnId: request.turnId, itemId, request });
     return request;
   }, { threadId, itemId, revision, single, third, question });
@@ -24,17 +37,14 @@ async function createThread(page: Page, locale: 'en' | 'zh-Hans' = 'en') {
 }
 async function openQuestions(page: Page) {
   const form = page.getByRole('form', { name: 'Questions' });
-  const back = page.getByRole('button', { name: 'Back to questions', exact: true });
-  if (await back.isVisible()) await back.click();
   await expect(form).toBeVisible();
   return form;
 }
 async function responses(page: Page) { return (await commandCalls(page)).filter((call) => call.cmd === 'userInput/respond'); }
 async function openRecovery(page: Page) {
-  const shelf = page.locator('.thread-user-input-recoveries');
-  await shelf.locator(':scope > summary').click();
-  const recovery = shelf.locator('.thread-user-input-recovery').first();
-  await recovery.locator(':scope > summary').click();
+  const recovery = page.locator('.thread-transcript-content .thread-user-input-recovery').first();
+  if (!await recovery.evaluate((element: HTMLDetailsElement) => element.open)) await recovery.locator(':scope > summary').click();
+  await expect(recovery.getByRole('button')).toHaveCount(0);
   return recovery;
 }
 
@@ -57,14 +67,11 @@ test('a focused empty composer immediately shows the first question without a pr
     await page.emulateMedia({ colorScheme });
     await page.locator('.agent-dock').screenshot({ animations: 'disabled', path: `tmp/user-input-recovery/direct-question-${colorScheme}.png` });
   }
-  await form.getByRole('button', { name: 'Back to message', exact: true }).click();
+  await expect(form.getByRole('button')).toHaveCount(4);
+  await form.getByRole('button', { name: 'Skip all', exact: true }).click();
   await expect(form).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Back to questions', exact: true })).toBeVisible();
-  await expect(page.getByText('Send your message and the active answers to discuss these questions.', { exact: true })).toHaveCount(0);
   await expect(composer).toBeFocused();
-  await page.getByRole('button', { name: 'Back to questions', exact: true }).click();
-  await expect(form.getByRole('radio', { name: /Complete/ })).toBeVisible();
-  expect(await responses(page)).toHaveLength(0);
+  expect(await responses(page)).toHaveLength(1);
 });
 
 test('paired navigation browses every question without submitting and restores earlier answers', async ({ page }) => {
@@ -119,7 +126,7 @@ test('unanswered questions stay local during navigation and become skips only on
   const submitted = await responses(page);
   expect(submitted).toHaveLength(1);
   expect(submitted[0]!.args.answers).toEqual([{ questionId: 'scope', skipped: true }, { questionId: 'schedule', optionLabel: 'Now' }]);
-  await expect(page.locator('.thread-user-input-recoveries')).toHaveCount(0);
+  await expect(page.locator('.thread-user-input-recovery')).toHaveCount(0);
 });
 
 for (const hasAnswers of [false, true]) {
@@ -152,7 +159,7 @@ for (const hasAnswers of [false, true]) {
       await expect(recovery).toContainText('Complete');
       await expect(recovery).toContainText('Keep this answer draft.');
       await expect(recovery).toContainText('This draft was not submitted.');
-    } else await expect(page.locator('.thread-user-input-recoveries')).toHaveCount(0);
+    } else await expect(page.locator('.thread-user-input-recovery')).toHaveCount(0);
   });
 }
 
@@ -221,9 +228,8 @@ test('single choice never auto-selects or submits and Escape does not stop the t
   await form.getByRole('radio', { name: /Complete/ }).check();
   expect(await responses(page)).toHaveLength(0);
   await form.getByRole('radio', { name: /Complete/ }).press('Escape');
-  await expect(form).toHaveCount(0);
+  await expect(form).toBeVisible();
   expect((await commandCalls(page)).filter((call) => call.cmd === 'turn/interrupt')).toHaveLength(0);
-  await openQuestions(page);
   await expect(form.getByRole('radio', { name: /Complete/ })).toBeChecked();
   await form.getByRole('button', { name: 'Submit answers', exact: true }).click();
   expect(await responses(page)).toHaveLength(1);
@@ -249,17 +255,16 @@ test('message focus, IME, attachments, and sending remain independent of the que
   const form = page.getByRole('form', { name: 'Questions' });
   await form.getByRole('radio', { name: 'Other', exact: true }).check();
   await form.getByRole('textbox', { name: 'Your answer' }).fill('Keep this answer separate.');
-  await form.getByRole('textbox', { name: 'Your answer' }).press('Escape');
+  await form.getByRole('button', { name: 'Skip all', exact: true }).click();
   await expect(composer).toBeFocused();
-  await page.getByRole('button', { name: 'Send', exact: true }).click();
-  expect(await responses(page)).toHaveLength(0);
+  await page.getByRole('button', { name: /^(Send|Steer)$/ }).click();
+  expect((await responses(page))[0]!.args.answers.every((answer: any) => answer.skipped)).toBe(true);
   const sends = (await commandCalls(page)).filter((call) => call.cmd === 'turn/submit');
   expect(sends).toHaveLength(1);
   expect(JSON.stringify(sends[0]!.args)).toContain('I have more context.');
   expect(JSON.stringify(sends[0]!.args)).toContain('context.txt');
   expect(JSON.stringify(sends[0]!.args)).not.toContain('Keep this answer separate.');
-  await openQuestions(page);
-  await expect(form.getByRole('textbox', { name: 'Your answer' })).toHaveValue('Keep this answer separate.');
+  await expect(await openRecovery(page)).toContainText('Keep this answer separate.');
   await expect(composer).toBeEmpty();
 });
 
@@ -289,13 +294,14 @@ test('answer submission and a lost acknowledgement never consume the ordinary me
   expect((await commandCalls(page)).filter((call) => call.cmd === 'turn/submit')).toHaveLength(0);
 });
 
-test('expiry preserves the same editing node, caret, every step, and explicit recovery through Send failure', async ({ page }) => {
+test('expiry preserves the editing node and caret, then leaves a passive note independent of message sends', async ({ page }) => {
   await openMockedApp(page);
   await page.clock.install();
   const threadId = await createThread(page);
   const composer = page.getByRole('textbox', { name: 'Message this Thread', includeHidden: true });
   await composer.fill('Existing message.');
   await page.locator('.thread-composer-file-input').setInputFiles({ name: 'kept.txt', mimeType: 'text/plain', buffer: Buffer.from('Keep this attachment.') });
+  const originalMessage = await composer.textContent();
   await ask(page, threadId);
   const form = await openQuestions(page);
   await form.getByRole('radio', { name: /Complete/ }).check();
@@ -312,13 +318,12 @@ test('expiry preserves the same editing node, caret, every step, and explicit re
   await retainedEditor.pressSequentially(' continuing');
   await expect(retainedEditor).toHaveValue('Still continuing writing my answer');
   expect(await responses(page)).toHaveLength(0);
-  await page.getByRole('form', { name: 'Answer draft' }).getByRole('button', { name: 'Add to message draft', exact: true }).click();
-  await expect(composer).toContainText('Existing message.');
-  await expect(composer).toContainText('Complete');
-  await expect(composer).toContainText('Still continuing writing my answer');
+  await retainedEditor.press('Escape');
+  await expect(composer).toHaveText(originalMessage!);
   await expect(page.locator('.thread-composer-attachment-item')).toHaveCount(1);
   const recovery = await openRecovery(page);
-  await expect(recovery.getByRole('button', { name: 'Added to draft', exact: true })).toBeDisabled();
+  await expect(recovery).toContainText('Complete');
+  await expect(recovery).toContainText('Still continuing writing my answer');
   await page.evaluate(() => {
     const invoke = window.lin!.agentCoreRequest;
     let failed = false;
@@ -327,15 +332,16 @@ test('expiry preserves the same editing node, caret, every step, and explicit re
       return invoke(method as any, input);
     }) as typeof invoke;
   });
-  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await page.getByRole('button', { name: /^(Send|Steer)$/ }).click();
   await expect(page.getByText('Synthetic Send failure', { exact: true })).toBeVisible();
-  await expect(composer).toContainText('Still continuing writing my answer');
+  await expect(composer).toHaveText(originalMessage!);
   await expect(recovery).toBeVisible();
-  await page.getByRole('button', { name: 'Send', exact: true }).click();
-  await expect(page.locator('.thread-user-input-recoveries')).toHaveCount(0);
+  await page.getByRole('button', { name: /^(Send|Steer)$/ }).click();
+  await expect(composer).toBeEmpty();
+  await expect(recovery).toContainText('Still continuing writing my answer');
 });
 
-test('ordinary message failure and retry preserve both drafts without answering the question', async ({ page }) => {
+test('ordinary message failure and retry leave skipped answers at the original question', async ({ page }) => {
   await openMockedApp(page);
   const threadId = await createThread(page);
   await ask(page, threadId);
@@ -343,7 +349,7 @@ test('ordinary message failure and retry preserve both drafts without answering 
   await form.getByRole('radio', { name: 'Other', exact: true }).check();
   const answer = form.getByRole('textbox', { name: 'Your answer' });
   await answer.fill('Answer draft.');
-  await answer.press('Escape');
+  await form.getByRole('button', { name: 'Skip all', exact: true }).click();
   const composer = page.getByRole('textbox', { name: 'Message this Thread', includeHidden: true });
   await composer.fill('Message draft.');
   await page.evaluate(() => {
@@ -354,19 +360,16 @@ test('ordinary message failure and retry preserve both drafts without answering 
       return invoke(method as any, input);
     }) as typeof invoke;
   });
-  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await page.getByRole('button', { name: /^(Send|Steer)$/ }).click();
   await expect(page.getByText('Synthetic Send failure', { exact: true })).toBeVisible();
   await expect(composer).toHaveText('Message draft.');
-  await openQuestions(page);
-  await expect(answer).toHaveValue('Answer draft.');
-  await answer.press('Escape');
-  expect(await responses(page)).toHaveLength(0);
-  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  const recovery = await openRecovery(page);
+  await expect(recovery).toContainText('Answer draft.');
+  expect(await responses(page)).toHaveLength(1);
+  await page.getByRole('button', { name: /^(Send|Steer)$/ }).click();
   await expect(composer).toBeEmpty();
-  await openQuestions(page);
-  await expect(answer).toHaveValue('Answer draft.');
-  await answer.press('Escape');
-  expect(await responses(page)).toHaveLength(0);
+  await expect(recovery).toContainText('Answer draft.');
+  expect(await responses(page)).toHaveLength(1);
 });
 
 test('a newer question leaves an expired editor in place and recovery stays available beside it', async ({ page }) => {
@@ -383,15 +386,43 @@ test('a newer question leaves an expired editor in place and recovery stays avai
   await expect(retained).toBeFocused();
   await ask(page, threadId, 'next-input', 3);
   await expect(retained).toBeFocused();
-  await expect(page.getByRole('button', { name: 'How broad?', exact: true })).toBeVisible();
+  await expect(page.getByRole('form', { name: 'Questions' })).toHaveCount(0);
   await retained.pressSequentially('.');
   await expect(retained).toHaveValue('Still finishing this thought.');
-  await page.getByRole('button', { name: 'How broad?', exact: true }).click();
+  await retained.press('Tab');
   await expect(page.getByRole('form', { name: 'Questions' })).toBeVisible();
   const recovery = await openRecovery(page);
   await expect(recovery).toContainText('Still finishing this thought.');
-  await recovery.getByRole('button', { name: 'Add to message draft', exact: true }).click();
-  await expect(page.getByRole('textbox', { name: 'Message this Thread', includeHidden: true })).toContainText('Still finishing this thought.');
+  await expect(recovery).toHaveAttribute('data-user-input-item', 'input-1');
+  await expect(page.getByRole('textbox', { name: 'Message this Thread', includeHidden: true })).toBeEmpty();
+  expect(await responses(page)).toHaveLength(0);
+});
+
+test('an unavailable receipt retains answers without claiming that submission failed or succeeded', async ({ page }) => {
+  await openMockedApp(page);
+  const threadId = await createThread(page);
+  const request = await ask(page, threadId);
+  const form = await openQuestions(page);
+  await form.getByRole('radio', { name: /Complete/ }).check();
+  await page.evaluate(async (request) => {
+    const invoke = window.lin!.agentCoreRequest;
+    window.lin!.agentCoreRequest = ((method: string, input: any) => {
+      if (method === 'userInput/read') return Promise.resolve({ observed: null, state: {
+        hostGeneration: request.hostGeneration, threadId: request.threadId, revision: request.revision + 1,
+        activeTurnId: null, pending: null, settled: null,
+      } });
+      return invoke(method as any, input);
+    }) as typeof invoke;
+    const turn = (await invoke('thread/turns/list', { threadId: request.threadId })).data.find((turn) => turn.id === request.turnId)!;
+    (window as any).__LIN_E2E__.emitAgentCoreNotification({ type: 'turn/completed', threadId: request.threadId, turnId: request.turnId,
+      turn: { ...turn, status: 'completed', completedAt: Date.now() } });
+  }, request);
+  await expect(form).toHaveCount(0);
+  const recovery = await openRecovery(page);
+  await expect(recovery).toContainText('Complete');
+  await expect(recovery).toContainText('Could not confirm whether your answers were submitted.');
+  await expect(recovery.locator('summary')).toContainText('Answer draft');
+  await expect(recovery.locator('summary')).not.toContainText('Not submitted');
   expect(await responses(page)).toHaveLength(0);
 });
 
@@ -411,8 +442,8 @@ test('Chinese question and draft actions keep the same meanings in a narrow dock
   await form.getByRole('button', { name: labels.inputSkipAll, exact: true }).click();
   const recovery = await openRecovery(page);
   await expect(recovery).toContainText(labels.inputRetainedDraft);
-  await expect(recovery.getByRole('button', { name: labels.inputAddToMessage, exact: true })).toBeVisible();
-  await expect(recovery.getByRole('button', { name: labels.inputDiscard, exact: true })).toBeVisible();
+  await expect(recovery).toContainText(labels.inputNotSubmitted);
+  await expect(recovery.getByRole('button')).toHaveCount(0);
   expect((await responses(page))[0]!.args.answers).toEqual([
     { questionId: 'scope', skipped: true }, { questionId: 'schedule', skipped: true },
   ]);
@@ -469,9 +500,8 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(form.getByRole('button', { name: 'More question actions', exact: true })).toHaveCount(0);
     await expect(form.getByRole('button', { name: 'Previous question', exact: true })).toBeDisabled();
     await form.getByRole('textbox', { name: 'Your answer' }).press('Escape');
-    await expect(form).toHaveCount(0);
+    await expect(form).toBeVisible();
     expect((await commandCalls(page)).filter((call) => call.cmd === 'turn/interrupt')).toHaveLength(0);
-    await openQuestions(page);
     await form.getByRole('button', { name: 'Next question', exact: true }).click();
     await expect(form.getByRole('button', { name: 'Submit answers', exact: true })).toBeVisible();
     await expect(page.locator('.thread-user-input-review')).toHaveCount(0);

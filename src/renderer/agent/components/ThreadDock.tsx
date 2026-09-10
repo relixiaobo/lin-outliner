@@ -469,10 +469,6 @@ export const ThreadDock = memo(function ThreadDock({
               inputRecovery={snapshot.userInputRecoveryByThread.get(thread.id) ?? null}
               onInputDraftChange={(request, update) => threadStore.userInputs.updateDraft(request, update)}
               onReconcileInput={() => { void threadStore.userInputs.reconcile(thread.id); }}
-              onDiscardInput={(key) => threadStore.userInputs.discard(key)}
-              onInputAdded={(key) => threadStore.userInputs.markAdded(key)}
-              onInputMessageAccepted={(keys) => threadStore.userInputs.acceptMessage(thread.id, keys)}
-              onInputMessageChanged={(text) => threadStore.userInputs.syncMessage(thread.id, text)}
               waitingOnUserInput={thread.status.type === 'active'
                 && thread.status.activeFlags.includes('waitingOnUserInput')}
               key={thread.id}

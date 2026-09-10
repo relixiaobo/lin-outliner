@@ -27,7 +27,6 @@ test('real tool delivery recovers loss and keeps ordinary messages independent o
   let releaseQuestion: (() => void) | undefined;
   let continuationCount = 0;
   const outputs: string[] = [];
-  const steeringRequests: any[][] = [];
   const server = createServer(async (request, response) => {
     if (request.url === '/v1/models') {
       response.setHeader('content-type', 'application/json');
@@ -39,9 +38,8 @@ test('real tool delivery recovers loss and keeps ordinary messages independent o
     const body = JSON.parse(raw || '{}');
     const toolName = body.tools?.find((tool: any) => tool.function.name === 'request_user_input')?.function.name;
     const last = body.messages?.at(-1);
-    const steering = last?.role === 'user' && JSON.stringify(last).includes('Keep this ordinary message separate.');
     const lastTool = body.messages?.findLast((message: any) => message.role === 'tool');
-    const toolResult = last?.role === 'tool' || (steering && lastTool);
+    const toolResult = last?.role === 'tool';
     const emit = () => {
       response.writeHead(200, { 'content-type': 'text/event-stream', connection: 'close' });
       const send = (delta: unknown, finish_reason: string | null) => response.write(`data: ${JSON.stringify({
@@ -51,7 +49,6 @@ test('real tool delivery recovers loss and keeps ordinary messages independent o
       if (toolResult) {
         continuationCount += 1;
         outputs.push(JSON.stringify(lastTool.content));
-        if (steering) steeringRequests.push(body.messages);
         const outcome = JSON.stringify(lastTool.content).includes('timedOut') ? 'timedOut' : 'answered';
         send({ role: 'assistant', content: `Continued once: ${outcome}` }, null);
         send({}, 'stop');
@@ -145,8 +142,9 @@ test('real tool delivery recovers loss and keeps ordinary messages independent o
     expect(outputs[1]).toContain('timedOut');
     expect(outputs[1]).not.toContain('answers');
     expect(outputs[1]).not.toContain('Still typing');
-    const recovery = page.locator('.thread-user-input-recovery');
-    await page.locator('.thread-user-input-recoveries > summary').click();
+    await answerEditor.press('Escape');
+    await expect(composer).toHaveText('Keep the ordinary draft.');
+    const recovery = page.locator('.thread-transcript-content .thread-user-input-recovery').first();
     await recovery.locator('summary').click();
     await expect(recovery).toContainText('Complete');
     await expect(recovery).toContainText('Still typing when it expires locally');
@@ -156,12 +154,8 @@ test('real tool delivery recovers loss and keeps ordinary messages independent o
       await page.emulateMedia({ colorScheme: theme });
       await page.locator('.agent-dock').screenshot({ path: join(artifacts, `${theme}-recovery.png`) });
     }
-    await recovery.getByRole('button', { name: 'Add to message draft', exact: true }).click();
-    await expect(composer).toContainText('Keep the ordinary draft.');
-    await expect(composer).toContainText('Still typing when it expires');
+    await expect(recovery.getByRole('button')).toHaveCount(0);
     expect(continuationCount).toBe(2);
-    await recovery.getByRole('button', { name: 'Delete draft', exact: true }).click();
-    await expect(recovery).toHaveCount(0);
     const turns = await page.evaluate((threadId) => window.lin!.agentCoreRequest('thread/turns/list', { threadId }), threadId);
     expect(turns.data).toHaveLength(2);
     await composer.fill('Ask and allow a skip.');
@@ -177,44 +171,13 @@ test('real tool delivery recovers loss and keeps ordinary messages independent o
     expect(outputs[2]).toContain('skipped');
     expect(outputs[2]).not.toContain('Complete');
     expect(outputs[2]).not.toContain('Withheld by Skip');
-    await page.locator('.thread-user-input-recoveries > summary').click();
-    await recovery.locator('summary').click();
-    await expect(recovery).toContainText('Withheld by Skip');
-    await expect(recovery.locator('pre')).toContainText('How broad');
-    await recovery.getByRole('button', { name: 'Delete draft', exact: true }).click();
+    const skipped = page.locator('.thread-transcript-content .thread-user-input-recovery').last();
+    await skipped.locator('summary').click();
+    await expect(skipped).toContainText('Withheld by Skip');
+    await expect(skipped.locator('pre')).toContainText('How broad');
+    await expect(skipped.getByRole('button')).toHaveCount(0);
+    await expect(recovery).toContainText('Still typing when it expires locally');
     await expect(page.getByText('Continued once: answered', { exact: true })).toHaveCount(2);
-    await composer.fill('Ask while I send a separate message.');
-    await page.getByRole('button', { name: 'Send', exact: true }).click();
-    await openQuestions(page);
-    await form.getByRole('radio', { name: /Complete/ }).check();
-    const beforeSteering = await page.evaluate((threadId) => window.lin!.agentCoreRequest('userInput/read', { threadId }), threadId);
-    expect(continuationCount).toBe(3);
-    await form.getByRole('button', { name: 'Back to message', exact: true }).click();
-    await composer.fill('Keep this ordinary message separate.');
-    await page.getByRole('button', { name: 'Steer', exact: true }).click();
-    await expect(composer).toBeEmpty();
-    const afterMessage = await page.evaluate((threadId) => window.lin!.agentCoreRequest('userInput/read', { threadId }), threadId);
-    expect(afterMessage.state.pending).toEqual(beforeSteering.state.pending);
-    expect(continuationCount).toBe(3);
-    await composer.fill('Another unsent message.');
-    await page.getByRole('button', { name: 'Back to questions', exact: true }).click();
-    await expect(form.getByRole('radio', { name: /Complete/ })).toBeChecked();
-    await expect(composer).toBeHidden();
-    await form.getByRole('button', { name: 'Next question', exact: true }).click();
-    await form.getByRole('button', { name: 'Submit answers', exact: true }).click();
-    await expect.poll(() => continuationCount).toBe(4);
-    await expect(composer).toHaveText('Another unsent message.');
-    expect(continuationCount).toBe(4);
-    expect(outputs[3]).not.toContain('discussed');
-    expect(outputs[3]).toContain('Complete');
-    expect(outputs[3]).not.toContain('Keep this ordinary message');
-    expect(steeringRequests).toHaveLength(1);
-    expect(steeringRequests[0]!.filter((message) => message.role === 'user' && JSON.stringify(message).includes('Keep this ordinary message separate.'))).toHaveLength(1);
-    const afterSteering = await page.evaluate((threadId) => window.lin!.agentCoreRequest('thread/turns/list', { threadId }), threadId);
-    expect(afterSteering.data).toHaveLength(4);
-    const steeredTurn = afterSteering.data.find((turn) => turn.id === beforeSteering.state.pending!.turnId)!;
-    expect(steeredTurn.items.filter((item) => item.type === 'userMessage' && JSON.stringify(item).includes('Keep this ordinary message separate.'))).toHaveLength(1);
-    await expect(composer).toHaveText('Another unsent message.');
     await composer.fill('Ask before restart.');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     await openQuestions(page);
@@ -239,7 +202,7 @@ test('real tool delivery recovers loss and keeps ordinary messages independent o
       } catch { return true; }
     }, old);
     expect(rejected).toBe(true);
-    expect(continuationCount).toBe(4);
+    expect(continuationCount).toBe(3);
   } finally {
     if (smoke) await closeSmokeApp(smoke);
     server.closeAllConnections();

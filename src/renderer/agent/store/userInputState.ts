@@ -8,10 +8,7 @@ export interface UserInputDraft {
   readonly request: RequestUserInputRequest;
   readonly answers: Readonly<Record<string, { readonly optionLabel?: string; readonly otherText?: string; readonly skipped?: true; readonly selection?: 'option' | 'text' | 'skip' }>>;
   readonly step: number;
-  readonly view?: 'questions' | 'message';
-  readonly addedText?: string;
   readonly outcome: 'pending' | 'unknown' | 'invalidated' | 'skipped' | UserInputSettlement['outcome'];
-  readonly addedToMessage: boolean;
 }
 
 export interface UserInputProjection {
@@ -46,7 +43,7 @@ export class ThreadUserInputState {
 
   getSnapshot(): UserInputProjection { return this.projection; }
 
-  updateDraft(request: RequestUserInputRequest, update: Partial<Pick<UserInputDraft, 'answers' | 'step' | 'view'>>): void {
+  updateDraft(request: RequestUserInputRequest, update: Partial<Pick<UserInputDraft, 'answers' | 'step'>>): void {
     const key = userInputKey(request);
     const draft = this.projection.userInputDrafts.get(key);
     if (!draft) return;
@@ -55,44 +52,7 @@ export class ThreadUserInputState {
     this.patch({ userInputDrafts: drafts });
   }
 
-  discard(key: string): void {
-    const drafts = new Map(this.projection.userInputDrafts);
-    if (drafts.get(key)?.outcome === 'pending') return;
-    drafts.delete(key);
-    this.patch({ userInputDrafts: drafts });
-  }
-
-  markAdded(key: string): void {
-    const drafts = new Map(this.projection.userInputDrafts);
-    const draft = drafts.get(key);
-    if (draft && draft.outcome !== 'pending') {
-      drafts.set(key, { ...draft, addedToMessage: true, addedText: recoveryText(draft) });
-      this.patch({ userInputDrafts: drafts });
-    }
-  }
-
-  acceptMessage(threadId: string, keys: readonly string[]): void {
-    for (const key of keys) {
-      const draft = this.projection.userInputDrafts.get(key);
-      if (draft?.request.threadId === threadId && draft.addedToMessage && draft.addedText === recoveryText(draft)) this.discard(key);
-    }
-  }
-
   settlement(identity: UserInputIdentity): UserInputSettlement | undefined { return this.receipts.get(userInputKey(identity)); }
-
-  syncMessage(threadId: string, text: string): void {
-    const drafts = new Map(this.projection.userInputDrafts);
-    let changed = false;
-    for (const [key, draft] of drafts) {
-      if (draft.request.threadId !== threadId || !draft.addedText) continue;
-      const addedToMessage = text.includes(draft.addedText);
-      if (addedToMessage !== draft.addedToMessage) {
-        drafts.set(key, { ...draft, addedToMessage });
-        changed = true;
-      }
-    }
-    if (changed) this.patch({ userInputDrafts: drafts });
-  }
 
   removeThread(threadId: string): void {
     this.deletedThreads.add(threadId);
@@ -226,7 +186,7 @@ export class ThreadUserInputState {
       if (old && old.outcome !== 'pending' && old.outcome !== 'unknown') return;
       requests.set(state.threadId, pending);
       drafts.set(key, old ? { ...old, outcome: 'pending' } : {
-        request: pending, answers: {}, step: 0, outcome: 'pending', addedToMessage: false,
+        request: pending, answers: {}, step: 0, outcome: 'pending',
       });
       this.patch({ userInputByThread: requests, userInputDrafts: drafts });
       this.setRecovery(state.threadId, null);

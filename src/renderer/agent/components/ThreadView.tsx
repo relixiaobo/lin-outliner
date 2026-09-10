@@ -90,7 +90,7 @@ import { WorkingText } from '../../ui/primitives/WorkingText';
 import { ThreadGoalView } from './ThreadGoalView';
 import { ThreadComposerModelControl } from './ThreadComposerModelControl';
 import { ThreadComposerAttachmentTray } from './ThreadComposerAttachmentTray';
-import { UserInputDeadline, UserInputRequest } from './UserInputRequest';
+import { UserInputRequest } from './UserInputRequest';
 import {
   ThreadComposerEditor,
   type ThreadComposerDraft,
@@ -210,12 +210,8 @@ interface ThreadViewProps {
   readonly inputRequest: RequestUserInputRequest | null;
   readonly inputDrafts?: readonly UserInputDraft[];
   readonly inputRecovery?: 'restoring' | 'error' | null;
-  readonly onInputDraftChange?: (request: RequestUserInputRequest, update: Partial<Pick<UserInputDraft, 'answers' | 'step' | 'view'>>) => void;
+  readonly onInputDraftChange?: (request: RequestUserInputRequest, update: Partial<Pick<UserInputDraft, 'answers' | 'step'>>) => void;
   readonly onReconcileInput?: () => void;
-  readonly onDiscardInput?: (key: string) => void;
-  readonly onInputAdded?: (key: string) => void;
-  readonly onInputMessageAccepted?: (keys: readonly string[]) => void;
-  readonly onInputMessageChanged?: (text: string) => void;
   /** The run is blocked on the user. Working phrases become static and the
    *  divider names the wait; elapsed time remains the Turn's wall-clock span. */
   readonly waitingOnUserInput: boolean;
@@ -683,7 +679,7 @@ export function ThreadView({
   turns,
   selfSpeaker,
   inputRequest,
-  inputDrafts = [], inputRecovery = null, onInputDraftChange, onReconcileInput, onDiscardInput, onInputAdded, onInputMessageAccepted, onInputMessageChanged,
+  inputDrafts = [], inputRecovery = null, onInputDraftChange, onReconcileInput,
   waitingOnUserInput,
   providerRetry,
   threadCreationBlocked,
@@ -709,9 +705,17 @@ export function ThreadView({
   const [questionEditorKey, setQuestionEditorKey] = useState<string | null>(null);
   const shownInput = inputDrafts.find((entry) => userInputKey(entry.request) === questionEditorKey);
   const questionEditorOpen = Boolean(shownInput);
-  const handledInputRef = useRef<string | null>(null);
-  const settledInputRef = useRef<string | null>(null);
   const inputDraft = inputRequest ? inputDrafts.find((entry) => userInputKey(entry.request) === userInputKey(inputRequest)) : undefined;
+  const retainedInputsByTurn = useMemo(() => {
+    const byTurn = new Map<string, UserInputDraft[]>();
+    for (const entry of inputDrafts) {
+      if (entry.outcome === 'pending' || !recoveryText(entry)) continue;
+      const drafts = byTurn.get(entry.request.turnId) ?? [];
+      drafts.push(entry);
+      byTurn.set(entry.request.turnId, drafts);
+    }
+    return byTurn;
+  }, [inputDrafts]);
   const initialScrollSnapshot = threadScrollSnapshots.get(threadId);
   const [draft, setDraft] = useState<ThreadComposerDraft>(EMPTY_COMPOSER_DRAFT);
   const [sending, setSending] = useState(false);
@@ -2154,59 +2158,32 @@ export function ThreadView({
   }, [error]);
 
   useLayoutEffect(() => {
-    const key = inputRequest ? userInputKey(inputRequest) : null;
     const editingRetainedAnswer = shownInput && shownInput.outcome !== 'pending'
       && document.activeElement instanceof HTMLElement
       && document.activeElement.matches('.thread-user-input-other') && Boolean(recoveryText(shownInput));
-    if (questionEditorKey && !shownInput) setQuestionEditorKey(null);
-    if (shownInput && shownInput.outcome !== 'pending' && settledInputRef.current !== questionEditorKey) {
-      settledInputRef.current = questionEditorKey;
-      if (!editingRetainedAnswer) setQuestionEditorKey(null);
-    }
-    if (key && handledInputRef.current !== key && inputDraft) {
-      handledInputRef.current = key;
-      // Question visibility belongs to the question, independently of ordinary message editing.
-      if (inputDraft.view !== 'message' && !editingRetainedAnswer) {
-        const expectedFocus = document.activeElement;
-        setQuestionEditorKey(key);
-        if (expectedFocus && composerRegionRef.current?.contains(expectedFocus)) {
-          window.requestAnimationFrame(() => {
-            if (composerFocusRequestIsCurrent(expectedFocus, document.activeElement, document.body)) {
-              composerRegionRef.current?.querySelector<HTMLElement>('.thread-user-input-step')?.focus();
-            }
-          });
-        }
-      }
-      if (inputDraft.view === undefined) onInputDraftChange?.(inputRequest!, { view: 'questions' });
-    }
-  }, [inputRequest, inputDraft, shownInput, questionEditorKey, onInputDraftChange]);
-
-  function showQuestions() {
-    if (!inputRequest) return;
+    if (editingRetainedAnswer) return;
+    const key = inputRequest && inputDraft ? userInputKey(inputRequest) : null;
+    if (key === questionEditorKey) return;
     const expectedFocus = document.activeElement;
-    setQuestionEditorKey(userInputKey(inputRequest));
-    onInputDraftChange?.(inputRequest, { view: 'questions' });
-    window.requestAnimationFrame(() => {
-      if (composerFocusRequestIsCurrent(expectedFocus, document.activeElement, document.body)) {
-        composerRegionRef.current?.querySelector<HTMLElement>('.thread-user-input-step')?.focus();
-      }
+    const shouldFocus = expectedFocus === document.body || Boolean(expectedFocus && composerRegionRef.current?.contains(expectedFocus));
+    setQuestionEditorKey(key);
+    if (shouldFocus) window.requestAnimationFrame(() => {
+      if (!composerFocusRequestIsCurrent(expectedFocus, document.activeElement, document.body)) return;
+      if (key) composerRegionRef.current?.querySelector<HTMLElement>('.thread-user-input-step')?.focus();
+      else composerRef.current?.focus();
     });
-  }
+  }, [inputRequest, inputDraft, shownInput, questionEditorKey]);
 
-  function dismissQuestions() {
+  function finishRetainedInput() {
+    if (shownInput?.outcome === 'pending') return;
     const expectedFocus = document.activeElement;
-    if (shownInput) onInputDraftChange?.(shownInput.request, { view: 'message' });
-    setQuestionEditorKey(null);
-    window.requestAnimationFrame(() => {
-      if (composerFocusRequestIsCurrent(expectedFocus, document.activeElement, document.body)) composerRef.current?.focus();
+    const shouldFocus = expectedFocus === document.body || Boolean(expectedFocus && composerRegionRef.current?.contains(expectedFocus));
+    setQuestionEditorKey(inputRequest && inputDraft ? userInputKey(inputRequest) : null);
+    if (shouldFocus) window.requestAnimationFrame(() => {
+      if (!composerFocusRequestIsCurrent(expectedFocus, document.activeElement, document.body)) return;
+      if (inputRequest) composerRegionRef.current?.querySelector<HTMLElement>('.thread-user-input-step')?.focus();
+      else composerRef.current?.focus();
     });
-  }
-
-  function addInputToMessage(entry: UserInputDraft) {
-    if (entry.addedToMessage || sending || !composerRef.current) return;
-    dismissQuestions();
-    composerRef.current.appendPlainText(recoveryText(entry));
-    onInputAdded?.(userInputKey(entry.request));
   }
 
   useEffect(() => {
@@ -2554,11 +2531,7 @@ export function ThreadView({
     composerRef.current?.clear();
     updateAttachments((current) => current.filter((attachment) => !submittedAttachmentIds.has(attachment.id)));
     try {
-      const inputRecoveryKeys = inputDrafts.filter((entry) => entry.addedToMessage && recoveryText(entry)
-        && submittedContent.filter((part) => part.type === 'text').map((part) => part.text).join('\n').includes(recoveryText(entry)))
-        .map((entry) => userInputKey(entry.request));
       const submission = await onSend(submittedContent, pendingSend.clientMessageId);
-      if (submission) onInputMessageAccepted?.(inputRecoveryKeys);
       const acceptedTurn = submission?.turn ?? null;
       // A steer is accepted into the active Turn and therefore has no new Turn
       // in the response. Admission disposition, not nullable layout data, owns
@@ -3061,7 +3034,6 @@ export function ThreadView({
   function handleDraftChange(next: ThreadComposerDraft) {
     draftRef.current = next;
     setDraft(next);
-    if (!sendingRef.current) onInputMessageChanged?.(next.content.filter((part) => part.type === 'text').map((part) => part.text).join('\n'));
     const nextCommandState = classifyNewThreadCommand(next);
     setNewThreadValidation((current) => {
       if (current === 'structuredContent' && nextCommandState === 'blockedByStructuredContent') return current;
@@ -3104,7 +3076,7 @@ export function ThreadView({
 
   function refocusComposerFromClick(event: MouseEvent<HTMLDivElement>) {
     if (!composerEnabled || questionEditorOpen || (event.target instanceof Element
-      && event.target.closest('.thread-user-input, .thread-user-input-strip, .thread-user-input-recoveries'))) return;
+      && event.target.closest('.thread-user-input'))) return;
     const decision = composerRefocusDecision({
       altKey: event.altKey,
       button: event.button,
@@ -3235,6 +3207,7 @@ export function ThreadView({
                         threadReferences={threadReferences}
                         turn={turn}
                         waitingOnUserInput={waitingOnUserInput}
+                        inputDrafts={retainedInputsByTurn.get(turn.id)}
                       />
                     </ThreadTranscriptTurnShell>
                   );
@@ -3283,13 +3256,6 @@ export function ThreadView({
       ) : null}
       {composerEnabled ? <div className="thread-composer-region thread-composer" ref={composerRegionRef}>
         {projectControl}
-        <UserInputRecovery
-          drafts={inputDrafts.filter((entry) => entry.outcome !== 'pending')}
-          canAdd={!sending}
-          onAdd={addInputToMessage}
-          onDiscard={(key) => onDiscardInput?.(key)}
-          onRetry={() => onReconcileInput?.()}
-        />
         {activePlan ? (
           <ThreadPlanProgress
             onClosed={() => composerRef.current?.focus()}
@@ -3304,13 +3270,6 @@ export function ThreadView({
           onDragOver={handleDragOver}
           onDrop={handleDrop}
         >
-          {inputRequest && inputDraft && (!shownInput || !sameInputShown(shownInput, inputRequest)) ? (
-            <div className="thread-user-input-strip" onKeyDown={(event) => { if (event.key === 'Escape') event.stopPropagation(); }}>
-              <Button size="sm" onClick={showQuestions}>{inputDraft.view === 'message'
-                ? t.agent.thread.inputReturnToQuestions : inputRequest.questions[Math.min(inputDraft.step, inputRequest.questions.length - 1)]!.question}</Button>
-              <UserInputDeadline request={inputRequest} onExpired={() => onReconcileInput?.()} />
-            </div>
-          ) : null}
           {shownInput ? (
             <UserInputRequest
               key={userInputKey(shownInput.request)} request={shownInput.request} draft={shownInput}
@@ -3318,16 +3277,13 @@ export function ThreadView({
               onDraftChange={(update) => onInputDraftChange?.(shownInput.request, update)}
               onExpired={() => onReconcileInput?.()}
               onSubmit={(answers, intent) => onSubmitUserInput(shownInput.request, answers, intent)}
-              onDismiss={dismissQuestions} onAdd={() => addInputToMessage(shownInput)}
+              onEditingFinished={finishRetainedInput}
             />
           ) : null}
           {(inputRecovery || (waitingOnUserInput && !inputRequest)) ? (
             <div className="thread-user-input-recovery-state" role="status">
               <p>{inputRecovery === 'error' ? t.agent.thread.inputRestoreError : t.agent.thread.inputRestoring}</p>
-              <div className="thread-user-input-actions">
-                <Button size="sm" onClick={() => onReconcileInput?.()}>{t.agent.thread.inputRetry}</Button>
-                <Button size="sm" onClick={() => void onInterrupt()}>{t.agent.thread.inputInterrupt}</Button>
-              </div>
+              {inputRecovery === 'error' ? <Button size="sm" onClick={() => onReconcileInput?.()}>{t.agent.thread.inputRetry}</Button> : null}
             </div>
           ) : null}
           <div className="thread-composer-main" hidden={questionEditorOpen}>
@@ -3536,6 +3492,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   threadReferences,
   turn,
   waitingOnUserInput,
+  inputDrafts,
 }: {
   readonly active: boolean;
   readonly canEditUserMessage: boolean;
@@ -3564,6 +3521,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   readonly threadReferences: ReadonlyMap<string, ThreadReferenceView>;
   readonly turn: Turn;
   readonly waitingOnUserInput: boolean;
+  readonly inputDrafts?: readonly UserInputDraft[];
 }) {
   const t = useT();
   const documentNodeIds = useMemo(() => threadDocumentNodeIds(turn), [turn]);
@@ -3768,6 +3726,14 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     if (open && open.speaker?.participantId === speaker?.participantId) open.nodes.push(node);
     else runs.push({ speaker, nodes: [node] });
   };
+  const placedDrafts = new Set<string>();
+  const emitInputDrafts = (items: readonly ThreadItem[]) => {
+    for (const entry of inputDrafts ?? []) {
+      if (placedDrafts.has(entry.request.itemId) || !items.some((item) => item.id === entry.request.itemId)) continue;
+      placedDrafts.add(entry.request.itemId);
+      emit(moodedSelf, <UserInputRecovery key={userInputKey(entry.request)} draft={entry} />);
+    }
+  };
   for (const block of contentBlocks) {
     if (block.kind === 'item' && threadItemRendersNothing(block.item)) continue;
     const speaker = speakerOf(block);
@@ -3796,12 +3762,18 @@ export const ThreadTurnView = memo(function ThreadTurnView({
       ) : null);
       const open = runs.at(-1);
       if (open) open.meta = processView.header;
+      emitInputDrafts(block.items);
       continue;
     }
     emit(speaker, renderItem(
       block.item,
       turn.status !== 'inProgress' && block.item.type === 'userMessage',
     ));
+    emitInputDrafts([block.item]);
+  }
+  // A missing inspection-only Item must not hide retained local answers.
+  for (const entry of inputDrafts ?? []) {
+    if (!placedDrafts.has(entry.request.itemId)) emit(moodedSelf, <UserInputRecovery key={userInputKey(entry.request)} draft={entry} />);
   }
   if (responseItem === null && responseTail) {
     emit(moodedSelf, (
@@ -5214,8 +5186,4 @@ function formatBytes(bytes: number): string {
 
 function hasDraggedFiles(dataTransfer: DataTransfer): boolean {
   return Array.from(dataTransfer.types).includes('Files');
-}
-
-function sameInputShown(draft: UserInputDraft, request: RequestUserInputRequest): boolean {
-  return userInputKey(draft.request) === userInputKey(request);
 }

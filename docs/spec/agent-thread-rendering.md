@@ -656,84 +656,78 @@ and reset after a successful Send.
 `request_user_input` directly replaces the ordinary composer in the same dock
 area. Message text or focus never causes a preliminary choice of editor. The
 ordinary rich editor remains mounted but hidden, retaining text and attachments
-independently of the question drafts. Submission, close, and timeout restore that
-draft unchanged. Arrival may focus the replacement form when the hidden composer
-held focus, but never steals another document's editing focus.
+independently of question drafts. Submission, Skip all, or settlement restores it
+unchanged, except while preserving active answer editing at expiry. There is no
+close/reopen editor switch. Arrival can focus the replacement form when the
+hidden composer held focus, but never steals another document's editing focus.
 
 The question surface has three stable regions. The header groups previous/next
-icon buttons around current / total, with Close at the opposite edge. Both icons
-remain visible and are disabled at the corresponding boundary; accessible names
-and native tooltips identify their directions. Navigation never submits.
+icons around current / total. Both icons stay visible and are disabled at their
+corresponding boundary; accessible names and native tooltips identify them.
+Navigation never submits. The scrollable body gives the question stronger type
+than option labels and descriptions. Other is a peer radio option that reveals
+and focuses a text editor. Inactive text stays mounted but hidden, so choosing a
+preset never silently sends it. No option is selected automatically. Form height
+stays bounded and stable across questions and Other expansion; only the body
+scrolls, keeping navigation and footer controls visible at narrow sizes.
 
-The scrollable body gives the question stronger type than option labels and
-descriptions. Other is a peer radio option that reveals and focuses a text editor
-when selected. Inactive text stays mounted but hidden, so switching to a preset
-never silently sends it. No option is selected automatically. Form height stays
-bounded and stable across questions and Other expansion; only this body scrolls,
-keeping navigation and footer controls visible at narrow sizes.
+The footer separates quiet deadline metadata from Skip all and Submit answers.
+Submit answers is available on every step with an active answer; it sends all
+active answers and typed skips for unanswered entries. Skip all sends only typed
+skips with continue intent, preserving all filled answers locally. Navigation
+never changes an answer or sends a skip. No close control, footer Next button,
+review page, tab bar, More menu, or execution control appears inside the form.
+Escape during a live question leaves it visible and never submits or stops work.
 
-The footer separates quiet deadline metadata from Skip all and Submit answers. Submit
-answers is available on every step with an active answer; it sends all active
-answers and typed skips for unanswered entries. Skip all is available on every
-step and sends only typed skips with continue intent, preserving all filled
-answers as local drafts. Navigation never changes an answer or sends a skip.
-There is no footer Next button, review page, question-tab bar, More menu, or
-execution control inside the form.
-
-Copy describes the user's action and known outcome. The waiting status is Waiting
-for your answers; the countdown is Continues in Ns. Activity rows say Questions
+Copy describes the user's action and known outcome. Waiting status says Waiting
+for your answers; the countdown says Continues in Ns. Activity rows say Questions
 for you / Questions asked without treating tool-call count as question count.
-Withheld content says This draft was not submitted, including after a partial
-submission; it never claims the whole request was skipped. Unknown receipts
-remain explicitly uncertain and offer Check status. Submission/skip failures
-explain that drafts remain available and invite retry without raw transport errors.
-In-flight labels are Submitting… / Skipping…. Recovery transfer says Add to
-message draft, followed by Added to draft, since neither action sends a message.
-English and Simplified Chinese use the same meanings.
+Retained content is marked Not submitted; its explanation says This draft was
+not submitted, including after partial submission. Unknown receipts remain
+explicitly uncertain while reconciliation determines their outcome; their
+retained-content summary says Answer draft instead of claiming Not submitted. Submission
+and skip failures explain that drafts remain available and invite retry without
+raw transport errors. In-flight labels are Submitting… / Skipping…. English and
+Simplified Chinese use the same meanings.
 
-Close and Escape return to the original message without submitting or stopping.
-Only then show Back to questions beside the ordinary editor. Both drafts and the
-original deadline survive this local switch. Normal Send/Steer sends only the
-ordinary message through its usual admission route; it neither submits answers
-nor settles the pending question. Question failures and receipts cannot clear a
-message draft. Stop remains the ordinary composer's existing execution control.
-The explicit Add to message draft recovery action is the only cross-draft transfer.
-An uncertain request disables question submission, not ordinary message editing
-or admission after the form closes.
+Ordinary Send/Steer uses the existing message admission route when the composer
+returns, without reading answer drafts or settling a question. Question failures
+and receipts cannot clear a message draft. Stop remains the ordinary composer's
+existing execution control. There are no cross-draft transfer controls.
 
 ThreadStore subscribes before snapshot reads and reconciles on initial load,
 subscription reattachment, Thread selection, dock reopening, visible-window
 focus, and a waiting notification without question content. Reads coalesce per
 Thread; generations and revisions reject stale snapshots/events. Matching Turn
-termination fences submission, and an older settlement cannot erase a newer
-question. Loading/error states offer Try again and Stop while retaining local drafts.
-Exact receipts distinguish accepted, discussed, timed-out, cancelled, and failed
-requests; discussion arrives with its canonical completed-message batch.
+termination fences submission; an older settlement cannot erase a newer question.
+Loading is automatic. A load failure offers Try again, without duplicating the
+ordinary composer's Stop. Exact receipts distinguish accepted, discussed,
+timed-out, cancelled, and failed requests; discussion arrives with its canonical
+completed-message batch.
 
 Answer drafts belong to ThreadStore outside the form lifetime, keyed by exact
-request identity. Selection, inactive text, skips, step, and local editor mode
-survive remounting and Thread switches within the renderer session. Acceptance
-releases only content equal to the actual submitted answer; withheld text and
-subsequent edits remain. Ordinary rich message drafts and attachments are separate.
-At expiry, no local answers are sent. A focused non-empty answer editor keeps its
-DOM node, caret, selection, IME, and scroll while becoming an unsent draft with
-Add to message draft. A newer question cannot displace that editor. Other expired forms
-fold, and empty outcomes create no recovery entry. The timer is subdued and its
-ticks are not live screen-reader announcements; only authoritative expiry can
-claim that no answer was submitted.
+request identity. Selection, inactive text, skips, and step survive remounting and
+Thread switches within the renderer session. Acceptance releases only content
+equal to the actual submitted answer; withheld text and later edits remain.
+Ordinary rich message drafts and attachments stay separate. At expiry, no local
+answers are sent. A focused non-empty answer editor keeps its DOM node, caret,
+selection, IME, and scroll while becoming an unsent draft. A newer question cannot
+displace it. Once focus leaves, or Escape ends retained editing after settlement,
+the next pending question appears or the ordinary composer returns unchanged.
+The timer is subdued without per-second screen-reader announcements; only an
+authoritative timeout permits a no-answer timeout claim.
 
-One Answer drafts shelf groups non-empty retained requests, including while a
-new question is visible. Entries expand to show their content and offer Copy
-answers, Add to message draft, and Delete draft.
-Adding appends question context and content to the ordinary rich draft, preserves
-existing text/attachments, and sends nothing. Added to draft prevents repeated
-insertion. Failed Send retains recovery; deleting inserted content restores its
-availability rather than clearing the entry on a later unrelated Send. Successful
-explicit Send releases only included unchanged recovery content. Thread deletion
-clears that Thread's entries. Full renderer reload or application exit may discard
-unsent drafts; these are never persisted in Rollout or sent before explicit
-submission. Reload still restores a live question from the Host and retains its
-original deadline; Host restart never revives the old request.
+Non-empty retained answers appear as passive collapsed content at their original
+question in the transcript, outside collapsed process details. The summary shows
+the original question and Not submitted; expansion shows the known reason and
+retained question/answer text with native selection/copy. If an inspection-only
+Item is unavailable, the note remains within its owning Turn. There is no draft
+shelf, copy, transfer, delete, or status-check button. Empty outcomes add no note.
+Ordinary message sends, including failed sends, never delete or change retained
+answers. Thread deletion clears that Thread's entries. Full renderer reload or
+application exit may discard unsent drafts; these are never persisted in Rollout
+or sent before explicit submission. Reload still restores a live question from
+the Host with its original deadline; Host restart never revives the old request.
 
 Rename uses the shared `Dialog`; delete uses `ConfirmDialog`. Browser-native
 prompt and confirm APIs are not used. Fork creates and selects the new Thread

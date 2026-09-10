@@ -3282,11 +3282,24 @@
   font-size: var(--font-meta);
 }
 
-.thread-user-input-recoveries,
 .thread-user-input-recovery-state {
   padding: var(--space-3);
   font-size: var(--font-ui-sm);
   color: var(--text-soft);
+}
+
+.thread-user-input-recovery {
+  min-width: 0;
+  margin-block: var(--space-3);
+  color: var(--text-soft);
+  font-size: var(--font-ui-sm);
+}
+
+.thread-user-input-recovery-label {
+  margin-inline-start: var(--space-3);
+  color: var(--text-faint);
+  font-size: var(--font-meta);
+  white-space: nowrap;
 }
 
 .thread-user-input-recovery + .thread-user-input-recovery {
@@ -3307,13 +3320,9 @@
   font: inherit;
   color: var(--text-strong);
   user-select: text;
-  max-height: calc(var(--space-8) * 5);
-  overflow-y: auto;
 }
 
-.thread-user-input .thread-user-input-actions,
-.thread-user-input-recoveries .thread-user-input-actions,
-.thread-user-input-recovery-state .thread-user-input-actions {
+.thread-user-input .thread-user-input-actions {
   flex-wrap: wrap;
   gap: var(--space-2);
 }
@@ -3328,6 +3337,24 @@
   align-items: center;
   gap: var(--space-2);
   min-width: 0;
+}
+
+.thread-user-input-nav .icon-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-size-xl);
+  height: var(--control-size-xl);
+  border-radius: var(--radius-pill);
+  color: var(--text-soft);
+}
+
+.thread-user-input-nav .icon-button:hover:not(:disabled) {
+  color: var(--text-strong);
+}
+
+.thread-user-input-nav .icon-button:disabled {
+  color: var(--text-quaternary);
 }
 
 .thread-user-input-position {
@@ -3351,8 +3378,7 @@
   gap: var(--space-2);
 }
 
-.thread-user-input-other:focus-visible,
-.thread-user-input-recoveries > summary:focus-visible {
+.thread-user-input-other:focus-visible {
   box-shadow: var(--focus-ring-shadow);
 }
 
@@ -3373,23 +3399,4 @@ textarea.thread-user-input-other {
   font-size: var(--font-ui-sm);
   line-height: var(--line-ui-sm);
   resize: vertical;
-}
-
-.thread-user-input-strip {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-1);
-  border-bottom: 1px solid var(--separator);
-  color: var(--text-soft);
-  font-size: var(--font-meta);
-}
-
-.thread-user-input-recoveries > summary {
-  user-select: none;
-  font-size: var(--font-meta);
-}
-
-.thread-user-input-recoveries > .thread-user-input-recovery {
-  margin-top: var(--space-2);
 }

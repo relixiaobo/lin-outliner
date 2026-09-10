@@ -44,12 +44,8 @@ describe('session user input projection', () => {
     expect(owner.getSnapshot().userInputByThread.size).toBe(0);
     expect(owner.getSnapshot().userInputDrafts.get(key)).toMatchObject({ outcome: 'skipped', answers: { schedule: { otherText: 'Not ready to share' } } });
     expect(recoveryText(owner.getSnapshot().userInputDrafts.get(key)!)).toBe('When?\nNot ready to share');
-    owner.markAdded(key);
     owner.applyRead(response, question);
-    expect(owner.getSnapshot().userInputDrafts.get(key)?.addedToMessage).toBe(true);
-    owner.discard(key);
-    owner.applyRead(response, question);
-    expect(owner.getSnapshot().userInputDrafts.has(key)).toBe(false);
+    expect(recoveryText(owner.getSnapshot().userInputDrafts.get(key)!)).toBe('When?\nNot ready to share');
   });
   test('recovers a dropped request, coalesces reads, and keeps all edited steps across remount and reconciliation', async () => {
     const question = request();
@@ -95,7 +91,7 @@ describe('session user input projection', () => {
     expect(owner.getSnapshot().userInputByThread.get(first.threadId)?.itemId).toBe(next.itemId);
   });
 
-  test('timeout preserves every unsent answer independently of a newer request and releases only explicit accepted message entries', () => {
+  test('timeout preserves every unsent answer independently of newer requests', () => {
     const first = request();
     const owner = new ThreadUserInputState(async () => pendingRead(first), () => {}, () => false);
     ask(owner, first);
@@ -108,12 +104,9 @@ describe('session user input projection', () => {
     const next = request('question-2', 3);
     ask(owner, next);
     owner.updateDraft(next, { answers: { scope: { optionLabel: 'Small' } } });
-    owner.markAdded(key);
-    expect(owner.getSnapshot().userInputDrafts.has(key)).toBe(true); // Failed Send does not call acceptance.
-    owner.acceptMessage('other-thread', [key]);
-    expect(owner.getSnapshot().userInputDrafts.has(key)).toBe(true);
-    owner.acceptMessage(first.threadId, [key]);
-    expect(owner.getSnapshot().userInputDrafts.has(key)).toBe(false);
+    expect(owner.getSnapshot().userInputDrafts.get(key)).toEqual(draft);
+    owner.applyRead(pendingRead(next));
+    expect(recoveryText(owner.getSnapshot().userInputDrafts.get(key)!)).toContain('Partial text');
     expect(owner.getSnapshot().userInputDrafts.get(userInputKey(next))?.answers.scope).toEqual({ optionLabel: 'Small' });
   });
 
@@ -185,18 +178,4 @@ test('accepted content releases only exact submitted values and leaves newer edi
   expect(recoveryText(retained)).toContain('An inactive alternative');
   expect(recoveryText(retained)).toContain('A new edit');
   expect(recoveryText(retained)).not.toContain('Full');
-});
-
-test('removing added recovery content makes it available again and an unrelated message cannot discard it', () => {
-  const question = request();
-  const owner = new ThreadUserInputState(async () => pendingRead(question), () => {}, () => false);
-  ask(owner, question);
-  owner.updateDraft(question, { answers: { scope: { otherText: 'Preserve this' } } });
-  clear(owner, question);
-  const key = userInputKey(question);
-  owner.markAdded(key);
-  owner.syncMessage(question.threadId, 'An unrelated message');
-  expect(owner.getSnapshot().userInputDrafts.get(key)?.addedToMessage).toBe(false);
-  owner.acceptMessage(question.threadId, [key]);
-  expect(owner.getSnapshot().userInputDrafts.has(key)).toBe(true);
 });

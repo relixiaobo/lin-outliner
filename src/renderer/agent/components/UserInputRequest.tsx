@@ -3,10 +3,10 @@ import type { RequestUserInputAnswer, RequestUserInputRequest as Request } from 
 import { useT } from '../../i18n/I18nProvider';
 import { Button } from '../../ui/primitives/Button';
 import { IconButton } from '../../ui/primitives/IconButton';
-import { ChevronLeftIcon, ChevronRightIcon, CloseIcon } from '../../ui/icons';
-import { activeInputAnswers, recoveryText, type UserInputDraft } from '../store/userInputState';
+import { ChevronLeftIcon, ChevronRightIcon } from '../../ui/icons';
+import { activeInputAnswers, type UserInputDraft } from '../store/userInputState';
 
-type DraftChange = Partial<Pick<UserInputDraft, 'answers' | 'step' | 'view'>>;
+type DraftChange = Partial<Pick<UserInputDraft, 'answers' | 'step'>>;
 
 interface UserInputRequestProps {
   readonly request: Request;
@@ -15,8 +15,7 @@ interface UserInputRequestProps {
   readonly onDraftChange: (update: DraftChange) => void;
   readonly onExpired: () => void;
   readonly onSubmit: (answers: readonly RequestUserInputAnswer[], intent: 'answer' | 'continue') => Promise<void>;
-  readonly onDismiss: () => void;
-  readonly onAdd: () => void;
+  readonly onEditingFinished: () => void;
 }
 
 /** Own the ticking display separately so it never rerenders the answer editor each second. */
@@ -40,7 +39,7 @@ export function UserInputDeadline({ request, onExpired }: { request: Request; on
   </span>;
 }
 
-export function UserInputRequest({ request, draft, disabled = false, onDraftChange, onExpired, onSubmit, onDismiss, onAdd }: UserInputRequestProps) {
+export function UserInputRequest({ request, draft, disabled = false, onDraftChange, onExpired, onSubmit, onEditingFinished }: UserInputRequestProps) {
   const t = useT();
   const [expired, setExpired] = useState(() => Date.now() >= request.deadlineAt);
   const [submissionIntent, setSubmissionIntent] = useState<'answer' | 'continue' | null>(null);
@@ -100,21 +99,26 @@ export function UserInputRequest({ request, draft, disabled = false, onDraftChan
     : !pending ? t.agent.thread.inputUnknown : t.agent.thread.inputCheckingStatus;
 
   return <form className="thread-user-input" aria-busy={submitting} aria-label={pending ? t.agent.thread.inputNeeded : t.agent.thread.inputSavedDraft}
+    onBlur={(event) => {
+      if (!pending && !event.currentTarget.contains(event.relatedTarget)) onEditingFinished();
+    }}
     onSubmit={(event) => event.preventDefault()} onKeyDown={(event) => {
-      if (event.key === 'Escape' && !event.nativeEvent.isComposing) { event.stopPropagation(); onDismiss(); }
+      if (event.key === 'Escape' && !event.nativeEvent.isComposing) {
+        event.stopPropagation();
+        if (!pending) onEditingFinished();
+      }
     }}>
     <div className="thread-user-input-heading">
       <nav className="thread-user-input-nav" aria-label={t.agent.thread.inputNavigation}>
-        <IconButton icon={ChevronLeftIcon} label={t.agent.thread.inputBack} disabled={step === 0 || submitting}
+        <IconButton icon={ChevronLeftIcon} label={t.agent.thread.inputBack} disabled={step === 0 || !pending || expired || submitting}
           onClick={() => move(step - 1)} />
         <span className="thread-user-input-position" aria-live="polite">
           <span aria-hidden="true">{step + 1} / {request.questions.length}</span>
           <span className="sr-only">{t.agent.thread.inputProgress({ current: step + 1, total: request.questions.length })}</span>
         </span>
-        <IconButton icon={ChevronRightIcon} label={t.agent.thread.inputNext} disabled={last || submitting}
+        <IconButton icon={ChevronRightIcon} label={t.agent.thread.inputNext} disabled={last || !pending || expired || submitting}
           onClick={() => move(step + 1)} />
       </nav>
-      <IconButton icon={CloseIcon} label={t.agent.thread.inputReturnToMessage} disabled={submitting} onClick={onDismiss} />
     </div>
     {/* Keep this editor subtree mounted when the Host settles; only its sending authority changes. */}
     <div className="thread-user-input-step" key={question.id} ref={stepRef} tabIndex={-1}>
@@ -164,11 +168,6 @@ export function UserInputRequest({ request, draft, disabled = false, onDraftChan
           {submissionIntent === 'answer' ? t.agent.thread.inputSubmitting : t.agent.thread.inputSendAnswers}
         </Button>
       </div>
-    </div> : <div className="thread-user-input-actions">
-      {!pending && recoveryText(draft) ? <Button size="sm" variant="primary" disabled={draft.addedToMessage} onClick={onAdd}>
-        {draft.addedToMessage ? t.agent.thread.inputInMessage : t.agent.thread.inputAddToMessage}
-      </Button> : <Button size="sm" onClick={onExpired}>{t.agent.thread.inputCheckStatus}</Button>}
-      <Button size="sm" onClick={onDismiss}>{t.agent.thread.inputReturnToMessage}</Button>
-    </div>}
+    </div> : null}
   </form>;
 }
