@@ -377,7 +377,7 @@ Questions use the shared user-input interaction in place. A delivered result
 with a surviving process also displays **Background work: running** with the
 shared status/log and Stop process actions. One status never stands for both.
 Stopping displays Stopping until the actual owner settles. The shared
-[user-input lifecycle](user-input-request-recovery.md#answer-drafts-and-settlement-presentation)
+[user-input lifecycle](../spec/agent-core.md#structured-input-lifecycle)
 owns question answerability, original deadline, and answered/timed-out/cancelled/
 failed settlement. An accepted answer or a timeout closes the live form and
 continues the same active Turn/run; interruption or owner failure closes/fences
@@ -663,7 +663,7 @@ and file scopes before implementation.
 | [Published conversation records](../spec/agent-core.md#published-conversation-records), #669 | Canonical source/publication owner | Build result process navigation, history access, continuity, and handoff on `ThreadRecordSources` and `ThreadRecordPublisher`. Preserve approved discovery across non-excluded persistent roots, including Automation roots and self; delegated/ephemeral isolation and file capabilities still apply. Do not add another transcript tree or new history model tools. |
 | [Memory/profile](memory-agent-profile.md), #665 | Design integrated; runtime absent | Global preferences, identity, style, and learning remain with that owner. Task briefs contain work-specific instructions. Consume accepted configuration without a direct USER.md reader or task-local learned profile. |
 | [Targeted conversation recovery](targeted-thread-recovery.md) | Design only | Preserve definition/run fences and shared references. Coordinate final new assignment and run references with its recovery closure; no separate repair action or cleanup interpretation. |
-| [Bounded user input](user-input-request-recovery.md) | Design only | Consume its request settlement, 60-second default deadline, session-local answer drafts, and exact active-question attention rules. Whichever consumer lands later verifies AC-39/40/41 against the final shared owner; no parallel timeout or input ledger. |
+| [Bounded user input](../spec/agent-core.md#structured-input-lifecycle), #672 | Existing owner boundary | Consume its ordered request settlement, 60-second default deadline and independent session-local answer drafts. Scheduling verifies AC-39/40/41 for its own active-question attention and foreground slot against that owner; no parallel timeout or input ledger. |
 | [Conversation work folders](conversation-work-folders.md) | Shared Project/location contract | Resolve an explicitly selected Project through its primary-folder owner while retaining the assignment's independent work-location choice. Share packaged CLI admission; changing the originating chat cannot redirect an accepted or future scheduled run. |
 | [Background continuation policy](background-task-continuation-policy.md) | Shared Task responsibility contract | Preserve launch/handoff, watch and exact-event disposition through the Task owner. Silent process observations do not acquire the foreground slot; required continuations retain their original run association and shared admission. |
 | [Delegation](../spec/agent-delegation.md), #628/#637 | Implemented common mechanisms | Internal/external delegated work remains owned by generic Task/session mechanisms and keeps existing discovery and cancellation boundaries. |

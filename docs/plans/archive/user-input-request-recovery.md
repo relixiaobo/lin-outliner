@@ -17,9 +17,9 @@ snapshot/event synchronization, answer/discussion/cancellation/timeout settlemen
 composer interaction, draft recovery, and end-to-end validation ship together.
 This plan is the consolidated proposed design; earlier interaction sketches are
 not independent authorities. It does not assert that the proposal is implemented;
-current behavior is owned by [Agent Core](../spec/agent-core.md) and
-[Thread rendering](../spec/agent-thread-rendering.md). Status and selected order
-live on [the board](../TASKS.md).
+current behavior is owned by [Agent Core](../../spec/agent-core.md) and
+[Thread rendering](../../spec/agent-thread-rendering.md). Status and selected order
+live on [the board](../../TASKS.md).
 
 ## Non-goals
 
@@ -33,7 +33,7 @@ live on [the board](../TASKS.md).
   historical request after its owning execution has ended.
 - Claiming that reload caused the reported incident without evidence, or that
   repairing question presentation fixes unnecessary background continuations.
-  That policy has its own [plan](background-task-continuation-policy.md).
+  That policy has its own [plan](../background-task-continuation-policy.md).
 - A general workflow engine, new history source, or independent request database.
 
 ## Design
@@ -501,7 +501,7 @@ coordination required by the repository.
   fold the final request lifecycle and snapshot behavior in the same feature PR.
 
 Implementation uses the current Thread lifecycle and
-[published record owners](../spec/agent-core.md#published-conversation-records).
+[published record owners](../../spec/agent-core.md#published-conversation-records).
 Preserve their final contracts while coordinating request protocol/codec and
 renderer-store changes. The future work-folder implementation also uses Thread
 and composer owners. The collision self-check found only this feature's #672
@@ -510,11 +510,11 @@ response contract and must be included in the claim and shared-interface check
 before implementation; it is not merely a renderer-only change. No dependency,
 build, core document-command, main-owned board, or changelog edits are required.
 
-This feature and [background continuation](background-task-continuation-policy.md)
+This feature and [background continuation](../background-task-continuation-policy.md)
 can each ship alone. Select an integration order for their shared
 `ThreadService`, `TurnLifecycle`, protocol, and renderer-store edits; reliable
 questions do not depend on adopting new background agreements. The
-[scheduled-work plan](scheduled-work-redesign.md) consumes FR-14's answered, discussed,
+[scheduled-work plan](../scheduled-work-redesign.md) consumes FR-14's answered, discussed,
 timed-out, cancelled, and failed settlements, distinct from unread results and
 run termination. It preserves its own run admission and introduces no second
 scheduled input owner. Whichever implementation lands later adapts the final

@@ -2927,3 +2927,16 @@ positional reads for byte-addressable text and one forward decoding pass for
 transcoded match windows. Test encoding, BOM, newline and page boundaries plus
 many adjacent matches, replacement and cancellation; measure actual read volume
 so a bounded preview cannot conceal repeated whole-prefix work.
+
+## Coalesced reads must preserve recovery invalidations
+
+**An event that invalidates an outstanding read must still trigger a fresh read
+when ordinary reconciliation is coalesced.** Fence the stale result before
+starting recovery; sharing the existing promise cannot establish the new owner's
+state.
+
+PR #672 initially coalesced a new Host's question notification into an old Host's
+pending snapshot read. The old result could then replace the visible question
+without fetching the new generation. Verify generation changes during an
+outstanding read, including delayed old results and notifications, and assert
+both the recovered request identity and the preserved session-local draft.
