@@ -133,17 +133,21 @@ visibility, so a lost notification cannot produce an unlimited wait. The default
 is a concrete implementation choice for the user's bounded-wait requirement;
 there is no new Settings panel.
 
-DEC-4: Separate navigation, answer content, and submission into three stable
-regions. The header groups previous/next icon buttons around a compact current /
-total indicator. Both navigation buttons stay
+DEC-4: Group context, answers, and submission into three regions. The compact
+header groups previous/next icons around current / total on the left and the quiet
+deadline on the right. Both navigation buttons stay
 visible, with the unavailable direction disabled at each end. Accessible names
 and native tooltips identify the icons. Navigation never submits an answer.
 The body gives the question stronger type than option labels and descriptions.
 Other is an explicit peer radio option; selecting it reveals and focuses its
 text editor. Inactive text remains mounted but hidden and never submits with a
-preset option. The body alone scrolls inside a bounded, stable-height form, so
-navigation and footer actions do not move when Other opens or a question wraps.
-The footer places the quiet deadline apart from Skip all and Submit answers. Submit
+preset option. The form fits its content up to the existing half-viewport cap;
+short questions do not reserve an empty half-screen. Only the body scrolls after
+that cap. Each option is a full-width choice row: label and description align on the
+left, with the native selection indicator on the right. Neutral borders and fill
+distinguish the selected row. Other expands its editor within the same row card. The footer contains only Skip all on the
+left and Submit answers on the right. It stays anchored at the dock bottom while
+form height adapts to question length or an expanded Other editor. Submit
 is available on every step once there is an active answer; it includes the
 request's active answers and typed skips for the rest. There is no footer Next,
 review page, tab bar, More menu, or execution terminology in the form. Choosing a
@@ -407,7 +411,8 @@ Skip all stays at the original question, with no extra recovery actions.
 
 The action hierarchy is one primary Submit answers action and one secondary
 Skip all action. Previous and Next are paired header icons around the position
-indicator. The quiet deadline is footer metadata. Keep controls reachable at
+indicator. The quiet deadline shares the header; the footer contains only the
+two submission choices. Keep controls reachable at
 narrow widths without horizontal scrolling. Use neutral tokenized states and
 ordinary user-facing language. Timeout creates no synthetic user message.
 
@@ -438,7 +443,7 @@ typed message catalog. Do not explain implementation terms in the form.
 | Secondary action | Skip all | End the request without any answers; retain filled drafts |
 | Primary action | Submit answers | Submit active answers and skip unanswered entries |
 | In flight | Skipping… / Submitting… | Describe the requested operation while controls are disabled |
-| Countdown | Continues in Ns | State what happens when the wait ends; never submit drafts automatically |
+| Countdown | 0:54 | Minutes and seconds only; the tooltip explains automatic continuation, while a localized accessible label states the remaining seconds |
 | Loading / failure | Loading questions… / Could not load the questions. Try again. | Reconcile automatically; show Try again only on failure |
 | Timeout | Time is up. No answers were submitted. | State the known result without blaming the person |
 | Retained content | Original question + Not submitted | Passive collapsed content at the original question, not a separate draft shelf |
@@ -535,7 +540,7 @@ on the future scheduling UI to ship the conversation feature.
 | AC-27 | Empty outcomes create no note; each non-empty retained draft stays with its original question, even while a newer question is visible. Ordinary Send success or failure never deletes or changes this content. No transfer or draft-management controls remain. |
 | AC-28 | Escape never answers, skips, or stops work. The existing composer owns Stop. The deadline is quiet without per-second announcements; outcome copy distinguishes acceptance, withheld content, timeout, and cancellation. |
 | AC-29 | The question surface contains paired previous/next icons around progress, a scrollable question/answer body with Other, and two fixed footer actions. No close control, tabs, More menu, execution controls, or review page remain. |
-| AC-30 | At 320 CSS pixels and with long wrapped questions, the header and footer stay visible. Selecting Other, typing, and moving between questions preserve form height and inactive drafts. Only the answer body scrolls. |
+| AC-30 | Short questions fit their content with no large empty area before the footer. Height adapts to question length and Other expansion up to the existing cap; only the answer body then scrolls. At 320 CSS pixels the metadata header and two footer actions remain visible, with the footer anchored at the dock bottom. Inactive drafts and focus remain intact. |
 
 Extend the service test titled `round-trips request_user_input through the control
 plane and active Thread flag`, codec/projection tests, renderer `ThreadStore`

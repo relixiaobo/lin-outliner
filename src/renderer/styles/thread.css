@@ -2767,8 +2767,8 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: var(--space-6);
-  height: min(50vh, calc(var(--space-8) * 24));
+  gap: var(--space-4);
+  max-height: min(50vh, calc(var(--space-8) * 24));
   overflow: hidden;
   padding: var(--space-3) var(--space-2);
 }
@@ -2780,6 +2780,11 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-1) var(--space-3);
+}
+
+.thread-user-input-heading > .thread-user-input-countdown {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
 }
 
 .thread-user-input-title {
@@ -2795,13 +2800,12 @@
 
 .thread-user-input-step {
   display: flex;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-height: 0;
   min-width: 0;
   flex-direction: column;
-  gap: var(--space-6);
+  gap: var(--space-3);
   overflow-y: auto;
-  scrollbar-gutter: stable;
   border-radius: var(--radius-md);
   outline: none;
 }
@@ -2813,6 +2817,7 @@
   font-weight: 550;
   line-height: var(--line-content);
   overflow-wrap: anywhere;
+  padding: 0 var(--space-1) var(--space-2);
 }
 
 .thread-user-input fieldset {
@@ -2835,33 +2840,39 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-3);
+}
+
+.thread-user-input-choice {
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-md);
+  background: var(--fill-1);
+}
+
+.thread-user-input-choice:hover {
+  background: var(--fill-2);
+}
+
+.thread-user-input-choice:has(input:checked) {
+  border-color: var(--text-soft);
+  background: var(--fill-3);
 }
 
 .thread-user-input-option {
   display: grid;
   min-width: 0;
-  grid-template-columns: var(--space-8) minmax(0, 1fr);
-  gap: var(--space-5);
-  align-items: start;
+  grid-template-columns: minmax(0, 1fr) var(--space-8);
+  gap: var(--space-4);
+  align-items: center;
   border-radius: var(--radius-md);
-  background: transparent;
   color: var(--text-soft);
   font-size: var(--font-ui-md);
   line-height: var(--line-ui-md);
-  padding: var(--space-4);
-}
-
-.thread-user-input-option:hover {
-  background: var(--fill-2);
-}
-
-.thread-user-input-option:has(input:checked) {
-  background: var(--fill-2);
+  padding: var(--space-3) var(--space-5);
 }
 
 .thread-user-input-option > input {
-  margin: var(--space-1) 0 0;
+  margin: 0;
   width: var(--space-8);
   height: var(--space-8);
   accent-color: var(--text-strong);
@@ -2880,9 +2891,9 @@
 }
 
 .thread-user-input-options label small {
-  color: var(--text-faint);
-  font-size: var(--font-ui-sm);
-  line-height: var(--line-ui-sm);
+  color: var(--text-soft);
+  font-size: var(--font-description);
+  line-height: var(--line-description);
 }
 
 .thread-user-input-other {
@@ -2902,7 +2913,7 @@
 }
 
 .thread-user-input-step:focus-visible,
-.thread-user-input-option:focus-within {
+.thread-user-input-choice:has(input:focus-visible) {
   box-shadow: var(--focus-ring-shadow);
 }
 
@@ -3358,7 +3369,7 @@
 }
 
 .thread-user-input-position {
-  min-width: calc(var(--space-8) * 3);
+  min-width: calc(var(--space-8) * 2);
   text-align: center;
   color: var(--text-soft);
   font-size: var(--font-meta);
@@ -3372,18 +3383,12 @@
   align-items: center;
 }
 
-.thread-user-input-submit-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
 .thread-user-input-other:focus-visible {
   box-shadow: var(--focus-ring-shadow);
 }
 
 .thread-user-input-custom-editor {
-  padding: var(--space-2) var(--space-4) var(--space-4) calc(var(--space-4) + var(--space-8) + var(--space-5));
+  padding: var(--space-1) var(--space-5) var(--space-5);
 }
 
 textarea.thread-user-input-other {

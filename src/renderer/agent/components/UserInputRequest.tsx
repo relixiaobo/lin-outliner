@@ -34,7 +34,8 @@ export function UserInputDeadline({ request, onExpired }: { request: Request; on
     tick();
     return () => clearInterval(timer);
   }, [request.deadlineAt]);
-  return <span className="thread-user-input-countdown" aria-live="off" title={t.agent.thread.inputDeadlineHint}>
+  return <span className="thread-user-input-countdown" role="timer" aria-live="off"
+    aria-label={t.agent.thread.inputRemainingLabel({ seconds: remaining })} title={t.agent.thread.inputDeadlineHint}>
     {t.agent.thread.inputRemaining({ seconds: remaining })}
   </span>;
 }
@@ -119,6 +120,7 @@ export function UserInputRequest({ request, draft, disabled = false, onDraftChan
         <IconButton icon={ChevronRightIcon} label={t.agent.thread.inputNext} disabled={last || !pending || expired || submitting}
           onClick={() => move(step + 1)} />
       </nav>
+      {pending && !expired ? <UserInputDeadline request={request} onExpired={() => { setExpired(true); onExpired(); }} /> : null}
     </div>
     {/* Keep this editor subtree mounted when the Host settles; only its sending authority changes. */}
     <div className="thread-user-input-step" key={question.id} ref={stepRef} tabIndex={-1}>
@@ -127,15 +129,16 @@ export function UserInputRequest({ request, draft, disabled = false, onDraftChan
       <fieldset>
         <legend className="sr-only">{question.question}</legend>
         <div className="thread-user-input-options">
-          {question.options.map((option) => <label className="thread-user-input-option" key={option.label}>
+          {question.options.map((option) => <label className="thread-user-input-choice thread-user-input-option" key={option.label}>
+            <span><strong>{option.label}</strong><small>{option.description}</small></span>
             <input type="radio" name={question.id} checked={activeAnswer?.optionLabel === option.label} disabled={!pending || expired || submitting}
               onChange={() => onDraftChange({ answers: { ...draft.answers, [question.id]: {
                 ...selected, optionLabel: option.label, skipped: undefined, selection: 'option',
               } } })} />
-            <span><strong>{option.label}</strong><small>{option.description}</small></span>
           </label>)}
-          <div className="thread-user-input-custom">
+          <div className="thread-user-input-choice thread-user-input-custom">
             <label className="thread-user-input-option">
+              <span><strong>{t.agent.thread.other}</strong></span>
               <input type="radio" name={question.id} checked={otherSelected} disabled={!pending || expired || submitting}
                 onChange={() => {
                   focusOther.current = true;
@@ -143,7 +146,6 @@ export function UserInputRequest({ request, draft, disabled = false, onDraftChan
                     ...selected, skipped: undefined, selection: 'text',
                   } } });
                 }} />
-              <span><strong>{t.agent.thread.other}</strong></span>
             </label>
             <div className="thread-user-input-custom-editor" hidden={!otherSelected}>
               <textarea ref={otherRef} className="thread-user-input-other" aria-label={t.agent.thread.inputWriteAnswer} rows={3}
@@ -159,15 +161,12 @@ export function UserInputRequest({ request, draft, disabled = false, onDraftChan
       {error ? <p className="thread-inline-error" role="alert">{error}</p> : null}
     </div>
     {pending && !expired ? <div className="thread-user-input-actions thread-user-input-footer">
-      <UserInputDeadline request={request} onExpired={() => { setExpired(true); onExpired(); }} />
-      <div className="thread-user-input-submit-actions">
-        <Button size="sm" variant="ghost" disabled={blocked} title={t.agent.thread.inputSkipAllHint} onClick={skipAll}>
-          {submissionIntent === 'continue' ? t.agent.thread.inputSkipping : t.agent.thread.inputSkipAll}
-        </Button>
-        <Button size="sm" variant="primary" disabled={blocked || !count} title={t.agent.thread.inputSendAnswersHint} onClick={() => void submit()}>
-          {submissionIntent === 'answer' ? t.agent.thread.inputSubmitting : t.agent.thread.inputSendAnswers}
-        </Button>
-      </div>
+      <Button size="sm" variant="ghost" disabled={blocked} title={t.agent.thread.inputSkipAllHint} onClick={skipAll}>
+        {submissionIntent === 'continue' ? t.agent.thread.inputSkipping : t.agent.thread.inputSkipAll}
+      </Button>
+      <Button size="sm" variant="primary" disabled={blocked || !count} title={t.agent.thread.inputSendAnswersHint} onClick={() => void submit()}>
+        {submissionIntent === 'answer' ? t.agent.thread.inputSubmitting : t.agent.thread.inputSendAnswers}
+      </Button>
     </div> : null}
   </form>;
 }

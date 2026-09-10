@@ -2,12 +2,12 @@ import { expect, test, type Page } from '@playwright/test';
 import { openMockedApp, commandCalls } from './outlinerMock';
 import { getMessages } from '../../src/core/i18n';
 
-async function ask(page: Page, threadId: string, itemId = 'input-1', revision = 1, single = false, third = false, question = 'How broad?') {
-  return page.evaluate(async ({ threadId, itemId, revision, single, third, question }) => {
+async function ask(page: Page, threadId: string, itemId = 'input-1', revision = 1, single = false, third = false, question = 'How broad?', options?: Array<{ label: string; description: string }>) {
+  return page.evaluate(async ({ threadId, itemId, revision, single, third, question, options }) => {
     const request = { hostGeneration: 'mock-host', threadId, turnId: '01910000-0000-7000-8000-00000000ab01', itemId, revision,
       deadlineAt: Date.now() + 60_000, autoResolutionMs: 60_000,
       questions: [
-        { id: 'scope', header: 'Scope', question, options: [{ label: 'Focused', description: 'One module.' }, { label: 'Complete', description: 'All modules.' }] },
+        { id: 'scope', header: 'Scope', question, options: options ?? [{ label: 'Focused', description: 'One module.' }, { label: 'Complete', description: 'All modules.' }] },
         ...(!single ? [{ id: 'schedule', header: 'Schedule', question: 'When?', options: [{ label: 'Now', description: 'Today.' }, { label: 'Later', description: 'Tomorrow.' }] }] : []),
         ...(third ? [{ id: 'detail', header: 'Detail', question: 'How much detail?', options: [{ label: 'Summary', description: 'Main findings.' }, { label: 'Full', description: 'Every finding.' }] }] : []),
       ],
@@ -27,7 +27,7 @@ async function ask(page: Page, threadId: string, itemId = 'input-1', revision = 
     } });
     (window as any).__LIN_E2E__.emitAgentCoreNotification({ type: 'userInput/requested', threadId, turnId: request.turnId, itemId, request });
     return request;
-  }, { threadId, itemId, revision, single, third, question });
+  }, { threadId, itemId, revision, single, third, question, options });
 }
 async function createThread(page: Page, locale: 'en' | 'zh-Hans' = 'en') {
   const labels = getMessages(locale).agent.thread;
@@ -76,9 +76,14 @@ test('a focused empty composer immediately shows the first question without a pr
 
 test('paired navigation browses every question without submitting and restores earlier answers', async ({ page }) => {
   await openMockedApp(page);
+  await page.clock.install();
   const threadId = await createThread(page);
   await ask(page, threadId, 'three-questions', 1, false, true);
   const form = await openQuestions(page);
+  await expect(form.getByRole('timer')).toHaveText('1:00');
+  await expect(form.getByRole('timer')).toHaveAttribute('title', getMessages('en').agent.thread.inputDeadlineHint);
+  await page.clock.fastForward(6_000);
+  await expect(form.getByRole('timer')).toHaveText('0:54');
   const navigation = form.getByRole('navigation', { name: 'Question navigation' });
   const previous = navigation.getByRole('button', { name: 'Previous question', exact: true });
   const next = navigation.getByRole('button', { name: 'Next question', exact: true });
@@ -86,6 +91,7 @@ test('paired navigation browses every question without submitting and restores e
   await expect(next).toBeEnabled();
   await expect(form.locator('.thread-user-input-footer').getByRole('button', { name: 'Next question' })).toHaveCount(0);
   const initialHeight = (await form.boundingBox())!.height;
+  const footerY = (await form.locator('.thread-user-input-footer').boundingBox())!.y;
   await form.getByRole('radio', { name: /Complete/ }).check();
   await next.click();
   await expect(navigation).toContainText('2 / 3');
@@ -93,7 +99,8 @@ test('paired navigation browses every question without submitting and restores e
   const other = form.getByRole('textbox', { name: 'Your answer' });
   await expect(other).toBeFocused();
   await other.fill('Tuesday morning');
-  expect((await form.boundingBox())!.height).toBeCloseTo(initialHeight, 0);
+  expect((await form.boundingBox())!.height).toBeGreaterThan(initialHeight);
+  expect((await form.locator('.thread-user-input-footer').boundingBox())!.y).toBeCloseTo(footerY, 0);
   await next.click();
   await expect(next).toBeDisabled();
   await form.getByRole('radio', { name: /Summary/ }).check();
@@ -101,6 +108,7 @@ test('paired navigation browses every question without submitting and restores e
   await expect(other).toHaveValue('Tuesday morning');
   await previous.click();
   await expect(form.getByRole('radio', { name: /Complete/ })).toBeChecked();
+  await expect(form.getByRole('timer')).toHaveText('0:54');
   expect(await responses(page)).toHaveLength(0);
   await form.getByRole('button', { name: 'Submit answers', exact: true }).click();
   expect((await responses(page))[0]!.args.answers).toEqual([
@@ -450,6 +458,45 @@ test('Chinese question and draft actions keep the same meanings in a narrow dock
 });
 
 for (const theme of ['light', 'dark'] as const) {
+  test(`short questions group metadata and fit their content in a ${theme} dock`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' });
+    await openMockedApp(page);
+    const threadId = await createThread(page);
+    await page.locator('.agent-dock').evaluate((element: HTMLElement) => { element.style.width = '344px'; element.style.minWidth = '344px'; });
+    await ask(page, threadId, 'color-question', 1, false, true, '你更喜欢哪种颜色？', [
+      { label: '蓝色 (Recommended)', description: '平静、专业的常见选择' },
+      { label: '红色', description: '热情、醒目' },
+      { label: '绿色', description: '自然、清新' },
+    ]);
+    const form = await openQuestions(page);
+    const header = form.locator('.thread-user-input-heading');
+    const body = form.locator('.thread-user-input-step');
+    const footer = form.locator('.thread-user-input-footer');
+    await expect(header.locator('.thread-user-input-countdown')).toBeVisible();
+    await expect(footer.getByRole('button')).toHaveCount(2);
+    await expect(footer.locator('.thread-user-input-countdown')).toHaveCount(0);
+    const bounds = { form: (await form.boundingBox())!, body: (await body.boundingBox())!, footer: (await footer.boundingBox())! };
+    expect(bounds.form.height).toBeLessThan(page.viewportSize()!.height * 0.5);
+    expect(await body.evaluate((element) => element.scrollHeight - element.clientHeight)).toBeLessThanOrEqual(1);
+    expect(bounds.footer.y - (bounds.body.y + bounds.body.height)).toBeLessThanOrEqual(12);
+    await expect(form.getByRole('radio', { name: 'Other', exact: true })).toBeInViewport();
+    const choice = form.locator('.thread-user-input-choice').first();
+    const label = choice.locator('strong');
+    expect((await choice.getByRole('radio').boundingBox())!.x).toBeGreaterThan((await label.boundingBox())!.x);
+    await label.click();
+    await expect(choice.getByRole('radio')).toBeChecked();
+    await expect(footer.getByRole('button', { name: 'Submit answers', exact: true })).toBeEnabled();
+    await form.screenshot({ animations: 'disabled', path: `tmp/user-input-recovery/compact-color-${theme}.png` });
+    await page.locator('.agent-dock').screenshot({ animations: 'disabled', path: `tmp/user-input-recovery/compact-dock-${theme}.png` });
+    await form.getByRole('button', { name: 'Next question', exact: true }).click();
+    expect((await form.boundingBox())!.height).toBeLessThan(bounds.form.height);
+    expect((await footer.boundingBox())!.y).toBeCloseTo(bounds.footer.y, 0);
+    await form.getByRole('radio', { name: 'Other', exact: true }).check();
+    await expect(form.getByRole('textbox', { name: 'Your answer' })).toBeInViewport();
+    await expect(footer.getByRole('button', { name: 'Submit answers', exact: true })).toBeInViewport();
+    expect(await responses(page)).toHaveLength(0);
+  });
+
   test(`long questions scroll independently of navigation and submission in a narrow ${theme} dock`, async ({ page }) => {
     await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' });
     await openMockedApp(page);
@@ -473,7 +520,8 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(form.getByRole('button', { name: 'Submit answers', exact: true })).toBeInViewport();
     await form.screenshot({ animations: 'disabled', path: `tmp/user-input-recovery/long-question-${theme}.png` });
     await form.getByRole('button', { name: 'Next question', exact: true }).click();
-    expect((await form.boundingBox())!.height).toBeCloseTo(before.form.height, 0);
+    expect((await form.boundingBox())!.height).toBeLessThan(before.form.height);
+    expect((await footer.boundingBox())!.y).toBeCloseTo(before.footer.y, 0);
     await expect(form.getByRole('button', { name: 'Skip all', exact: true })).toBeInViewport();
     await expect(form.getByRole('button', { name: 'Submit answers', exact: true })).toBeInViewport();
     await form.screenshot({ animations: 'disabled', path: `tmp/user-input-recovery/last-question-${theme}.png` });
