@@ -220,6 +220,7 @@ test('does not label a prior Thread waiting on the user as background work', asy
   const composer = page.getByRole('textbox', { name: 'Message this Thread' });
   await composer.fill('Wait for my input.');
   await composer.press('Enter');
+  await expect(page.getByRole('button', { name: 'Interrupt Turn' })).toBeVisible();
   await page.evaluate(async () => {
     const target = window as Window & {
       lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
@@ -228,6 +229,22 @@ test('does not label a prior Thread waiting on the user as background work', asy
     const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
     const threadId = response?.data[0]?.id;
     if (!threadId) throw new Error('Mock Thread not found');
+    const turns = await target.lin?.agentCoreRequest<{ data: Array<{ id: string; status: string }> }>('thread/turns/list', { threadId });
+    const turnId = turns?.data.find((turn) => turn.status === 'inProgress')?.id;
+    if (!turnId) throw new Error('Active mock Turn not found');
+    const itemId = crypto.randomUUID();
+    // The waiting status must agree with the Host's authoritative pending request.
+    target.__LIN_E2E__?.emitAgentCoreNotification({
+      type: 'userInput/requested', threadId, turnId, itemId,
+      request: {
+        hostGeneration: 'mock-host', threadId, turnId, itemId,
+        revision: 1, deadlineAt: Date.now() + 60_000, autoResolutionMs: 60_000,
+        questions: [{ id: 'scope', header: 'Scope', question: 'How broad should this be?', options: [
+          { label: 'Small', description: 'One module.' },
+          { label: 'Full', description: 'All modules.' },
+        ] }],
+      },
+    });
     target.__LIN_E2E__?.emitAgentCoreNotification({
       type: 'thread/status/changed',
       threadId,

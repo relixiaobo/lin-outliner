@@ -202,7 +202,7 @@ const nativeControlExceptions: Record<string, string> = {
   'src/renderer/agent/components/ThreadDock.tsx': 'Native buttons inside compact Thread action and empty-state surfaces.',
   'src/renderer/agent/components/ThreadList.tsx': 'Native row button owns full-width Thread selection semantics.',
   'src/renderer/agent/components/ThreadView.tsx': 'Native textarea and hidden file input own the persistent Thread composer and attachment fallback.',
-  'src/renderer/agent/components/UserInputRequest.tsx': 'Native radio, checkbox, text, and submit controls preserve form semantics.',
+  'src/renderer/agent/components/UserInputRequest.tsx': 'Native radios preserve preset and custom-response selection semantics; text entry uses the shared Textarea.',
   'src/renderer/agent/components/items/ThreadItemView.tsx': 'Native controls support Item references, details, and in-place editing.',
   'src/renderer/ui/outliner/CodeBlockRow.tsx': 'Textarea/select pair required for the code-block editor overlay.',
   'src/renderer/ui/outliner/DateValuePicker.tsx': 'Native date/time controls inside the date picker.',

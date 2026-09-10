@@ -76,6 +76,31 @@ describe('session user input projection', () => {
     expect(owner.getSnapshot().userInputByThread.get(question.threadId)).toEqual(question);
   });
 
+  test('a new Host notification invalidates an in-flight snapshot and retains the old answer draft', async () => {
+    const question = request();
+    const replacement = { ...request('question-2'), hostGeneration: 'host-2', turnId: 'turn-2' };
+    const old = deferred<UserInputReadResponse>();
+    let reads = 0;
+    const owner = new ThreadUserInputState(() => ++reads === 1 ? old.promise : Promise.resolve(pendingRead(replacement)), () => {}, () => true);
+    ask(owner, question);
+    owner.updateDraft(question, { answers: { scope: { otherText: 'Keep my unfinished answer' } } });
+    const initial = owner.reconcile(question.threadId);
+    ask(owner, replacement);
+    expect(owner.reconcile(question.threadId)).toBe(initial);
+    old.resolve(pendingRead(question));
+    await initial;
+
+    expect(reads).toBe(2);
+    expect(owner.getSnapshot().userInputByThread.get(question.threadId)).toEqual(replacement);
+    expect(owner.getSnapshot().userInputRecoveryByThread.has(question.threadId)).toBe(false);
+    expect(owner.getSnapshot().userInputDrafts.get(userInputKey(question))).toMatchObject({
+      outcome: 'invalidated', answers: { scope: { otherText: 'Keep my unfinished answer' } },
+    });
+    ask(owner, question);
+    expect(reads).toBe(2);
+    expect(owner.getSnapshot().userInputByThread.get(question.threadId)).toEqual(replacement);
+  });
+
   test('ordered snapshots and events cannot resurrect settled forms or remove a newer question', () => {
     const first = request();
     const owner = new ThreadUserInputState(async () => pendingRead(first), () => {}, () => false);

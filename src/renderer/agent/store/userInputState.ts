@@ -83,7 +83,7 @@ export class ThreadUserInputState {
           let invalidation = this.readInvalidations.get(threadId) ?? 0;
           const startedGeneration = this.generation;
           let response = await this.read(threadId, identity);
-          // A waiting notification can arrive after an empty snapshot was captured while its request event was lost.
+          // Waiting or new-Host notifications can arrive after an outdated snapshot was captured.
           // Re-read only for explicit invalidations; coalescing must not swallow that recovery trigger.
           while (invalidation !== (this.readInvalidations.get(threadId) ?? 0)) {
             invalidation = this.readInvalidations.get(threadId) ?? 0;
@@ -155,7 +155,7 @@ export class ThreadUserInputState {
     if (this.deletedThreads.has(entry.threadId)) return;
     if (this.retiredGenerations.has(entry.hostGeneration)) { this.trace('stale-event', entry.threadId); return; }
     if (this.generation && this.generation !== entry.hostGeneration) {
-      void this.reconcile(entry.threadId);
+      void this.reconcile(entry.threadId, true);
       return;
     }
     this.generation = entry.hostGeneration;

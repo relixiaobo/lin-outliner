@@ -432,9 +432,11 @@ same model an explicit pin to the newest model resolves to, so inferring the
 state after resolution would make the two indistinguishable and strand a Thread
 on a model it never chose to pin.
 
-Reopening the Agent rail restores focus to the composer of an editable Thread.
-An explicitly opened question keeps its current step and focus. A pending
-question folded beside ordinary composition does not block composer focus.
+Reopening the Agent rail restores focus to the composer of an editable Thread
+unless a question or retained-answer editor occupies that area. Questions appear
+directly and keep their current step; composer focus requests do not displace
+answer editing. The ordinary composer stays mounted but hidden, preserving its
+message draft and attachments independently.
 
 Collapsing the Agent rail keeps the same `ThreadView` mounted, preserving its
 composer draft, staged attachments, disclosure state, and scroll DOM. While
@@ -453,8 +455,8 @@ document or an external browser), a text selection the user still needs for
 copying, or any surface that installs its own focus target within a frame of
 the click (self-focusing popovers, dialogs, the inline message editor).
 Keyboard-activated clicks are never intercepted.
-An open question or retained-answer editor suspends the hand-back; a compact
-pending-question strip leaves normal composer focus behavior available.
+A question or retained-answer editor suspends the hand-back. Normal composer
+focus behavior resumes when answer editing ends and the ordinary composer returns.
 
 The same terminal model governs input history. A focused composer offers plain Up at
 its first visual line and plain Down at its last visual line as semantic history
@@ -725,8 +727,10 @@ existing execution control. There are no cross-draft transfer controls.
 ThreadStore subscribes before snapshot reads and reconciles on initial load,
 subscription reattachment, Thread selection, dock reopening, visible-window
 focus, and a waiting notification without question content. Reads coalesce per
-Thread; generations and revisions reject stale snapshots/events. Matching Turn
-termination fences submission; an older settlement cannot erase a newer question.
+Thread; a notification from a different Host invalidates any in-flight snapshot
+so a fresh read establishes its generation. Generations and revisions reject
+stale snapshots/events. Matching Turn termination fences submission; an older
+settlement cannot erase a newer question.
 Loading is automatic. A load failure offers Try again, without duplicating the
 ordinary composer's Stop. Exact receipts distinguish accepted, discussed,
 timed-out, cancelled, and failed requests; discussion arrives with its canonical

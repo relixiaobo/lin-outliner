@@ -296,7 +296,7 @@ reasons, and stale-entry gate.
 | `src/renderer/agent/components/ThreadDock.tsx` | 3 | Native buttons inside compact Thread action and empty-state surfaces. |
 | `src/renderer/agent/components/ThreadList.tsx` | 4 | Native row button owns full-width Thread selection semantics. |
 | `src/renderer/agent/components/ThreadView.tsx` | 1 | Native textarea and hidden file input own the persistent Thread composer and attachment fallback. |
-| `src/renderer/agent/components/UserInputRequest.tsx` | 3 | Native radio, checkbox, text, and submit controls preserve form semantics. |
+| `src/renderer/agent/components/UserInputRequest.tsx` | 2 | Native radios preserve preset and custom-response selection semantics; text entry uses the shared Textarea. |
 | `src/renderer/agent/components/items/ThreadItemView.tsx` | 9 | Native controls support Item references, details, and in-place editing. |
 | `src/renderer/ui/outliner/CodeBlockRow.tsx` | 1 | Textarea/select pair required for the code-block editor overlay. |
 | `src/renderer/ui/outliner/DateValuePicker.tsx` | 2 | Native date/time controls inside the date picker. |
