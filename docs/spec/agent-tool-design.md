@@ -341,7 +341,9 @@ progress, factual exit result, and delivery state. The command text is not dupli
 task storage. `task_status` reads an owned task for an explicit status or recovery request;
 unhandled results are pushed, so it is not a polling primitive. `task_stop` stops an
 owned running or settling task and revokes pending responsibilities even after exit
-before delivery. A committed handling Turn keeps its owner. These tools never accept an Agent ID,
+before delivery. Terminal tasks skip producer execution fencing; revocation addresses
+only that Task's pending result, even if its producer has started another invocation.
+A committed handling Turn keeps its owner. These tools never accept an Agent ID,
 Session ID, or deprecated shell ID.
 
 `bash.stdin` is an optional JSON string for both foreground and explicit-background

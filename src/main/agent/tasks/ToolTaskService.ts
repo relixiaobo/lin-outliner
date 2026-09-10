@@ -829,7 +829,11 @@ export class ToolTaskService {
   async stop(taskId: string, ownerThreadId: ThreadId, sourceTurnId?: TurnId, source: TaskStopProvenance['source'] = 'user'): Promise<ToolTaskRecord | null> {
     let task = this.store.owned(taskId, ownerThreadId);
     if (!task) return null;
-    await this.host?.beforeStop?.(task, sourceTurnId ?? task.sourceTurnId);
+    // Terminal tasks only revoke pending delivery; their producer may already
+    // have released the execution and started a later invocation.
+    if (!isToolTaskTerminal(task.state)) {
+      await this.host?.beforeStop?.(task, sourceTurnId ?? task.sourceTurnId);
+    }
     task = await this.revokeForStop(taskId, ownerThreadId, { source, at: this.now(), turnId: sourceTurnId ?? null });
     if (!task) return null;
     this.publish(task);

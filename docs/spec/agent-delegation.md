@@ -299,6 +299,13 @@ continuation; stale queued messages are blocked. Cancellation aborts the active
 delegated Turn and the owning Tool Task still settles through generic process
 teardown.
 
+Stopping an already terminal Tool Task only revokes that Task's pending completion
+responsibility; it does not fence the released Session or a later invocation. If
+final-receipt reconciliation releases the execution while Stop waits for the
+Session gate, the committed or blocked settlement permits the same task-local
+revocation without installing a Session fence. A committed completion handler
+retains ownership of the result.
+
 ## Tool Policy
 
 A delegated Session starts from the root's effective canonical tool ceiling and

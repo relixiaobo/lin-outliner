@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
+import { unstartedProcessIsolation } from '../../src/core/agent/processIsolation';
 import type { ThreadId, TurnId } from '../../src/core/agent/protocol';
 import type {
   DelegateExecutionResult,
@@ -22,14 +23,20 @@ import {
   type DelegationSessionRuntime,
 } from '../../src/main/agent/delegation';
 import type { SqliteDatabase } from '../../src/main/agent/persistence/sqlite';
+import { pendingExecutionContext, resolveExecutionAddress } from '../../src/main/agent/tasks/ExecutionContext';
+import { ToolTaskService } from '../../src/main/agent/tasks/ToolTaskService';
+import { ToolTaskStore } from '../../src/main/agent/tasks/ToolTaskStore';
+import type { ToolTaskDeliveryAdmission } from '../../src/main/agent/tasks/toolTaskTypes';
 
 const OWNER_ID = '00000000-0000-7000-8000-000000000001' as ThreadId;
 const SESSION_ID = '00000000-0000-7000-8000-000000000010' as ThreadId;
 const ROOT_TURN_ID = '00000000-0000-7000-8000-000000000020' as TurnId;
 
 const databases: Database[] = [];
+const taskServices: ToolTaskService[] = [];
 
-afterEach(() => {
+afterEach(async () => {
+  for (const service of taskServices.splice(0)) await service.close(0);
   for (const database of databases.splice(0)) database.close(false);
 });
 
@@ -93,6 +100,104 @@ describe('DelegationCoordinator', () => {
     expect(fixture.store.settlementForTask('task-run')).toMatchObject({
       state: 'context_committed',
       messageSequence: 1,
+    });
+  });
+
+  test.each(['idle', 'active successor', 'acknowledged', 'admitted'] as const)(
+    'stops terminal delegated Task responsibilities after Session release: %s',
+    async (scenario) => {
+      const fixture = await terminalDelegationTaskFixture();
+      expect(fixture.tasks.read(fixture.task.taskId)?.continuation.event?.disposition).toBe('pending');
+      expect(fixture.store.readSession(SESSION_ID)?.currentTaskId).toBeNull();
+
+      const successor = scenario === 'idle' ? null : fixture.coordinator.execute(sendExecution({
+        capabilityId: 'capability-successor',
+        taskId: 'task-successor',
+        sessionRevision: fixture.store.readSession(SESSION_ID)!.revision,
+        message: 'Inspect a separate follow-up question.',
+      }));
+      try {
+        if (successor) await waitUntil(() => fixture.runtime.active !== null);
+        const sessionBeforeStop = fixture.store.readSession(SESSION_ID);
+        const caller = { turnId: ROOT_TURN_ID, itemId: 'acknowledge-item' };
+        let handling: unknown = null;
+        if (scenario === 'acknowledged') {
+          handling = fixture.tasks.control({
+            task_id: fixture.task.taskId,
+            operation_id: 'acknowledge-result',
+            action: 'acknowledge',
+            event_id: fixture.task.terminalDigest!,
+          }, caller, 30).event?.handling;
+        } else if (scenario === 'admitted') {
+          const batch = fixture.tasks.prepareDelivery({
+            taskIds: [fixture.task.taskId],
+            batchId: 'completion-batch',
+            ownerThreadId: OWNER_ID,
+            reservedTurnId: ROOT_TURN_ID,
+            clientId: 'completion-client',
+            envelopeDigest: digest('completion-envelope'),
+            now: 30,
+          });
+          // Canonical admission has committed; the Task batch has not linked yet.
+          fixture.admissions.set(ROOT_TURN_ID, {
+            batchId: batch.batchId,
+            envelopeDigest: batch.envelopeDigest,
+          });
+          handling = { kind: 'completion', turnId: ROOT_TURN_ID, batchId: batch.batchId };
+        }
+
+        const stopped = await fixture.taskService.stop(fixture.task.taskId, OWNER_ID, ROOT_TURN_ID);
+        expect(stopped).toMatchObject({
+          state: 'succeeded',
+          exitCode: 0,
+          terminalDigest: fixture.task.terminalDigest,
+          continuation: { stop: { source: 'user', turnId: ROOT_TURN_ID } },
+        });
+        expect(stopped?.continuation.event).toMatchObject(scenario === 'acknowledged'
+          ? { disposition: 'handled', handling }
+          : scenario === 'admitted'
+            ? { disposition: 'admitted', handling }
+            : { disposition: 'silent', reason: 'stopped', handling: null });
+        expect(stopped?.deliveryTurnId).toBe(scenario === 'admitted' ? ROOT_TURN_ID : null);
+        expect(fixture.tasks.pendingDelivery(OWNER_ID, 8)).toEqual([]);
+        expect(fixture.store.readSession(SESSION_ID)).toEqual(sessionBeforeStop);
+        if (successor) {
+          expect(fixture.runtime.active?.session.currentTaskId).toBe('task-successor');
+          expect(fixture.runtime.active?.signal.aborted).toBe(false);
+        }
+        expect(fixture.completionCalls()).toBe(0);
+      } finally {
+        if (successor) {
+          fixture.runtime.finish();
+          await successor;
+        }
+      }
+    },
+  );
+
+  test('does not fence an execution released while Stop waits for final receipt reconciliation', async () => {
+    const fixture = coordinatorFixture();
+    fixture.runtime.immediate = true;
+    await fixture.coordinator.execute(runExecution('capability-run', 'task-run'));
+    const settlement = fixture.store.settlementForTask('task-run')!;
+    const settling = fixture.coordinator.settleFinalReceipt({
+      taskId: 'task-run',
+      state: 'succeeded',
+      preparedResultDigest: settlement.preparedResultDigest,
+      receiptDigest: digest('final-receipt'),
+    });
+    const stopping = fixture.coordinator.fenceUserStop({
+      taskId: 'task-run',
+      ownerThreadId: OWNER_ID,
+      stoppedByRootTurnId: ROOT_TURN_ID,
+      currentRootIntentRevision: 1,
+    });
+    await expect(settling).resolves.toMatchObject({ outcome: 'committed' });
+    await expect(stopping).resolves.toEqual({ outcome: 'settled' });
+    expect(fixture.store.readSession(SESSION_ID)).toMatchObject({
+      currentTaskId: null,
+      previousTaskId: 'task-run',
+      stopFence: null,
     });
   });
 
@@ -743,6 +848,7 @@ function coordinatorFixture() {
   const prepared = new PreparedResults();
   let now = 1_900_000_000_000;
   return {
+    database,
     store,
     runtime,
     prepared,
@@ -753,6 +859,80 @@ function coordinatorFixture() {
       now: () => now++,
     }),
   };
+}
+
+async function terminalDelegationTaskFixture() {
+  const fixture = coordinatorFixture();
+  const tasks = new ToolTaskStore(fixture.database as unknown as SqliteDatabase);
+  const executionContext = pendingExecutionContext(await resolveExecutionAddress({ defaultCwd: process.cwd() }), {
+    capability: 'full-access', isolation: 'unsandboxed', writablePaths: [],
+  });
+  const runningTask = tasks.create({
+    taskId: 'task-run',
+    ownerThreadId: OWNER_ID,
+    sourceTurnId: ROOT_TURN_ID,
+    sourceItemId: 'source-run',
+    producer: 'delegate',
+    description: 'Inspect the settlement path.',
+    commandDigest: digest('command'),
+    cwd: executionContext.address.cwd,
+    executionContext,
+    operationKind: 'process',
+    parentTaskId: null,
+    nonce: 'nonce-task-run',
+    detailPath: '/unused/terminal-delegation-task',
+    backgroundEnabled: true,
+    timeoutMs: null,
+    startedAt: 10,
+  });
+  fixture.runtime.immediate = true;
+  await fixture.coordinator.execute(runExecution('capability-run', runningTask.taskId));
+  fixture.runtime.immediate = false;
+  const settlement = fixture.store.settlementForTask(runningTask.taskId)!;
+  const unsigned = {
+    version: 3 as const,
+    isolation: unstartedProcessIsolation(runningTask.isolation),
+    taskId: runningTask.taskId,
+    nonce: runningTask.nonce,
+    state: 'succeeded' as const,
+    exitCode: 0,
+    signal: null,
+    reason: 'exit_zero',
+    error: null,
+    supervisorPid: 2_000_000_001,
+    childPid: 2_000_000_002,
+    startedAt: runningTask.startedAt,
+    quiescedAt: 20,
+    stdoutBytes: 0,
+    stderrBytes: 0,
+    preparedResultDigest: settlement.preparedResultDigest,
+    preparedResultBytes: fixture.prepared.values.get(runningTask.taskId)!.byteLength,
+  };
+  const receipt = { ...unsigned, receiptDigest: digest(JSON.stringify(unsigned)) };
+  expect(await fixture.coordinator.settleFinalReceipt(receipt)).toMatchObject({ outcome: 'committed' });
+  tasks.settleArtifacts(runningTask.taskId, { artifacts: [], warnings: [] }, 20);
+  const task = tasks.commitTerminal(runningTask.taskId, receipt, 20);
+  const admissions = new Map<TurnId, ToolTaskDeliveryAdmission>();
+  let completionCalls = 0;
+  const taskService = new ToolTaskService(tasks, '/unused', undefined, () => 40);
+  taskServices.push(taskService);
+  taskService.bindHost({
+    ownerExists: (threadId) => threadId === OWNER_ID,
+    readDeliveryAdmission: async (_threadId, turnId) => admissions.get(turnId) ?? null,
+    startCompletionTurn: async () => { completionCalls += 1; return false; },
+    taskChanged: () => {},
+    beforeStop: async (stoppingTask, sourceTurnId) => {
+      if (stoppingTask.producer !== 'delegate') return;
+      if (!sourceTurnId) throw new Error('Delegated Stop requires its source Turn');
+      await fixture.coordinator.fenceUserStop({
+        taskId: stoppingTask.taskId,
+        ownerThreadId: stoppingTask.ownerThreadId,
+        stoppedByRootTurnId: sourceTurnId,
+        currentRootIntentRevision: 1,
+      });
+    },
+  });
+  return { ...fixture, tasks, task, taskService, admissions, completionCalls: () => completionCalls };
 }
 
 function createStoredSession(
