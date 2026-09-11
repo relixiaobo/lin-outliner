@@ -2823,7 +2823,13 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
 
     const clickedInsideEditor = Boolean(target?.closest('.ProseMirror'));
     const rightEdge = renderedTextRightEdge(editor);
-    if (clickedInsideEditor && (rightEdge === null || event.clientX <= rightEdge + 1)) return;
+    if (clickedInsideEditor && (rightEdge === null || event.clientX <= rightEdge + 1)) {
+      // A disclosure can select another row while preserving DOM focus here.
+      // Clicking this already-focused editor emits no new focus event, so
+      // restore its UI ownership without replacing the native caret selection.
+      if (document.activeElement === editor && !rowEditorFocused) row.updateSelection();
+      return;
+    }
 
     event.preventDefault();
     event.stopPropagation();

@@ -1,5 +1,6 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { dateFromIsoLocalDate } from '../../../../core/localDate';
 import type {
   MemoryAdmissionSnapshot,
   MemoryFeatureMode,
@@ -601,6 +602,11 @@ export class MemoryControlStore {
       `).run(input.threadId, input.sourceVersion, now);
       this.finalizePublicationInsideTransaction(input.publicationId);
       this.enqueueJob('phase2:global', 'phase2', { reason: 'stage1' }, now);
+      for (const sourceDate of new Set(input.nodes.map((node) => node.sourceDate))) {
+        const dayEnd = dateFromIsoLocalDate(sourceDate);
+        dayEnd.setDate(dayEnd.getDate() + 1);
+        this.scheduleJob(`phase2:day-close:${sourceDate}`, 'phase2', { reason: 'day-close', sourceDate }, Math.max(now, dayEnd.getTime()), now);
+      }
       this.recordSuccess(now);
     });
   }

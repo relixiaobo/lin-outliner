@@ -136,8 +136,8 @@ export class MemoryPipeline {
       const job = this.control.nextJob(this.now(), this.suspended);
       if (!job) return;
       try {
-        await this.runJob(job);
-        this.control.completeJob(job.key);
+        const deferred = await this.runJob(job);
+        if (deferred !== false) this.control.completeJob(job.key);
       } catch (error) {
         if (isAbortError(error) && (this.stopped || this.suspended)) return;
         this.control.failJob(job.key, errorMessage(error), this.now());
@@ -146,7 +146,7 @@ export class MemoryPipeline {
     }
   }
 
-  private async runJob(job: MemoryDirtyJob): Promise<void> {
+  private async runJob(job: MemoryDirtyJob): Promise<void | false> {
     if (job.kind !== 'reset') await this.recoverPublications();
     const controller = new AbortController();
     this.activeController = controller;
@@ -161,7 +161,17 @@ export class MemoryPipeline {
         return;
       }
       if (job.kind === 'phase2') {
-        await this.phase2.run(controller.signal);
+        const sourceDate = pendingDayTitleDate(job.payload);
+        if (sourceDate && !this.phase2.needsDayTitle(sourceDate)) return;
+        if (sourceDate && !this.phase2.isDayReadyForTitle(sourceDate)) {
+          this.control.scheduleJob(job.key, job.kind, job.payload, this.now() + 60_000, this.now());
+          return false;
+        }
+        await this.phase2.run(controller.signal, sourceDate ?? undefined);
+        if (sourceDate && this.phase2.needsDayTitle(sourceDate)) {
+          this.control.scheduleJob(job.key, job.kind, job.payload, this.now() + 60_000, this.now());
+          return false;
+        }
         return;
       }
       if (job.kind === 'rollback') {
@@ -248,4 +258,9 @@ function errorMessage(error: unknown): string {
 
 export function phase1Source(thread: Thread, turns: readonly Turn[]): Phase1Source {
   return { thread, turns };
+}
+
+function pendingDayTitleDate(payload: unknown): string | null {
+  if (!payload || typeof payload !== 'object' || !('reason' in payload) || payload.reason !== 'day-close') return null;
+  return payloadString(payload, 'sourceDate');
 }

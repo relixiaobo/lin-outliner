@@ -47,6 +47,7 @@ import {
 import {
   Phase1,
   collectMemoryEvidence,
+  memorySourceDayPending,
   type MemoryModelRunner,
 } from './Phase1';
 import { Phase2 } from './Phase2';
@@ -147,6 +148,14 @@ export class MemoryExtension implements AgentCoreExtension {
       this.timeline,
       model,
       () => this.consolidationSource(),
+      { canTitleDay: (sourceDate) => {
+        if (host.hasHiddenRootThreads()) return false;
+        for (const root of host.persistentRootThreads()) {
+          const thread = host.readThread({ threadId: root.id, includeTurns: true }).thread;
+          if (memorySourceDayPending(phase1Source(thread, thread.turns ?? []), this.control, sourceDate)) return false;
+        }
+        return true;
+      } },
     );
     const sources: MemoryPipelineSourceHost = {
       persistentRootThreads: () => host.persistentRootThreads(),
@@ -798,10 +807,10 @@ function rollbackMatchesMarker(
 }
 
 const MEMORY_OPERATION_CONTEXT = `Durable Memory is stored as ordinary editable Nodes under source-date Daily Notes.
-The canonical hierarchy is one direct Memory #d-memory container under a source-date Daily Note. Independently useful #d-episode context is optional; #d-belief, #d-question, and #d-guidance records can be direct children of the container or descendants of an episode. Never generate a daily headline or an empty container.
+The canonical hierarchy is one direct #mem-day container under a source-date Daily Note. New containers start as Memory; after the source day ends and its evidence finishes processing, consolidation gives it a vivid, memorable title grounded in its actual contents. Independently useful #mem-episode context is optional; #mem-belief, #mem-question, and #mem-guidance records can be direct children of the container or descendants of an episode. Update generated day titles as their retained content changes, preserve titles edited by the user, and never create an empty container.
 When prior preferences, decisions, commitments, unresolved questions, or recurring workflow facts could materially improve the response, use outline find to locate relevant Memory and inspect only the one or two most relevant results with outline --json get before relying on them. Skip Memory lookup for self-contained requests such as the current date or time, simple formatting or transformation, and questions fully answerable from the current Turn.
 When a final answer relies on an ordinary Memory Node you read, cite it inline next to the relevant claim as [[node://UUID]], removing the internal node: prefix. Do not add a separate sources or used-memory section.
-Use the public outline workflow only when the user explicitly asks to remember, update, or forget durable information. Reuse a same-date canonical container when present, apply the fixed tag IDs tag:d-memory, tag:d-episode, tag:d-belief, tag:d-question, and tag:d-guidance, and keep the hierarchy valid.
+Use the public outline workflow only when the user explicitly asks to remember, update, or forget durable information. Reuse a same-date canonical container when present, apply the fixed tag IDs tag:mem-day, tag:mem-episode, tag:mem-belief, tag:mem-question, and tag:mem-guidance, and keep the hierarchy valid.
 Do not create unsolicited Memory, do not treat routine transcript narration as Memory, and do not modify stray reserved-tag Nodes outside the canonical hierarchy.`;
 
 function isRecord(value: unknown): value is Record<string, unknown> {

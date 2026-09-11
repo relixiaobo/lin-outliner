@@ -64,6 +64,22 @@ describe('outline ChangeSet capability coverage', () => {
     expect(workspace.documentState().nodes[memoryTagId]).toBeDefined();
   });
 
+  test('leaves ordinary Memory category tag names under user control', async () => {
+    const workspace = await makeWorkspace();
+    await settle(workspace, MEMORY_TAG_DEFINITIONS.map((definition): Change => ({
+      op: 'ensure', resource: 'definition', definitionType: 'tag', id: definition.tagId, name: definition.name, bind: definition.category,
+    })));
+    for (const name of ['memory', 'episode', 'belief', 'question', 'guidance']) {
+      const created = await settle(workspace, [{ op: 'ensure', resource: 'definition', definitionType: 'tag', name, bind: 'userTag' }]);
+      const tagId = created.diff.bindings.userTag![0]!;
+      expect(MEMORY_TAG_DEFINITIONS.some((definition) => definition.tagId === tagId)).toBe(false);
+      expect(workspace.documentState().nodes[tagId]?.locked).not.toBe(true);
+      await settle(workspace, [{ op: 'update', targets: oneId(tagId), changes: [
+        { kind: 'definition', definitionType: 'tag', patch: { showCheckbox: true } },
+      ] }]);
+    }
+  });
+
   test('keeps explicit definition IDs stable and rejects same-name ID conflicts without writing', async () => {
     const workspace = await makeWorkspace();
     const definition = {

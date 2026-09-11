@@ -91,6 +91,9 @@ export interface MemoryConsolidationNode {
   readonly generated: boolean;
   readonly fingerprint: string;
   readonly supportingOriginItemIds: readonly ThreadItemId[];
+  /** Present only when every canonical record in the day is selected. */
+  readonly titleSourceNodeIds?: readonly string[];
+  readonly titleSubtreeFingerprint?: string;
 }
 
 export interface MemoryConsolidationKeepChange {

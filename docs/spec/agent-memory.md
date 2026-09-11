@@ -9,15 +9,17 @@ crash recovery.
 
 ## Daily Timeline Model
 
-The host owns five deterministic protected tag definitions:
+The host owns five deterministic protected tag definitions. The `mem-` prefix
+identifies their system ownership and leaves ordinary names such as `memory`,
+`episode`, `belief`, `question`, and `guidance` available for user tags:
 
 | Category | Tag | Definition ID |
 | --- | --- | --- |
-| Memory day | `#d-memory` | `tag:d-memory` |
-| Episode | `#d-episode` | `tag:d-episode` |
-| Belief | `#d-belief` | `tag:d-belief` |
-| Question | `#d-question` | `tag:d-question` |
-| Guidance | `#d-guidance` | `tag:d-guidance` |
+| Memory day | `#mem-day` | `tag:mem-day` |
+| Episode | `#mem-episode` | `tag:mem-episode` |
+| Belief | `#mem-belief` | `tag:mem-belief` |
+| Question | `#mem-question` | `tag:mem-question` |
+| Guidance | `#mem-guidance` | `tag:mem-guidance` |
 
 Their identities, names, definition type, lock state, and Schema ownership are
 host-controlled. Public commands may apply or remove these tags from content
@@ -32,15 +34,20 @@ A canonical generated graph has this shape:
 ```text
 Daily Notes
   YYYY-MM-DD  #day
-    Memory                    #d-memory
-      optional episode        #d-episode
-        stable fact            #d-belief
-      unresolved question      #d-question
+    Memory                    #mem-day
+      optional episode        #mem-episode
+        stable fact            #mem-belief
+      unresolved question      #mem-question
 ```
 
 Generation reuses the existing canonical container for a source date and creates
-at most one structural `Memory` container for that date, and it is created only
-when at least one useful record exists. New containers use the normal initially
+at most one container for that date, and it is created only when at least one
+useful record exists. It initially displays `Memory`. After that local source day
+has ended and its eligible evidence has finished processing, consolidation names
+it with a short, vivid, memorable title grounded in the day's records, in their
+language and within 160 characters. A concrete image or light wordplay may help;
+it must not invent events or force humor. The final title is navigation, not an
+extra episode or independent evidence. New containers use the normal initially
 collapsed Outline state; later publication does not change the user's fold state,
 editing selection, focus, or scroll anchor. An episode is optional;
 category Nodes may be direct children of the container or descendants of an episode.
@@ -50,7 +57,7 @@ the origin Turn's local calendar date when evidence is first claimed; later
 timezone changes do not move it.
 
 A reserved-tag placement outside a source-date Daily Node and canonical
-`#d-memory` container is ordinary non-Memory content. Memory status reports the
+`#mem-day` container is ordinary non-Memory content. Memory status reports the
 current stray-node count without exposing Node IDs; the pipeline does not
 ingest, relocate, or delete that content. A canonical container is the Reset
 ownership boundary, including malformed or untagged descendants that the user
@@ -146,7 +153,8 @@ and Memory disabled. Hidden internal Threads do not publish renderer notificatio
 or invoke ordinary extension admission, context, Item, lifecycle, or tool hooks;
 the model receives the exact Memory system prompt without Skill preparation or
 the general interactive-agent prompt. Strict bounded JSON produces zero or more
-source-date record groups. Episodes are optional; every emitted episode, belief,
+source-date record groups. Extraction creates new day containers as `Memory`
+and preserves existing titles; it does not generate titles. Episodes are optional; every emitted episode, belief,
 question, and guidance statement carries a non-empty, exact set of supplied `originItemId`
 values from that source date; lineage is recorded per statement rather than per
 day. Known credential formats and high-confidence secret assignments are redacted before
@@ -193,8 +201,27 @@ The internal model receives an isolated bounded graph snapshot and returns an
 exact change set. It may keep or update generated episodes and categories,
 delete a complete generated subtree, merge duplicate generated episodes by
 updating one and deleting the other complete subtree, or create an episode or
-category beneath a container or episode. Structural container text cannot be
-rewritten by consolidation. Every created
+category beneath a container or episode. For a generated day container, a title
+update is admitted only when all of its canonical records are selected. The model
+sees that exact same-day source list; it cannot cite another day, the container
+itself, or a partial newest batch to rename it. Day titles retain the union of
+current support from the complete source-day record set. The full subtree
+fingerprint is checked after model work and again at document admission, so
+concurrent child additions, removal or edits invalidate a stale title proposal.
+A manually edited title is authoritative and cannot be overwritten.
+
+Accepted extraction also journals a day-close job for the next local midnight
+(or immediately for delayed extraction of a past day). This uses the existing
+Phase 2 worker. At execution, the job waits until every eligible source Turn for
+that day has completed and all its Items have accepted extraction coverage.
+Quarantined or unreadable sources prevent a false completion claim. Disabled or
+excluded evidence remains ineligible. A still-pending day is rescheduled without
+reporting a learning error; resume/restart uses the durable job. A completed day
+is selected as a whole within the existing 240-Node bound; an oversized day keeps
+its pending job and placeholder instead of being named from a partial view.
+Already named or manually titled containers need no additional naming call. Later
+eligible additions can still be reconciled by ordinary consolidation, with the
+same completeness and manual-edit gates. Every created
 or updated Node names selected source Nodes with current terminal evidence. The
 host allocates real IDs, replaces the affected Node's complete lineage, and
 validates hierarchy, selection, authority, descendants, and evidence before
@@ -309,7 +336,7 @@ Under the host admission barrier and Memory write gate it advances the reset epo
 retains every active Turn ID as an indivisible exclusion. Phase 1 accepts only
 Turns whose immutable admission snapshot carries the current epoch, so rollback
 or replacement cannot move an Item across a positional boundary. One destructive
-Runtime ChangeSet purges the snapshotted canonical `#d-memory` containers and
+Runtime ChangeSet purges the snapshotted canonical `#mem-day` containers and
 every descendant inside them, including untagged ordinary notes. Its idempotency
 key is the Reset receipt. Notes outside those containers and stray tagged
 subtrees survive. SQLite finalization clears generated content indexes, lineage,
@@ -363,7 +390,7 @@ finalization.
 
 Settings exposes the global privacy switch, live worker freshness/error state,
 Open Memory, and confirmed Reset. Open Memory reuses the canonical saved tag
-search for `#d-memory`, so selecting a result opens the real Daily Notes context.
+search for `#mem-day`, so selecting a result opens the real Daily Notes context.
 The Thread Details dialog exposes the per-Thread switch only for persistent root
 user Threads.
 

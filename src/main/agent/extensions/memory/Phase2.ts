@@ -8,6 +8,7 @@ import {
 import type { Thread } from '../../../../core/agent/protocol';
 import type { DocumentProjection } from '../../../../core/types';
 import { freshNodeId } from '../../../../core/nodeId';
+import { isoLocalDate } from '../../../../core/localDate';
 import { uuidV7 } from '../../uuid';
 import {
   MemoryControlStore,
@@ -30,6 +31,7 @@ const MAX_SELECTED_NODES = 240;
 const GENERATED_UNUSED_RETENTION_MS = 90 * 24 * 60 * 60 * 1_000;
 
 interface ConsolidationPublicationPayload {
+  readonly titleSubtreeFingerprints: Readonly<Record<string, string>>;
   readonly inputFingerprints: Readonly<Record<string, string>>;
   readonly deletionSubtreeFingerprints: Readonly<Record<string, string>>;
   readonly changes: readonly TimelineConsolidationChange[];
@@ -50,18 +52,54 @@ interface PreparedConsolidation {
   readonly needsFollowUp: boolean;
 }
 
+export interface Phase2Options {
+  readonly now?: () => number;
+  readonly canTitleDay?: (sourceDate: string) => boolean;
+}
+
 export class Phase2 {
   constructor(
     private readonly control: MemoryControlStore,
     private readonly timeline: TimelineMemoryStore,
     private readonly model: MemoryModelRunner,
     private readonly internalThread: () => Thread | null,
+    private readonly options: Phase2Options = {},
   ) {}
 
-  async run(signal: AbortSignal): Promise<'published' | 'unchanged' | 'disabled'> {
+  needsDayTitle(sourceDate: string): boolean {
+    const generated = this.control.generatedNodesById();
+    const graph = this.timeline.graph();
+    return graph.containers.some((entry) => {
+      const record = generated.get(entry.node.id);
+      return entry.sourceDate === sourceDate && entry.node.content.text === 'Memory'
+        && graph.nodes.some((node) => node.containerId === entry.node.id && node.category !== 'memory')
+        && record && !record.userAuthoritative && record.fingerprint === timelineNodeFingerprint(entry);
+    });
+  }
+
+  isDayReadyForTitle(sourceDate: string): boolean {
+    if (sourceDate >= isoLocalDate(new Date(this.options.now?.() ?? Date.now()))) return false;
+    if (this.control.activeRollbacks().length > 0) return false;
+    try {
+      const daySize = this.timeline.graph().nodes.filter((entry) => entry.sourceDate === sourceDate).length;
+      return daySize <= MAX_SELECTED_NODES && this.options.canTitleDay?.(sourceDate) !== false;
+    } catch {
+      return false;
+    }
+  }
+
+  private validateTitleReadiness(fingerprints: Readonly<Record<string, string>>): void {
+    const containers = new Map(this.timeline.graph().containers.map((entry) => [entry.node.id, entry]));
+    for (const nodeId of Object.keys(fingerprints)) {
+      const entry = containers.get(nodeId);
+      if (!entry || !this.isDayReadyForTitle(entry.sourceDate)) throw new Error('Memory day is still receiving eligible evidence');
+    }
+  }
+
+  async run(signal: AbortSignal, sourceDate?: string): Promise<'published' | 'unchanged' | 'disabled'> {
     const status = this.control.status();
     if (status.featureMode !== 'enabled') return 'disabled';
-    const selected = this.selectInputs();
+    const selected = this.selectInputs(sourceDate);
     const hasUnsupported = selected.some((node) => node.generated && node.supportingOriginItemIds.length === 0);
     const activeRollbacks = this.control.activeRollbacks();
     if (activeRollbacks.some((rollback) => rollback.status === 'prepared')) return 'unchanged';
@@ -79,7 +117,14 @@ export class Phase2 {
       return 'unchanged';
     }
 
+    const titleSubtreeFingerprints = Object.fromEntries(modelChanges.flatMap((change) => {
+      if (change.action !== 'update') return [];
+      const node = selected.find((entry) => entry.nodeId === change.nodeId);
+      return node?.titleSubtreeFingerprint ? [[node.nodeId, node.titleSubtreeFingerprint]] : [];
+    }));
     await this.timeline.withWriteGate(async () => {
+      this.validateTitleReadiness(titleSubtreeFingerprints);
+      validateTitleSubtrees(titleSubtreeFingerprints, this.timeline);
       validateConsolidationInputs(
         this.control,
         this.timeline,
@@ -100,6 +145,7 @@ export class Phase2 {
         return [[change.nodeId, fingerprint]];
       }));
       const payload: ConsolidationPublicationPayload = {
+        titleSubtreeFingerprints,
         inputFingerprints: Object.fromEntries(selected.map((entry) => [entry.nodeId, entry.fingerprint])),
         deletionSubtreeFingerprints,
         changes: prepared.changes,
@@ -153,7 +199,7 @@ export class Phase2 {
     ));
   }
 
-  private selectInputs(): readonly MemoryConsolidationNode[] {
+  private selectInputs(sourceDate?: string): readonly MemoryConsolidationNode[] {
     const graph = this.timeline.graph();
     const generated = new Map(this.control.generatedNodes().map((entry) => [entry.nodeId, entry]));
     const unsupported = new Set(this.control.generatedNodeIdsWithoutCurrentSupport());
@@ -166,6 +212,7 @@ export class Phase2 {
       rankTime: number;
     }> = [];
     for (const entry of graph.nodes) {
+      if (sourceDate && entry.sourceDate !== sourceDate) continue;
       const generatedRecord = generated.get(entry.node.id);
       const fingerprint = timelineNodeFingerprint(entry);
       if (generatedRecord && generatedRecord.fingerprint !== fingerprint) {
@@ -179,7 +226,8 @@ export class Phase2 {
         .filter((edge) => this.control.isOriginClaimed(edge.originItemId))
         .map((edge) => edge.originItemId);
       if (
-        !userAuthoritative
+        !sourceDate
+        && !userAuthoritative
         && supportingOriginItemIds.length > 0
         && usage.lastUsage === null
         && now - (generatedRecord?.generatedAt ?? now) > GENERATED_UNUSED_RETENTION_MS
@@ -199,7 +247,7 @@ export class Phase2 {
         rankTime: usage.lastUsage ?? generatedRecord?.generatedAt ?? entry.node.updatedAt,
       });
     }
-    return nodes
+    const selected = nodes
       .sort((left, right) => right.rankUnsupported - left.rankUnsupported
         || right.rankDepth - left.rankDepth
         || right.rankUsage - left.rankUsage
@@ -213,6 +261,18 @@ export class Phase2 {
         rankTime: _rankTime,
         ...node
       }) => node);
+    const selectedIds = new Set(selected.map((entry) => entry.nodeId));
+    return selected.map((entry) => {
+      if (entry.category !== 'memory' || !entry.generated || !this.isDayReadyForTitle(entry.sourceDate)) return entry;
+      const records = graph.nodes.filter((node) => node.containerId === entry.nodeId && node.category !== 'memory');
+      if (records.length === 0 || records.some((node) => !selectedIds.has(node.node.id))) return entry;
+      const titleSubtreeFingerprint = timelineSubtreeFingerprint(entry.nodeId, projection);
+      return titleSubtreeFingerprint ? {
+        ...entry,
+        titleSourceNodeIds: records.map((node) => node.node.id),
+        titleSubtreeFingerprint,
+      } : entry;
+    });
   }
 
   private async publishPreparedWithinWriteGate(
@@ -224,7 +284,10 @@ export class Phase2 {
       journal.generation,
       journal.digest,
       journal.payload.changes,
-      () => validatePreparedConsolidation(this.control, this.timeline, journal, signal),
+      () => {
+        this.validateTitleReadiness(journal.payload.titleSubtreeFingerprints);
+        validatePreparedConsolidation(this.control, this.timeline, journal, signal);
+      },
     );
     this.finalize(journal);
   }
@@ -270,6 +333,7 @@ function validatePreparedConsolidation(
   journal: MemoryPublicationRecord<ConsolidationPublicationPayload>,
   signal: AbortSignal,
 ): void {
+  validateTitleSubtrees(journal.payload.titleSubtreeFingerprints, timeline);
   validateConsolidationState(
     control,
     timeline,
@@ -283,6 +347,15 @@ function validatePreparedConsolidation(
   for (const [nodeId, fingerprint] of Object.entries(journal.payload.deletionSubtreeFingerprints)) {
     if (timelineSubtreeFingerprint(nodeId, projection) !== fingerprint) {
       throw new Error(`Memory deletion subtree changed during consolidation: ${nodeId}`);
+    }
+  }
+}
+
+function validateTitleSubtrees(fingerprints: Readonly<Record<string, string>>, timeline: TimelineMemoryStore): void {
+  const projection = timeline.projection();
+  for (const [nodeId, fingerprint] of Object.entries(fingerprints)) {
+    if (timelineSubtreeFingerprint(nodeId, projection) !== fingerprint) {
+      throw new Error(`Memory day changed during title generation: ${nodeId}`);
     }
   }
 }
@@ -326,11 +399,15 @@ function validateChanges(
     if (change.action === 'create') continue;
     const node = selectedById.get(change.nodeId);
     if (!node) throw new Error(`Memory consolidation targeted an unselected Node: ${change.nodeId}`);
-    if (node.category === 'memory' && change.action === 'update' && change.text !== node.text) {
-      throw new Error('Memory consolidation cannot rewrite structural container text');
-    }
     if (!node.generated && change.action !== 'keep') {
       throw new Error(`Memory consolidation cannot change user-authoritative Node: ${change.nodeId}`);
+    }
+    if (node.category === 'memory' && change.action === 'update') {
+      if (!node.titleSourceNodeIds?.length) throw new Error('Memory title requires the complete source-day record set');
+      if (change.text.length > 160) throw new Error('Memory title exceeds 160 characters');
+      if (change.sourceNodeIds.some((id) => !node.titleSourceNodeIds!.includes(id))) {
+        throw new Error('Memory title can cite only records inside its own source day');
+      }
     }
     if (change.action === 'update') {
       for (const sourceNodeId of change.sourceNodeIds) {
@@ -487,7 +564,7 @@ function prepareConsolidation(
       ...record,
       fingerprint: timelineNodeFingerprint(entry, change.text),
     });
-    const evidence = currentLineage(change.sourceNodeIds, control);
+    const evidence = currentLineage(node.category === 'memory' ? node.titleSourceNodeIds! : change.sourceNodeIds, control);
     if (evidence.length === 0) throw new Error(`Memory consolidation update has no current evidence: ${node.nodeId}`);
     for (const edge of evidence) lineage.push({ ...edge, nodeId: node.nodeId });
   }
@@ -601,7 +678,11 @@ function consolidationPrompt(nodes: readonly MemoryConsolidationNode[]): string 
   return JSON.stringify({
     task: 'Reconcile the selected Daily Timeline Memory graph.',
     rules: [
-      'Keep user-authored or user-edited Nodes unchanged. Keep structural Memory container text unchanged.',
+      'Keep user-authored or user-edited Nodes unchanged, including manually edited day titles.',
+      'A generated memory container starts as Memory. titleSourceNodeIds is provided only after that source day ends and its eligible evidence has finished processing, with the complete same-day record set selected.',
+      'Then give that finished day a short, vivid and memorable title grounded in its records, using their language and at most 160 characters. A concrete image or gentle wordplay is welcome when it fits; never invent events, exaggerate, or force humor.',
+      'A day title is navigation, not new evidence or a daily narrative. Summarize the resulting retained records without repeating Memory or the date. Keep it when it still describes the content.',
+      'For a title update, cite records from its titleSourceNodeIds only. Without that complete-day view, keep the existing title. Never replace it from only the newest batch or another day.',
       'Keep existing supported content unless there is concrete future benefit from a correction or duplicate merge; no routine rewriting or new wrappers.',
       'Update concise generated beliefs, questions, guidance, and optional episodes only when evidence supports it.',
       'Delete unsupported generated Nodes only when every descendant is also supplied as a generated delete.',

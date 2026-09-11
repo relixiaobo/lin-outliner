@@ -51,7 +51,9 @@ The [Memory foundations](reference/agent-memory-foundations.md) remain conceptua
 
 Evidence is distinct from interpretation. Episodes preserve useful event context; beliefs express supported conclusions; questions preserve consequential uncertainty; guidance describes future handling. Encoding selects new signal, consolidation integrates related knowledge, and reconsolidation permits correction. Procedures remain Skills. Source links do not turn repeated Agent prose into new independent evidence.
 
-These categories do not require every useful fact to be a Node. A user preference is semantic knowledge whose current authority is now the profile file. Node beliefs and guidance still cover non-profile knowledge, such as why a work decision was made or a contextual lesson from an important event. A routine preference needs neither an episode nor a generated daily headline.
+These categories do not require every useful fact to be a Node. A user preference is semantic knowledge whose current authority is now the profile file. Node beliefs and guidance still cover non-profile knowledge, such as why a work decision was made or a contextual lesson from an important event. A routine preference needs no episode or additional daily narrative; when Nodes
+are retained, their daily container starts as Memory and receives a memorable title for
+navigation after the day and its eligible evidence are complete.
 
 ### Product model and routing
 
@@ -124,7 +126,7 @@ Before profile consumers are built, demonstrate how selected `IDENTITY.md` and `
 
 **FR-10 / FLOW-1: Inspect and correct.** Memory is accessed through existing Outline controls and CLI. A global Current/Timeline/topic view can reference the same dated Nodes; it does not own another copy. Direct Node edits remain authoritative. Source actions open exact available evidence or report that it is unavailable. The profile UI similarly opens `USER.md` entries with their direct sources; profile corrections do not require a Node editor.
 
-**FR-11 / FLOW-2: Encounter dated Memory.** Keep meaningful records under their source-date Daily Notes Memory container. Use a fixed structural label and optional episode context rather than compulsory generated headlines and wrappers. An initially collapsed container preserves normal Node editing and subsequent user fold state. No useful record means no empty heading or daily page. Background changes preserve editing focus, selection, and scroll anchor.
+**FR-11 / FLOW-2: Encounter dated Memory.** Keep meaningful records under their source-date Daily Notes Memory container. Initially label the container Memory, with optional episode context and no compulsory narrative wrappers. After the local source day ends and its eligible evidence finishes processing, give it a vivid, memorable title grounded in the retained content. System tags use the `mem-` prefix (`#mem-day`, `#mem-episode`, `#mem-belief`, `#mem-question`, `#mem-guidance`), leaving unprefixed names for user tags. Keep Memory while evidence is pending; preserve manually edited titles. An initially collapsed container preserves normal Node editing and subsequent user fold state. No useful record means no empty heading or daily page. Background changes preserve editing focus, selection, and scroll anchor.
 
 **FR-16:** Keep source/observation time, known event time, recorded time, and known validity separate. The daily parent is a temporal navigation anchor, not the only record of time. Delayed extraction of a direct statement uses its source day; maintenance does not fabricate a new event. A genuinely new offline synthesis with no single source conversation uses its formation day and identifies its contributing evidence. Unknown boundaries stay unknown.
 
@@ -200,8 +202,13 @@ batches and journal the exact accepted origin coverage. Only accepted coverage
 advances; new or duplicate evidence never replaces lineage outside that batch.
 Compare proposals with a bounded canonical Memory view, retain per-statement
 future-use and novelty rationales privately, and validate every cited origin before
-normalization. Publish a fixed structural container with optional episodes and
-complete category records. Reuse exact existing statements and add independent
+normalization. Publish a container initially called Memory, optional episodes,
+and complete category records. Accepted extraction journals a local day-close job
+in the existing worker; consolidation names the completed day only after its
+source evidence is processed, from a complete source-day record view, with
+full-subtree revision checks at preparation and document admission. A partial
+newest batch cannot replace the day's title, and user-authored titles remain
+authoritative. Reuse exact existing statements and add independent
 support without overwriting previous text or user edits; contextual reconciliation
 continues through the existing consolidation owner. No-signal batches advance
 coverage without creating a Daily Note or revoking unrelated support. A failed or

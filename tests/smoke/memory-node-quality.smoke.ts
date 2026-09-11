@@ -63,6 +63,8 @@ test('Memory publication keeps normal folds, editing selection and scroll in bot
     const container = page.locator(`[data-node-id="${containerId}"]`).first();
     await container.scrollIntoViewIfNeeded();
     await expect(container.locator('.row-chevron-shell')).not.toHaveClass(/expanded/);
+    await expect(container.locator('.ProseMirror').first()).toHaveText(/^Memory\s*#mem-day$/);
+    await expect(container).toContainText('mem-day');
     await expect(page.locator(`[data-node-id="${firstId}"]`)).toHaveCount(0);
     await container.locator('> .row').hover();
     await container.locator('.row-chevron-button').click();
@@ -97,6 +99,33 @@ test('Memory publication keeps normal folds, editing selection and scroll in bot
     await container.locator('.row-chevron-button').click();
     await publish(`node:${randomUUID()}`, 'Another retained record', 4);
     await expect(container.locator('.row-chevron-shell')).not.toHaveClass(/expanded/);
+    // The core tests exercise midnight, pending evidence and title admission.
+    // This UI test applies an admitted completed-day title through real transport.
+    await editor.click();
+    await page.keyboard.press('Home');
+    await page.keyboard.press('Shift+ArrowRight');
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    const beforeTitle = await editor.evaluate((element) => ({
+      selected: getSelection()?.toString(), focused: element.contains(document.activeElement), top: element.getBoundingClientRect().top,
+    }));
+    await timeline.applyConsolidation(`memory:stage2:${randomUUID()}`, 5, 'completed-day-title', [{
+      nodeId: containerId, action: 'update', text: 'A compass for clearer reports',
+    }]);
+    expect(snapshot.projection.nodes.find((node) => node.id === containerId)?.content.text).toBe('A compass for clearer reports');
+    await expect(container.locator('.ProseMirror').first()).toHaveText(/^A compass for clearer reports\s*#mem-day$/);
+    expect(await editor.evaluate((element) => ({
+      selected: getSelection()?.toString(), focused: element.contains(document.activeElement), top: element.getBoundingClientRect().top,
+    }))).toEqual(beforeTitle);
+    await expect(container.locator('.row-chevron-shell')).not.toHaveClass(/expanded/);
+    await container.locator('> .row').hover();
+    await container.locator('.row-chevron-button').click();
+    for (const theme of ['light', 'dark'] as const) {
+      await smoke.app.evaluate(({ nativeTheme }, theme) => { nativeTheme.themeSource = theme; }, theme);
+      await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' });
+      await container.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: testInfo.outputPath(`memory-title-${theme}.png`) });
+    }
+
   } finally {
     await closeSmokeApp(smoke);
   }
