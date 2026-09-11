@@ -525,42 +525,70 @@ test('Project folder multiselection appends unique folders and preserves existin
     folders: ['/sources/app', '/sources/docs', '/sources/shared', '/sources/tests', '/sources/examples'] });
 });
 
-test('each Project row edits its own Project without changing chat selection', async ({ page }, testInfo) => {
-  await openMockedApp(page);
-  await page.evaluate(async () => {
-    for (const name of ['Current', 'Another']) await window.lin.agentCoreRequest('project/manage', {
-      operation: 'create', name, folders: [], primaryFolder: null,
+for (const theme of ['light', 'dark'] as const) {
+  test(`each Project row edits its own Project without changing chat selection in ${theme}`, async ({ page }, testInfo) => {
+    await page.emulateMedia({ colorScheme: theme });
+    await openMockedApp(page);
+    await page.evaluate(async () => {
+      for (const name of ['Current', 'Another']) await window.lin.agentCoreRequest('project/manage', {
+        operation: 'create', name, folders: [], primaryFolder: null,
+      });
     });
+    await (await projectMenu(page)).getByRole('menuitemradio', { name: 'Current', exact: true }).click();
+    await page.getByRole('button', { name: 'Change project', exact: true }).click();
+    const menu = page.getByRole('menu', { name: 'Choose project', exact: true });
+    await expect(menu.getByRole('menuitem', { name: 'Edit Project', exact: true })).toHaveCount(0);
+    const selectedRow = menu.locator('.project-picker-row').filter({ has: page.getByRole('menuitemradio', { name: 'Current', exact: true }) });
+    const check = selectedRow.locator('.project-menu-check');
+    const selectedEdit = selectedRow.getByRole('menuitem', { name: 'Edit Project: Current', exact: true });
+    // A mouse-focused row must return to its resting state once the pointer leaves.
+    await menu.getByRole('textbox').click();
+    await selectedRow.getByRole('menuitemradio').focus();
+    await page.locator('.thread-dock-header').hover();
+    await expect(check).toHaveCSS('opacity', '1');
+    await expect(selectedEdit).toHaveCSS('opacity', '0');
+    const selectedBounds = await selectedRow.boundingBox();
+    const selectedLabelBounds = await selectedRow.locator('.project-menu-label').boundingBox();
+    const checkBounds = (await check.boundingBox())!;
+    await menu.screenshot({ path: testInfo.outputPath('project-picker-rest.png') });
+    await selectedRow.hover();
+    await expect(selectedEdit).toHaveCSS('opacity', '1');
+    await expect(check).toHaveCSS('opacity', '0');
+    const pencilBounds = (await selectedEdit.locator('svg').boundingBox())!;
+    expect(pencilBounds.x + pencilBounds.width / 2).toBe(checkBounds.x + checkBounds.width / 2);
+    expect(pencilBounds.y + pencilBounds.height / 2).toBe(checkBounds.y + checkBounds.height / 2);
+    expect(await selectedRow.boundingBox()).toEqual(selectedBounds);
+    expect(await selectedRow.locator('.project-menu-label').boundingBox()).toEqual(selectedLabelBounds);
+    await menu.screenshot({ path: testInfo.outputPath('project-picker-hover.png') });
+    await menu.getByRole('textbox').hover();
+    await expect(selectedEdit).toHaveCSS('opacity', '0');
+    await expect(check).toHaveCSS('opacity', '1');
+    const row = menu.locator('.project-picker-row').filter({ has: page.getByRole('menuitemradio', { name: 'Another', exact: true }) });
+    const edit = row.getByRole('menuitem', { name: 'Edit Project: Another', exact: true });
+    await menu.getByRole('textbox').hover();
+    await expect(edit).toHaveCSS('opacity', '0');
+    const before = await row.boundingBox();
+    const label = await row.locator('.project-menu-label').boundingBox();
+    await row.hover();
+    await expect(edit).toHaveCSS('opacity', '1');
+    expect(await row.boundingBox()).toEqual(before);
+    expect(await row.locator('.project-menu-label').boundingBox()).toEqual(label);
+    await menu.screenshot({ path: testInfo.outputPath('project-row-edit.png') });
+    await menu.getByRole('textbox').hover();
+    await row.getByRole('menuitemradio').focus();
+    await page.keyboard.press('ArrowDown');
+    await expect(edit).toBeFocused();
+    await expect(edit).toHaveCSS('opacity', '1');
+    await page.keyboard.press('Enter');
+    const form = page.getByRole('dialog', { name: 'Edit Project', exact: true });
+    await expect(form.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('Another');
+    await form.getByRole('textbox', { name: 'Name', exact: true }).fill('Renamed another');
+    await form.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect(form).toHaveCount(0);
+    await expect(page.locator('.thread-location-chip')).toHaveText('Current · Application default');
+    expect((await commandCalls(page)).filter((entry) => entry.cmd === 'project/manage' && entry.args.operation === 'bind')).toHaveLength(1);
+    await page.getByRole('button', { name: 'Change project', exact: true }).click();
+    await expect(menu.getByRole('menuitemradio', { name: 'Renamed another', exact: true })).toBeVisible();
+    await expect(menu.getByRole('menuitemradio', { name: 'Current', exact: true })).toHaveAttribute('aria-checked', 'true');
   });
-  await (await projectMenu(page)).getByRole('menuitemradio', { name: 'Current', exact: true }).click();
-  await page.getByRole('button', { name: 'Change project', exact: true }).click();
-  const menu = page.getByRole('menu', { name: 'Choose project', exact: true });
-  await expect(menu.getByRole('menuitem', { name: 'Edit Project', exact: true })).toHaveCount(0);
-  const row = menu.locator('.project-picker-row').filter({ has: page.getByRole('menuitemradio', { name: 'Another', exact: true }) });
-  const edit = row.getByRole('menuitem', { name: 'Edit Project: Another', exact: true });
-  await menu.getByRole('textbox').hover();
-  await expect(edit).toHaveCSS('opacity', '0');
-  const before = await row.boundingBox();
-  const label = await row.locator('.project-menu-label').boundingBox();
-  await row.hover();
-  await expect(edit).toHaveCSS('opacity', '1');
-  expect(await row.boundingBox()).toEqual(before);
-  expect(await row.locator('.project-menu-label').boundingBox()).toEqual(label);
-  await menu.screenshot({ path: testInfo.outputPath('project-row-edit.png') });
-  await menu.getByRole('textbox').hover();
-  await row.getByRole('menuitemradio').focus();
-  await page.keyboard.press('ArrowDown');
-  await expect(edit).toBeFocused();
-  await expect(edit).toHaveCSS('opacity', '1');
-  await page.keyboard.press('Enter');
-  const form = page.getByRole('dialog', { name: 'Edit Project', exact: true });
-  await expect(form.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('Another');
-  await form.getByRole('textbox', { name: 'Name', exact: true }).fill('Renamed another');
-  await form.getByRole('button', { name: 'Save', exact: true }).click();
-  await expect(form).toHaveCount(0);
-  await expect(page.locator('.thread-location-chip')).toHaveText('Current · Application default');
-  expect((await commandCalls(page)).filter((entry) => entry.cmd === 'project/manage' && entry.args.operation === 'bind')).toHaveLength(1);
-  await page.getByRole('button', { name: 'Change project', exact: true }).click();
-  await expect(menu.getByRole('menuitemradio', { name: 'Renamed another', exact: true })).toBeVisible();
-  await expect(menu.getByRole('menuitemradio', { name: 'Current', exact: true })).toHaveAttribute('aria-checked', 'true');
-});
+}

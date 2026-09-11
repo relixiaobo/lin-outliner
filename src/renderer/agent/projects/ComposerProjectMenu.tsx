@@ -108,10 +108,13 @@ export function ComposerProjectMenu({ anchorRef, context, threadId, attachmentDi
       {filtered.map((project) => <div className="project-picker-row" key={project.id}>
         <MenuItem role="menuitemradio" aria-checked={selected === project.id} className={itemClass} iconClassName="project-icon-slot"
         icon={<FolderIcon size={ICON_SIZE.compact} />} label={project.name} labelClassName="project-menu-label" title={`${project.name}\n${project.primaryFolder ?? t.applicationDefault}`}
-        meta={selected === project.id ? <CheckIcon size={ICON_SIZE.compact} /> : null} disabled={busy || unavailable} onClick={() => void choose(project)} />
-        <IconButton role="menuitem" className="project-menu-edit" icon={PencilIcon} iconSize={ICON_SIZE.compact}
-          variant="message" label={`${t.edit}: ${project.name}`} disabled={busy || unavailable}
-          onClick={() => { close(); context?.onChooseProject(project); }} />
+        disabled={busy || unavailable} onClick={() => void choose(project)} />
+        <span className="project-menu-action">
+          {selected === project.id ? <span className="project-menu-check" aria-hidden="true"><CheckIcon size={ICON_SIZE.compact} /></span> : null}
+          <IconButton role="menuitem" className="project-menu-edit" icon={PencilIcon} iconSize={ICON_SIZE.compact}
+            variant="message" label={`${t.edit}: ${project.name}`} disabled={busy || unavailable}
+            onClick={() => { close(); context?.onChooseProject(project); }} />
+        </span>
       </div>)}
       {!unavailable && filtered.length === 0 ? <p className="project-menu-status" role="status">{t.noResults}</p> : null}
       </div> : null}

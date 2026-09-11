@@ -75,7 +75,7 @@
 }
 
 .project-menu-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.project-menu-separator { margin: var(--space-1) var(--space-2); border-top: 1px solid var(--separator); }
+.project-menu-separator { margin: var(--space-2); border-top: 1px solid var(--separator); }
 .project-menu-status { margin: var(--space-2); color: var(--text-secondary); font-size: var(--font-ui-sm); overflow-wrap: anywhere; }
 
 .project-dialog-header {
@@ -194,11 +194,17 @@
 
 .project-dialog .automation-error { margin: var(--space-3) 0 0; font-size: var(--font-ui-sm); line-height: var(--line-ui-sm); overflow-wrap: anywhere; }
 
+/* Selection and editing share one stable trailing slot. Mouse focus must not
+   keep the hover affordance visible after the pointer leaves the row. */
 .project-picker-row { display: flex; align-items: center; min-width: 0; border-radius: var(--radius-sm); }
 .project-picker-row > .project-menu-item { flex: 1; min-width: 0; width: auto; }
 .project-picker-row:hover,
-.project-picker-row:focus-within { background: var(--control-hover); }
+:root[data-input-modality="keyboard"] .project-picker-row:has(:focus-visible) { background: var(--control-hover); }
 .project-picker-row > .project-menu-item:hover { background: transparent; }
-.project-menu-edit { display: flex; flex: 0 0 var(--control-size-xl); width: var(--control-size-xl); height: var(--control-size-xl); align-items: center; justify-content: center; opacity: 0; }
-.project-picker-row:hover > .project-menu-edit,
-.project-picker-row:focus-within > .project-menu-edit { opacity: 1; }
+.project-menu-action { position: relative; display: flex; flex: 0 0 var(--control-size-xl); width: var(--control-size-xl); height: var(--control-size-xl); align-items: center; justify-content: center; }
+.project-menu-check { display: flex; pointer-events: none; color: var(--text-secondary); }
+.project-menu-edit { position: absolute; inset: 0; display: flex; width: 100%; height: 100%; align-items: center; justify-content: center; opacity: 0; }
+.project-picker-row:hover .project-menu-edit,
+:root[data-input-modality="keyboard"] .project-picker-row:has(:focus-visible) .project-menu-edit { opacity: 1; }
+.project-picker-row:hover .project-menu-check,
+:root[data-input-modality="keyboard"] .project-picker-row:has(:focus-visible) .project-menu-check { opacity: 0; }

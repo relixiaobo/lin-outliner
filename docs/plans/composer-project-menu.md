@@ -59,7 +59,9 @@ Remove the retired conversation-folder reader and writer without a migration.
 - **FR-4:** Show the selected Project in the location chip; Edit Project opens its
   name, source folders and primary folder directly through a trailing pencil
   on that Project row, with deletion confirmation. The pencil appears on row
-  hover or keyboard focus in a reserved slot, including on unselected Projects.
+  hover or visible keyboard focus in one reserved 28px slot, replacing the selection
+  check in place, including on unselected Projects. Pointer focus alone does not
+  retain the pencil after the pointer leaves.
   Saving edits updates the Project without rebinding the conversation. Clicking the
   chip opens the picker directly; a separate remove icon clears membership without
   deleting the Project. The composer owns all chat Project operations; the Thread
