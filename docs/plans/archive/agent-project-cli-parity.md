@@ -1,7 +1,7 @@
 # Agent Project Capability Parity
 
 This standalone restoration alternative supplies the capability baseline for
-the broader [Projects and Conversation Work Folders](../conversation-work-folders.md)
+the broader [Projects and Conversation Work Folders](conversation-work-folders.md)
 design. It does not define that design's multi-folder behavior.
 
 ## Goal
@@ -13,7 +13,7 @@ workflow. Replacing a model tool with UI-only instructions is a capability loss.
 
 This is one complete feature in one PR: packaged CLI, discoverable built-in Skill,
 Host admission and operations, native confirmation, UI refresh, and verification.
-The separate [conversation work-folder design](../conversation-work-folders.md)
+The separate [conversation work-folder design](conversation-work-folders.md)
 adds durable directory selection and history visibility. Project capability
 parity remains independently shippable and does not depend on that behavior.
 
