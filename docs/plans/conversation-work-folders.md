@@ -376,11 +376,10 @@ change is part of this draft.
 
 ## Open questions
 
-**OQ-1:** Ratify DEC-1, the multi-folder Project in FR-5, and the creation/move
-distinction in FR-3 as the product contract before code. The alternative
-catalog-only history design is retained
-in [the archive](archive/thread-history-project-labels.md); it does not solve
-durable work-folder selection.
+None. DEC-1, the multi-folder Project in FR-5, and the creation/move distinction
+in FR-3 define the product contract. The alternative catalog-only history design
+is retained in [the archive](archive/thread-history-project-labels.md); it does
+not solve durable work-folder selection.
 
 ## Acceptance and verification
 
