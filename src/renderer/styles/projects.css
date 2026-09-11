@@ -50,7 +50,7 @@
   gap: var(--space-1);
   border: 0;
   border-radius: var(--radius-pill);
-  padding: 0 var(--space-3);
+  padding: 0 var(--space-4);
   background: transparent;
   color: var(--text-secondary);
   font: inherit;

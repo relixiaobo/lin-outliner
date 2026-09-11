@@ -80,6 +80,7 @@ for (const theme of ['light', 'dark'] as const) {
         return { width: box.width, trailingGap: box.right - name.right, padding: parseFloat(style.paddingRight) };
       });
       expect(content.width).toBeLessThan(100);
+      expect(content.padding).toBe(8);
       expect(content.trailingGap).toBeCloseTo(content.padding, 0);
       const controls = [addButton, chip, modelButton, page.locator('.thread-composer-toolbar .icon-button-composerAction')];
       for (const control of controls) {

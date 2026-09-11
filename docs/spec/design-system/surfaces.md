@@ -316,7 +316,8 @@ A selected Project adds one compact chip directly beside it: click its name to
 change selection. Its leading folder icon switches in place to a remove button on
 hover or keyboard focus, with neutral pill feedback and no geometry change.
 All four toolbar controls, including Send, use `--control-size-xl` height and
-vertical alignment before and during hover. Add, Project and model selection share `--control-hover`; Add uses a circular
+vertical alignment before and during hover. Project and model pills retain
+`--space-4` horizontal padding so text has equal breathing room at the edges. Add, Project and model selection share `--control-hover`; Add uses a circular
 hit area, while text controls hug content plus padding under their truncation
 ceilings. Narrow model controls retain both horizontal padding and the dropdown
 caret, truncating the name inside the content area. The spacer absorbs spare
