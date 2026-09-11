@@ -85,7 +85,11 @@ remaining catalog. The list scrolls while New Project stays fixed below a separa
 search filters the entire catalog without a second picker dialog. Recent IDs are
 bounded local userData UI metadata, filtered against the catalog; Project edits
 are not usage. Successful selection and explicit project-chat creation update
-recency; failed selection does not. Left/Right and Home/End retain their normal
+recency; failed selection does not. Before a bind disables the focused control,
+focus moves to the menu surface so keyboard dismissal remains available during
+the request. Failure restores focus to that control after it is enabled (or the
+first available menu target if the control disappeared), unless the user has
+already moved focus elsewhere or dismissed the menu. Left/Right and Home/End retain their normal
 text-editing behavior inside search; Enter chooses the first filtered result.
 New Project
 opens the creation form directly, then creates and selects the Project. If creation

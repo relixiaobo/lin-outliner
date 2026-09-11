@@ -592,3 +592,60 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(menu.getByRole('menuitemradio', { name: 'Current', exact: true })).toHaveAttribute('aria-checked', 'true');
   });
 }
+
+for (const action of ['select', 'clear'] as const) {
+  test(`Project ${action} failure restores keyboard navigation and dismissal`, async ({ page }) => {
+    await openMockedApp(page);
+    await page.evaluate(async () => {
+      await window.lin.agentCoreRequest('project/manage', {
+        operation: 'create', name: 'Keyboard project', folders: [], primaryFolder: null,
+      });
+    });
+    if (action === 'clear') {
+      await (await projectMenu(page)).getByRole('menuitemradio', { name: 'Keyboard project', exact: true }).click();
+    }
+    await page.evaluate(() => {
+      const request = window.lin.agentCoreRequest.bind(window.lin);
+      window.lin.agentCoreRequest = (async (method: string, input: Record<string, unknown>) => {
+        if (method === 'project/manage' && input.operation === 'bind') {
+          await new Promise<void>((_resolve, reject) => {
+            (window as unknown as { rejectProjectSelection: () => void }).rejectProjectSelection =
+              () => reject(new Error('Project membership conflict'));
+          });
+        }
+        return request(method as never, input as never);
+      }) as typeof window.lin.agentCoreRequest;
+    });
+    const trigger = action === 'select'
+      ? page.locator('.thread-composer-toolbar').getByRole('button', { name: 'Add', exact: true })
+      : page.getByRole('button', { name: 'Change project', exact: true });
+    await trigger.focus();
+    await page.keyboard.press('Enter');
+    if (action === 'select') {
+      await page.keyboard.press('ArrowDown');
+      await page.keyboard.press('ArrowRight');
+    }
+    const menu = page.getByRole('menu', { name: 'Choose project', exact: true });
+    await expect(menu.getByRole('textbox')).toBeFocused();
+    await page.keyboard.press('ArrowDown');
+    if (action === 'clear') await page.keyboard.press('End');
+    const target = action === 'select'
+      ? menu.getByRole('menuitemradio', { name: 'Keyboard project', exact: true })
+      : menu.getByRole('menuitem', { name: "Don't work in a project", exact: true });
+    await expect(target).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(target).toBeDisabled();
+    await expect(menu).toBeFocused();
+    await page.evaluate(() => (window as unknown as { rejectProjectSelection: () => void }).rejectProjectSelection());
+    await expect(menu.getByRole('alert')).toHaveText('Project membership conflict');
+    await expect(target).toBeFocused();
+    await page.keyboard.press('ArrowUp');
+    await expect(menu.getByRole(action === 'select' ? 'textbox' : 'menuitem', {
+      name: action === 'select' ? 'Search projects' : 'New Project', exact: true,
+    })).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(menu).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+    await expect(page.locator('.thread-location-chip')).toHaveCount(action === 'select' ? 0 : 1);
+  });
+}

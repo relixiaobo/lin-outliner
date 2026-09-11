@@ -7,6 +7,7 @@ import { Input } from '../../ui/primitives/Input';
 import { isImeComposingEvent } from '../../ui/interactions/imeKeyboard';
 import { MenuItem } from '../../ui/primitives/MenuItem';
 import { MenuSurface } from '../../ui/primitives/MenuSurface';
+import { focusableElements } from '../../ui/primitives/focusable';
 import { useAnchoredOverlay } from '../../ui/primitives/useAnchoredOverlay';
 import { useFlyoutOverlay } from '../../ui/primitives/useFlyoutOverlay';
 import { useMenuKeyboard } from '../../ui/primitives/useMenuKeyboard';
@@ -33,6 +34,7 @@ export function ComposerProjectMenu({ anchorRef, context, threadId, attachmentDi
   const [flyout, setFlyout] = useState(pickerOnly);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
+  const [selectionFocusTarget, setSelectionFocusTarget] = useState<HTMLElement | null>(null);
   const [error, setError] = useState<string | null>(null);
   const closingRef = useRef(false);
   // Mark parent unmount before either menu restores focus, including trigger toggles.
@@ -65,11 +67,30 @@ export function ComposerProjectMenu({ anchorRef, context, threadId, attachmentDi
     document.addEventListener('pointerdown', dismiss, true);
     return () => document.removeEventListener('pointerdown', dismiss, true);
   }, [anchorRef]);
+  useLayoutEffect(() => {
+    if (busy || !selectionFocusTarget) return;
+    setSelectionFocusTarget(null);
+    const surface = flyoutRef.current;
+    // Restore only after enabled controls commit, without stealing focus if the
+    // user has navigated elsewhere or dismissed the menu while awaiting the bind.
+    if (!surface || closingRef.current || document.activeElement !== surface) return;
+    const targets = focusableElements(surface);
+    const target = targets.includes(selectionFocusTarget) ? selectionFocusTarget : targets[0] ?? surface;
+    target.focus({ preventScroll: true });
+  }, [busy, selectionFocusTarget]);
   async function choose(project: Project | null) {
     if (busyRef.current || unavailable || !context) return;
+    const surface = flyoutRef.current;
+    const focused = document.activeElement;
+    const restoreTarget = focused instanceof HTMLElement && surface?.contains(focused) ? focused : null;
+    // Disabling the active button would otherwise move focus to document.body.
+    if (restoreTarget) surface?.focus({ preventScroll: true });
     busyRef.current = true; setBusy(true); setError(null);
     try { await selectConversationProject(threadId, project, context.view); close(); }
-    catch (error) { setError(error instanceof Error ? error.message : String(error)); }
+    catch (error) {
+      setError(error instanceof Error ? error.message : String(error));
+      setSelectionFocusTarget(restoreTarget);
+    }
     finally { busyRef.current = false; setBusy(false); }
   }
   const itemClass = 'thread-composer-model-item project-menu-item';
