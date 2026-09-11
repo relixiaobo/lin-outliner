@@ -98,9 +98,13 @@ Create project submits, and Cancel from direct creation closes the dialog.
 The Project chip stays beside Add in the bottom composer toolbar. Its leading
 folder icon switches in place to the remove button on hover or keyboard focus;
 neutral pill hover feedback groups the icon and name without changing geometry.
-Add, Project and model selection share the control-hover fill. Add has a circular
+Add, Project and model selection share the control-hover fill. All four toolbar
+controls, including Send, use the 28px control-size-xl height and vertical center
+in both resting and hover states. Add has a circular
 hit area; text controls size to their displayed content plus padding, with width
-ceilings for truncation instead of growing into the toolbar spacer.
+ceilings for truncation instead of growing into the toolbar spacer. Narrow model
+controls retain horizontal padding and the dropdown caret; only the model name
+truncates inside the available content area.
 
 The selected Project chip opens the same picker directly, without the Add menu.
 Its separate remove button clears only chat membership, preserving the Project

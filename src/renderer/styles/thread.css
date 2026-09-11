@@ -2487,7 +2487,7 @@
   display: inline-flex;
   min-width: 0;
   max-width: 220px;
-  height: 28px;
+  height: var(--control-size-xl);
   align-items: center;
   gap: var(--space-2);
   border-radius: var(--radius-pill);
@@ -2649,9 +2649,9 @@
 .thread-composer .icon-button-composerTool,
 .thread-composer .icon-button-composerAction {
   display: inline-flex;
-  width: 28px;
-  height: 28px;
-  flex: 0 0 28px;
+  width: var(--control-size-xl);
+  height: var(--control-size-xl);
+  flex: 0 0 var(--control-size-xl);
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-pill);

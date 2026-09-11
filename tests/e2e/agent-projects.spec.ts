@@ -81,6 +81,27 @@ for (const theme of ['light', 'dark'] as const) {
       });
       expect(content.width).toBeLessThan(100);
       expect(content.trailingGap).toBeCloseTo(content.padding, 0);
+      const controls = [addButton, chip, modelButton, page.locator('.thread-composer-toolbar .icon-button-composerAction')];
+      for (const control of controls) {
+        const beforeHover = (await control.boundingBox())!;
+        await control.hover();
+        const afterHover = (await control.boundingBox())!;
+        expect(afterHover.height).toBe(28);
+        expect(afterHover).toEqual(beforeHover);
+        expect(afterHover.y).toBe((await addButton.boundingBox())!.y);
+      }
+      await modelButton.hover();
+      const modelGeometry = await modelButton.evaluate((element) => {
+        const box = element.getBoundingClientRect();
+        const name = element.querySelector('.thread-composer-model-name')!.getBoundingClientRect();
+        const caret = element.querySelector('svg')!.getBoundingClientRect();
+        return { leading: name.left - box.left, trailing: box.right - caret.right, caretWidth: caret.width, nameWidth: name.width };
+      });
+      expect(modelGeometry.leading).toBeGreaterThanOrEqual(8);
+      expect(modelGeometry.trailing).toBeGreaterThanOrEqual(8);
+      expect(modelGeometry.caretWidth).toBeGreaterThan(0);
+      expect(modelGeometry.nameWidth).toBeGreaterThan(8);
+      await page.locator('.thread-composer').screenshot({ path: testInfo.outputPath(`composer-model-${width}-${theme}.png`) });
     }
     await page.locator('.thread-dock-header').hover();
     await remove.focus();
