@@ -49,7 +49,7 @@ test('no-start application inspection rejects a frontend-only target without bor
   }
 });
 
-test('startup failure evidence distinguishes an invalid store from a nonpublishing child', async () => {
+test('startup failure evidence preserves an invalid store and its original cause', async () => {
   const root = await mkdtemp(join(tmpdir(), 'tenon-startup-evidence-'));
   const target = join(root, 'broken');
   const snapshot = join(target, 'workspace/outline.snapshot.json');
@@ -61,10 +61,42 @@ test('startup failure evidence distinguishes an invalid store from a nonpublishi
     await expect(supervisor.connect()).rejects.toBeInstanceOf(SyntaxError);
     expect(await readFile(snapshot, 'utf8')).toBe('not valid snapshot JSON');
     expect(await readOutlineRuntimeDescriptor(target)).toBeNull();
-    const missing = new OutlineClientSupervisor({ root: join(root, 'nonpublishing'), startupTimeoutMs: 50,
-      launch: { command: process.execPath, args: ['-e', 'setTimeout(() => {}, 100)'], detached: false } });
-    await expect(missing.connect()).rejects.toMatchObject({ outlineError: { code: 'runtime_unavailable' } });
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('startup failure evidence times out a live child that never publishes a Runtime', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'tenon-nonpublishing-child-'));
+  const started = join(root, 'started'), stop = join(root, 'stop'), exited = join(root, 'exited');
+  const child = join(root, 'child.cjs');
+  await writeFile(child, `const fs = require('node:fs');
+const [started, stop, exited] = process.argv.slice(2);
+process.on('exit', () => fs.writeFileSync(exited, 'exited'));
+fs.writeFileSync(started, String(process.pid));
+setInterval(() => { if (fs.existsSync(stop)) process.exit(0); }, 10);
+setTimeout(() => process.exit(1), 5000);`);
+  const target = join(root, 'runtime');
+  const supervisor = new OutlineClientSupervisor({ root: target, contentRoot: join(root, 'content'), startupTimeoutMs: 1000,
+    launch: { command: process.execPath, args: [child, started, stop, exited], detached: false } });
+  try {
+    await expect(supervisor.connect()).rejects.toMatchObject({ outlineError: {
+      code: 'runtime_unavailable',
+      message: 'Outline Runtime did not become available before the startup timeout.',
+    } });
+    const pid = Number(await readFile(started, 'utf8'));
+    expect(Number.isSafeInteger(pid) && pid > 0).toBe(true);
+    expect(process.kill(pid, 0)).toBe(true);
+    expect(await stat(exited).catch(() => null)).toBeNull();
+    expect(await readOutlineRuntimeDescriptor(target)).toBeNull();
+  } finally {
+    // Ask only this fixture's child to exit, including when an assertion fails.
+    await writeFile(stop, 'stop');
+    if (await stat(started).catch(() => null)) {
+      const deadline = Date.now() + 2000;
+      while (!await stat(exited).catch(() => null) && Date.now() < deadline) await Bun.sleep(10);
+      expect(await readFile(exited, 'utf8')).toBe('exited');
+    }
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('authorized managed cleanup uses its owner and verifies absence without a false ls failure', async () => {
