@@ -491,6 +491,21 @@ cannot control another owner. Every action has `task_id` and `operation_id`:
 | `start_watch` | `expected_revision`, explicit reader `request` reference; create a distinct watch on a live service with no active watch; a later watch requires a newer reader request |
 | `revoke_watch` | `expected_revision`, exact `watch_id`; revoke only that watch, leaving launch and the process intact |
 
+The model-facing `task_control` input is `{ request: { task_id, operation_id,
+action, ...actionFields } }`. A shared action definition generates closed nested
+schema alternatives and exact admission; internal Task commands and receipts
+keep their flat shapes. Admission reconstructs action fields and nested Item
+references in the existing canonical order before operation digesting. JSON object
+key order cannot change replay identity; changed values or readiness array order
+still count as different input. `acknowledge` accepts only the common fields and `event_id`.
+Wrong action fields receive `invalid_arguments` with a bounded contract field
+path, required/allowed fields and repair guidance, without echoing rejected
+values or arbitrary keys. Extra fields, including empty-string keys, are rejected
+before canonical reconstruction at every object depth. Rejection performs no Task mutation. Provider conversion
+preserves the closed action language through the existing Anthropic schema profile
+and normal OpenAI/Google JSON Schema paths; this does not enable strict constrained
+sampling. Historical provider arguments remain immutable.
+
 Bash returns `evidence` references for follow-up checks. Launch progress and
 `task_status` are not readiness checks. The Host validates reference identity,
 ordering, successful completion and owning-Thread provenance. The exact Task ID
@@ -512,6 +527,14 @@ an IPv4 refusal from an IPv6-only listener is not a process-crash diagnosis.
 Report partial startup and preserve evidence when application verification fails.
 An authorized reset uses the existing process/managed-content owners and an
 absence check, then requires the same application verification after restart.
+
+Task result instructions distinguish a successful tool exchange from an accepted
+operation. Conflict guidance requests exact Task/operation reconciliation without
+inferring a historical cause from current state. Accepted replay retains its
+original receipt; already-handled events create no new handler. Status asks for
+acknowledgement only when its observed event is pending. Exit zero describes the
+command, not continuing application health. Guidance neither retries writes nor
+changes receipt storage, operation identity or restart authority.
 
 `task_status.continuation` exposes revision, handoff, watch, Stop provenance, and
 event facts. Its optional `operation_id` reconciles an exact receipt read-only;

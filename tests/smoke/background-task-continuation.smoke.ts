@@ -53,10 +53,11 @@ setInterval(() => { if (fs.existsSync(${JSON.stringify(exitFile)})) process.exit
     const toolName = (name: string) => names.find((candidate) => candidate === name || candidate.endsWith(`_${name}`))!;
     const lastTool = [...body.messages].reverse().find((message: any) => message.role === 'tool');
     let data: any;
+    let instructions: string | undefined;
     if (lastTool) {
       const content = typeof lastTool.content === 'string' ? lastTool.content
         : lastTool.content.map((part: any) => part.text ?? '').join('\n');
-      try { data = JSON.parse(content).data; } catch { data = null; }
+      try { const result = JSON.parse(content); data = result.data; instructions = result.instructions; } catch { data = null; }
     }
     response.writeHead(200, { 'content-type': 'text/event-stream', connection: 'close' });
     const send = (delta: unknown, finish_reason: string | null) => response.write(`data: ${JSON.stringify({
@@ -79,10 +80,10 @@ setInterval(() => { if (fs.existsSync(${JSON.stringify(exitFile)})) process.exit
         else if (step === 2 && data?.backgroundTaskId) {
           taskId = data.backgroundTaskId;
           tool('bash', { command: `${quote(process.execPath)} ${quote(checkFile)}`, cwd: checkDirectory, description: 'Verify application readiness' });
-        } else if (step === 3 && data?.evidence) tool('task_control', { action: 'handoff', task_id: taskId,
-          operation_id: 'smoke-handoff', expected_revision: 0, readiness: [data.evidence] });
+        } else if (step === 3 && data?.evidence) tool('task_control', { request: { action: 'handoff', task_id: taskId,
+          operation_id: 'smoke-handoff', expected_revision: 0, readiness: [data.evidence] } });
         else if (step === 4) {
-          handoff = data;
+          handoff = { ...data, instructions };
           tool('task_status', { task_id: taskId });
         } else {
           statusObservation = data;
@@ -111,6 +112,7 @@ setInterval(() => { if (fs.existsSync(${JSON.stringify(exitFile)})) process.exit
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     await expect(page.getByText('Application is ready.', { exact: true })).toBeVisible();
     expect(handoff?.receipt?.status, JSON.stringify(handoff)).toBe('accepted');
+    expect(handoff.instructions).toContain('This exact operation was accepted');
     const threadId = await page.evaluate(async () => (await window.lin!.agentCoreRequest('thread/list', {})).data[0]!.id);
     const readTask = (id: string) => page.evaluate(({ threadId, taskId }) => window.lin!.agentCoreRequest('task/read', { threadId, taskId }), { threadId, taskId: id });
     expect((await readTask(taskId)).task.continuation.handoff).toBeTruthy();

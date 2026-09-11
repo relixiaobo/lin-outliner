@@ -196,7 +196,8 @@ function capabilityBlocks(
           '- Absence of evidence does not prove absence of an effect. Equal before/after file hashes do not rule out a rewrite with identical bytes; a missing write receipt cannot prove no write occurred. A recovered remote receipt does not contradict the user having lost the original reply. Report only the association or effect that the observations establish.',
           '- Watch a service only on an explicit reader request. Handoff preserves that watch; revoke_watch leaves the process running. A handed-over service without a watch exits silently.',
           '- Before reporting a pending terminal result in an existing Turn, use task_control acknowledge with its exact event ID. Reading task_status or writing a final reply does not acknowledge it.',
-          '- Reconcile an uncertain control operation through task_status operation_id, then retry the identical operation. An exit or historical log alone never grants repair or restart authority.',
+          '- Distinguish transport success, receipt acceptance, command exit and the requested outcome. A conflict is not an accepted operation; inspect current owned state before revising the request. Do not repeat unchanged invalid arguments or use a new operation ID to hide a conflict.',
+          '- Reconcile an uncertain control operation through task_status operation_id, then retry only identical input under its existing idempotency contract. A deliberately changed input needs a new operation after reconciliation. Never replay an unknown-outcome write under a fresh identity. An exit or historical log alone grants no repair/restart authority.',
         ] : []),
       ].join('\n'),
     });

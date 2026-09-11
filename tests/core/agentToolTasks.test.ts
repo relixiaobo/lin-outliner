@@ -1371,6 +1371,29 @@ describe('Task continuation agreements', () => {
     expect(fixture.store.clearableDetails(OWNER_ID)).toHaveLength(2);
   });
 
+  for (const reorder of ['top-level', 'nested'] as const) {
+    test(`lost handoff reply replays after restart with ${reorder} fields reordered`, async () => {
+      const fixture = await createFixture();
+      const task = await liveService(fixture, `replay-${reorder}`);
+      const request = handoff(task);
+      const accepted = fixture.store.control(request, caller, 11);
+      expect(accepted.status).toBe('accepted');
+      // Pin the pre-existing digest representation, not merely two new encodings.
+      expect(fixture.store.read(task.taskId)?.controlReceipts[0]?.digest)
+        .toBe(createHash('sha256').update(JSON.stringify(request)).digest('hex'));
+      const reopened = new ToolTaskStore(fixture.database);
+      const reordered = reorder === 'top-level'
+        ? Object.fromEntries(Object.entries(request).reverse()) as typeof request
+        : { ...request, readiness: request.readiness.map(({ turnId, itemId }) => ({ itemId, turnId })) };
+      expect(reopened.controlReceipt(reordered)).toEqual(accepted);
+      expect(reopened.control(reordered, caller, 30)).toEqual(accepted);
+      expect(reopened.read(task.taskId)?.controlReceipts).toHaveLength(1);
+      expect(reopened.read(task.taskId)?.continuation.revision).toBe(1);
+      expect(() => reopened.control({ ...reordered, expected_revision: 1 }, caller, 31))
+        .toThrow('reused with different input');
+    });
+  }
+
   test('finite success and failure and unhanded service exits still owe one result', async () => {
     const fixture = await createFixture();
     for (const state of ['succeeded', 'failed'] as const) {
