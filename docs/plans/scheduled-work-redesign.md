@@ -731,13 +731,18 @@ Use clone-isolated test data; the design work never resets installed data.
 
 ## Open questions
 
-**OQ-1:** Ratify the proposed local current-state scope and missed-one-off policy
-with real tasks. The recommended behavior is DEC-3 and BR-2/3; interval-complete
-or cloud work would require a different delivery commitment and scope.
+Execution uses the selected local current-state scope and missed-one-off policy
+in DEC-3 and BR-2/3. Interval-complete or cloud work would require a different
+delivery commitment and a separate product decision.
 
-**OQ-2:** Ratify the stable task/result workspace and one primary work location.
-The recommended behavior is DEC-2 and TRD-1; this deliberately removes the need
-to choose a Thread destination or configure project fan-out.
+Execution uses the stable task/result workspace and one primary work location
+in DEC-2 and TRD-1. The assignment has no Thread destination picker or project
+fan-out. Shared Project defaults are consumed from the delivered #679 contract.
+
+The implementation collision check found #681 on Task action schemas and
+`ToolRuntime` admission. Scheduling consumes the existing Task command owner;
+it does not change Task action inputs. Any integration at this shared seam must
+preserve the action-specific validation supplied by that PR.
 
 Discovery follows the delivered
 [published conversation record contract](../spec/agent-core.md#published-conversation-records):
