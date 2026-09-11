@@ -57,7 +57,7 @@ not a Computer-Pilot-specific registry.
 Image observations preserve the captured screenshot pixels after canonical
 resource adoption, including when the stored source uses a `.blob` filename.
 Use the common bounded image normalization boundary defined in
-[Agent Image Evidence and Service Readiness](agent-evidence-and-service-readiness.md);
+[Agent image contracts](../spec/agent-core.md);
 do not substitute an OS file icon or add a Computer-Pilot-specific decoder.
 Source/observation geometry must describe the actual image used by the model.
 

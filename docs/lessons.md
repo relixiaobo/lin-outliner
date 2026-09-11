@@ -2981,3 +2981,13 @@ its descriptor. Isolate spawn/open/GC behavior and keep a live-file write, sync
 and close regression. #678 uses standard supervisor stdin to avoid Bun's extra
 pipe ownership failure while preserving literal command input and private fd 3;
 Rollout close errors remain visible.
+
+
+## Failure fixtures must reach the intended boundary
+
+**Assert the causal stage as well as an error code shared by multiple failures.**
+PR #677's nonpublishing-child test originally omitted the ContentStore root and
+passed on admission refusal before spawning. Supply all earlier prerequisites,
+prove the child started and remains live, and require the timeout-specific reason.
+A fixture-owned exit marker verifies cleanup; missing-root and missing-executable
+negative controls must fail the timeout assertion.
