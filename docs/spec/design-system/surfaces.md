@@ -310,7 +310,8 @@ not an inset card. It uses neutral fill (`--fill-1`, focus/drag `--fill-2`), top
 corners at the rail radius, and text inset to the shared agent content column. Its
 toolbar is visually unified with the textarea. Add (`+`) is a neutral unboxed
 icon entry for attachments and a searchable Project flyout with recent choices first, the full scrolling
-catalog, and a fixed creation footer. Project creation uses an icon/name field and
+catalog, and a fixed creation footer. An empty catalog contains only New Project,
+without status text, search or separators. Project creation uses an icon/name field and
 a bordered, fully clickable empty source-folder area. Search and menu rows share
 a 16px icon slot, 4px label gap and 28px height; bare inputs do not add a second
 horizontal inset. Primary-folder state uses a readable label. Edit Project opens
@@ -331,7 +332,10 @@ default qualifier. Flexible space precedes the compact model/effort button and
 Send/Stop. Full model and effort identity remains accessible from keyboard and
 menus, and narrow layouts preserve these controls without hover reflow.
 Project folder rows are single-line and share icon, path, primary-action and
-remove columns. Long paths elide parent segments before the final folder name;
+remove columns. The Project dialog is 560px wide, capped to the viewport with
+16px outer insets. The final folder name takes its intrinsic width before the
+parent path receives the remaining space; only names exceeding the entire path
+column are themselves truncated. Long paths elide parent segments first;
 hover titles preserve the full path. Make primary appears on row hover or
 keyboard focus while its column stays reserved, so neither text nor neighbors
 move. The selected Primary label stays visible. Editing feedback appears above

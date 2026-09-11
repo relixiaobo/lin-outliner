@@ -20,7 +20,10 @@ for (const theme of ['light', 'dark'] as const) {
     let flyout = await projectMenu(page);
     await expect(flyout.getByRole('textbox')).toHaveCount(0);
     await expect(flyout.getByRole('menuitemradio')).toHaveCount(0);
-    await expect(flyout.getByRole('status')).toHaveText('No Projects yet.');
+    await expect(flyout.getByRole('status')).toHaveCount(0);
+    await expect(flyout.getByRole('separator')).toHaveCount(0);
+    await expect(flyout.getByRole('menuitem')).toHaveCount(1);
+    await expect(flyout.getByRole('menuitem', { name: 'New Project', exact: true })).toBeVisible();
     await expect(page.getByRole('menuitem', { name: 'Set work folder', exact: true })).toHaveCount(0);
     const add = page.getByRole('menu', { name: 'Add', exact: true });
     await expect(add.getByRole('menuitem', { name: 'Add attachment' })).toBeVisible();
@@ -407,7 +410,7 @@ for (const theme of ['light', 'dark'] as const) {
     await form.getByRole('button', { name: 'Add folder', exact: true }).click();
     await expect(form.getByRole('alert')).toHaveText('This folder is already in the Project.');
     await form.screenshot({ path: testInfo.outputPath(`project-edit-error-${theme}.png`) });
-    const longFolder = '/work/' + 'long-source-directory-'.repeat(6);
+    const longFolder = '/Users/developer/Projects/' + 'long-parent-directory/'.repeat(6) + 'lin-outliner-workbench-test';
     await nextFolder(page, longFolder);
     await form.getByRole('button', { name: 'Add folder', exact: true }).click();
     await rows.filter({ hasText: longFolder }).getByRole('button', { name: 'Make primary', exact: true }).click();
@@ -422,7 +425,25 @@ for (const theme of ['light', 'dark'] as const) {
     expect(pathGeometry.text).toBe(longFolder);
     expect(pathGeometry.height).toBeLessThanOrEqual(20);
     expect(pathGeometry.rowHeight).toBe(28);
+    const leaf = rows.filter({ hasText: longFolder }).locator('.project-folder-name');
+    expect((await form.boundingBox())!.width).toBe(560);
+    expect(await leaf.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
     expect(await form.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+    const viewport = page.viewportSize()!;
+    await page.setViewportSize({ width: 400, height: viewport.height });
+    expect((await form.boundingBox())!.width).toBeLessThanOrEqual(368);
+    expect(await form.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+    const narrowPath = await leaf.evaluate((el) => {
+      const row = el.closest('.project-list-row')!.getBoundingClientRect();
+      const text = el.getBoundingClientRect();
+      const action = el.closest('.project-list-row')!.querySelector('.project-primary-action')!.getBoundingClientRect();
+      return { inside: text.left >= row.left && text.right <= action.left, height: row.height };
+    });
+    expect(narrowPath.inside).toBe(true);
+    expect(narrowPath.height).toBe(28);
+    await form.screenshot({ path: testInfo.outputPath(`project-edit-narrow-${theme}.png`) });
+    await page.setViewportSize(viewport);
+
     await form.screenshot({ path: testInfo.outputPath(`project-edit-${theme}.png`) });
     await form.getByRole('button', { name: 'Save', exact: true }).click();
     await expect(form).toHaveCount(0);
@@ -466,6 +487,10 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(deletion).toHaveCount(0);
     await expect(page.locator('.thread-location-chip')).toHaveCount(0);
     await expect(page.locator('.thread-composer-toolbar').getByRole('button', { name: 'Add', exact: true })).toBeFocused();
-    await expect((await projectMenu(page)).getByRole('status')).toHaveText('No Projects yet.');
+    const empty = await projectMenu(page);
+    await expect(empty.getByRole('status')).toHaveCount(0);
+    await expect(empty.getByRole('separator')).toHaveCount(0);
+    await expect(empty.getByRole('menuitem')).toHaveCount(1);
+    await expect(empty.getByRole('menuitem', { name: 'New Project', exact: true })).toBeVisible();
   });
 }

@@ -1,4 +1,5 @@
-.project-dialog {
+.confirm-dialog.project-dialog {
+  width: min(calc(var(--space-8) * 35), calc(100vw - var(--space-xl)));
   max-height: calc(100vh - var(--space-8) * 3);
   overflow: auto;
 }
@@ -23,8 +24,8 @@
 .thread-project-heading { margin: var(--space-3) var(--space-2) var(--space-1); color: var(--text-secondary); font-size: var(--font-ui-sm); }
 
 .project-folder-path { display: flex; min-width: 0; overflow: hidden; white-space: nowrap; font-size: var(--font-ui-sm); }
-.project-folder-parent { flex: 0 10 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.project-folder-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.project-folder-parent { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.project-folder-name { flex: 0 0 auto; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .project-folder-warning { display: inline-flex; flex-shrink: 0; margin-left: var(--space-2); }
 .project-source-folders .project-list { display: grid; grid-template-columns: var(--space-8) minmax(0, 1fr) max-content max-content; column-gap: var(--space-2); }
 .project-source-folders .project-list-row { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; min-height: var(--control-size-xl); }

@@ -75,8 +75,8 @@ The parent Project row displays the selected Project name, or Choose project whe
 unselected. The child shows a bottom Don't work in a project action, with a close icon,
 only when there is a selection to clear. It follows New Project, remains available
 while searching, and clears chat membership without deleting the Project.
-With an empty catalog, omit search and the deselection row: show one No Projects
-yet message and New Project. With available projects and no selection, show the
+With an empty catalog, show only New Project: omit search, status text,
+separators and the deselection row. With available projects and no selection, show the
 searchable catalog directly without a redundant checked empty choice.
 
 The flyout includes inline search and the complete Project list with
@@ -123,7 +123,10 @@ assignment action. Closing the picker
 restores focus to the chip; successful removal restores focus to Add.
 
 Project folder rows are single-line and share icon, path, primary-action and
-remove columns. Long paths elide parent segments before the final folder name;
+remove columns. The Project dialog is 560px wide, capped to the viewport with
+16px outer insets. The final folder name takes its intrinsic width before the
+parent path receives the remaining space; only names exceeding the entire path
+column are themselves truncated. Long paths elide parent segments first;
 hover titles preserve the full path. Make primary appears on row hover or
 keyboard focus while its column stays reserved, so neither text nor neighbors
 move. The selected Primary label stays visible. Editing feedback appears above
