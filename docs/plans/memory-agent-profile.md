@@ -195,6 +195,20 @@ Compare history-only, current Memory, and the proposed routing with equal tasks,
 
 Reuse the Node command/publication owner, Memory pipeline/control store, canonical conversation evidence, configuration owners, stable-prompt composition, and existing Outline/file tools. Profile and Node learning consume one consistent evidence/admission contract rather than independently rediscovering and duplicating the same preference. One bounded extraction proposal may route to the appropriate owner; this is an implementation suggestion, not a new model-management API.
 
+For the Node-quality unit, process complete eligible Items in oldest-first bounded
+batches and journal the exact accepted origin coverage. Only accepted coverage
+advances; new or duplicate evidence never replaces lineage outside that batch.
+Compare proposals with a bounded canonical Memory view, retain per-statement
+future-use and novelty rationales privately, and validate every cited origin before
+normalization. Publish a fixed structural container with optional episodes and
+complete category records. Reuse exact existing statements and add independent
+support without overwriting previous text or user edits; contextual reconciliation
+continues through the existing consolidation owner. No-signal batches advance
+coverage without creating a Daily Note or revoking unrelated support. A failed or
+oversized batch remains pending, and existing receipt recovery settles accepted
+coverage exactly once. New containers use ordinary initially collapsed Outline
+state and subsequent background publication does not change that state.
+
 Expected implementation files and owners:
 
 - `src/core/agent/configuration.ts`, `AgentConfigurationLoader`, and `AgentConfigurationWriter`: file references, accepted revisions, edit/source status, and existing root configuration boundaries.
