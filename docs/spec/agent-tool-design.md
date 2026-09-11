@@ -941,6 +941,12 @@ scoped execution cannot acquire management rights by knowing the executable.
 The assignment, timing, result and continuation contract is specified in
 [`agent-automations.md`](agent-automations.md).
 
+A live process with missing nonce identity or heartbeat carries the nonterminal
+`ownership_unverified` reason. A subsequently validated identity and fresh matching
+heartbeat clears only that uncertainty through the Task owner. Stop requests,
+admission teardown, invalid receipts and result settlement remain fenced by their
+own state. A PID alone never repairs ownership or authorizes signalling a process.
+
 ### Project Organization
 
 The Host-owned `ProjectService` owns Project sources/primary selection, lineage

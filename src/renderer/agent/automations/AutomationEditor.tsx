@@ -220,7 +220,7 @@ export function AutomationEditor(props: AutomationEditorProps) {
               </SelectControl>
             </> : <Input label={t.work.reference} value={material.reference} disabled={props.busy}
               onChange={(event) => setState({ ...state, materials: state.materials.map((entry, at) => at === index ? { ...entry, reference: event.target.value } : entry) })} />}
-            <CheckboxControl checked={material.required} disabled={props.busy} onCheckedChange={(required) => setState({ ...state,
+            <CheckboxControl className="scheduled-material-required" checked={material.required} disabled={props.busy} onCheckedChange={(required) => setState({ ...state,
               materials: state.materials.map((entry, at) => at === index ? { ...entry, required } : entry) })}>{t.work.requiredMaterial}</CheckboxControl>
             <Button size="sm" variant="ghost" onClick={() => setState({ ...state, materials: state.materials.filter((_, at) => at !== index) })}>{t.work.removeMaterial}</Button>
           </div>)}
@@ -258,7 +258,7 @@ export function AutomationEditor(props: AutomationEditorProps) {
                 <option value="worktree">{t.projects.worktree}</option>
               </SelectControl>
             </Field>
-            <details><summary>{t.work.advanced}</summary>
+            <details className="scheduled-advanced"><summary>{t.work.advanced}</summary>
             <Field className="automation-setting-row" label={t.model} labelClassName="automation-setting-label">
               <SelectControl
                 className="automation-setting-value"

@@ -106,7 +106,8 @@ commit with their domain write; a lost response is retried using the same input
 and identity. A changed input under an existing identity rejects. Existing
 receipts reconcile before fresh-write revision preconditions. An unreadable
 association blocks mutation; it never guesses that prior work did not happen.
-Receipts survive restart and archival. They contain operation associations and
+Receipts survive restart and archival. Revision conflicts return a nonzero CLI
+receipt with the current revision as structured data. Receipts contain operation associations and
 accepted configuration, not execution output.
 
 ## Canonical Dispatch
@@ -141,15 +142,18 @@ badge. Optional record/update inspection failure does not invent execution failu
 or erase surviving original evidence.
 
 Later delivery remains an update to its original run. It does not reorder that
-run ahead of a more recently admitted invocation. Run lists use an immutable monotonic creation sequence
-with identity cursors (independent of wall-clock movement and read markers), and Earlier runs can page beyond the first window.
+run ahead of a more recently admitted invocation. Run lists use an immutable
+monotonic creation sequence with identity cursors, independent of wall-clock
+movement and read markers. Earlier runs can page beyond the first window.
 
 Task summaries count unresolved causes across retained runs, including older
 failures and missed one-off decisions, independently of the visible result page.
 Needs attention filters tasks with a cause; it is not an unread filter. Opening
 a delivered result marks it read without acknowledging its issue. Acknowledgement
 names the exact issue key and changes attention only. A later different cause
-remains new attention; runtime ownership fences and outcome evidence stay intact.
+remains new attention; an update in the same run does not hide an older failed
+Turn. Every retained issue keeps its own exact key and acknowledgement. Runtime
+ownership fences and outcome evidence stay intact.
 
 Questions render through `UserInputRequest` and the existing `ThreadUserInputState`.
 The shared Host owns deadlines, ordered settlement and answerability. Expiry
@@ -189,6 +193,12 @@ An uncertain live process retains the generic settling fence.
 
 ## Agent Interface
 
+Automatic continuity contains record pointers and revision/location/material
+differences, never copied generated text. It selects the latest eligible delivered
+result plus bounded unacknowledged issue references across the same task. CLI
+result, stop and acknowledgement receipts likewise omit source text and preserve
+explicit content availability; content reads follow shared record/file access.
+
 The built-in `scheduling` Skill is discovered and loaded on demand. The packaged
 `schedule` executable is a short-lived foreground Bash client. `automation_update`
 is removed; no replacement scheduling model tool enters the default catalog.
@@ -199,7 +209,11 @@ not a required preflight ceremony.
 Read commands are list/show, runs/result, and processes. Mutation commands are
 create/update, pause/resume, run/skip, stop, acknowledge, archive/restore. Mutations
 use `--input - --output json`, with literal JSON in Bash's separate stdin field.
-Read commands use `--output json`; list and runs expose bounded identity cursors.
+Read commands use `--output json`; list and runs expose compact references and
+bounded identity cursors. Show reads the complete saved assignment. Run receipts
+name the request and captured revision and distinguish waiting, accepted, blocked
+and already-running admission. Result issue pages are bounded and name omitted
+counts; source text is never a CLI result payload.
 The complete executable contract is returned by `schedule schema`.
 
 The existing private-descriptor capability broker binds each invocation to its
@@ -209,7 +223,9 @@ launcher is diagnostic-only and cannot mint authority. Standalone terminal and
 remote administration are outside scope.
 
 Host admission preserves `agent.automation.manage`, current Bash capability,
-source eligibility and actual isolation. Scoped/delegated invocations do not gain
+source eligibility and actual isolation. A nonce-authenticated invocation stays
+eligible during a supervisor-observation delay; a stop provenance, teardown or
+settlement state revokes that admission instead. Scoped/delegated invocations do not gain
 management or cross-task discovery by knowing a path. The Host rechecks authority
 after waiting and before an unaccepted mutation commits. Once accepted, stopping
 the short-lived CLI does not undo the Host-owned assignment or run. Revision

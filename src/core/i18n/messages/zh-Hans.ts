@@ -1414,6 +1414,7 @@ export const zhHans: PartialMessages = {
     },
     automations: {
       work: {
+        reloadTasks: '重新载入任务',
         origin: '来源对话',
         questionNotice: '一项定时任务需要你的回答。',
         failureNotice: '一项定时任务需要处理。',
@@ -1456,6 +1457,7 @@ export const zhHans: PartialMessages = {
         "clipped": "此处仅显示部分答案。打开原始记录可查看完整结果。",
         "noAnswer": "没有可用的交付答案。",
         "results": {
+          stopping: '正在停止',
           blocked: '无法开始',
                 "waiting": "等待中",
                 "running": "运行中",

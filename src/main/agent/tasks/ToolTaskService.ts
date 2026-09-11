@@ -1133,6 +1133,8 @@ export class ToolTaskService {
       const heartbeat = await readHeartbeat(paths.heartbeat, task, identity).catch(() => null);
       if (supervisorAlive || groupAlive) {
         if (heartbeat && this.now() - heartbeat.updatedAt <= TASK_HEARTBEAT_STALE_MS) {
+          const restored = this.store.restoreVerifiedOwnership(task.taskId, this.now());
+          if (restored) this.publish(restored);
           this.monitor(task.taskId);
           return;
         }
@@ -1140,6 +1142,7 @@ export class ToolTaskService {
           task.taskId,
           'The persisted process identity is live but no current nonce heartbeat proves ownership.',
           this.now(),
+          'ownership_unverified',
         ));
         this.monitor(task.taskId);
         return;
@@ -1154,6 +1157,7 @@ export class ToolTaskService {
           task.taskId,
           'The supervisor process is live but its nonce identity is unavailable.',
           this.now(),
+          'ownership_unverified',
         ));
         this.monitor(task.taskId);
         return;

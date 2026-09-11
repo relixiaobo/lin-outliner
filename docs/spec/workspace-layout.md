@@ -221,7 +221,7 @@ type PanelView =
   | { kind: 'outliner'; rootId: NodeId; scrollTop?: number }
   | { kind: 'file-preview'; target: PreviewTarget; nodeId?: NodeId; presentation?: 'reader'; scrollTop?: number }
   | { kind: 'thread-trajectory'; threadId: string; turnId?: string; selectedRecordId?: string }
-  | { kind: 'scheduled-tasks' };
+  | { kind: 'scheduled-tasks'; automationId?: string; automationRunId?: string; listScrollTop?: number; detailScrollTop?: number; detailVisible?: boolean };
 
 interface WorkspaceContentPanelState extends WorkspacePanelBase {
   type: 'workspace';
@@ -1313,7 +1313,8 @@ User asks agent to rewrite selected node
 The persistent sidebar entry opens a `scheduled-tasks` panel view through normal
 per-pane navigation. The shared breadcrumb owns Back, close and pane dragging;
 viewing an exact run opens its canonical Thread/Turn Trajectory and Back returns
-to the task workspace. The task list and result detail use list/detail navigation
+to the task workspace. Per-pane state retains exact task/run references and
+list/detail scroll positions; it stores no result content. The task list and result detail use list/detail navigation
 below 720 logical pane pixels. The Agent dock remains an independent peer for
 result discussion. Configuration uses a modal sheet with shared focus/dirty-close
 behavior. The domain contract is [Scheduled tasks](agent-automations.md).

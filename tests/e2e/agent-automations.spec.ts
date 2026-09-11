@@ -50,6 +50,35 @@ test.describe('Scheduled tasks workspace', () => {
     expect(update?.args).not.toHaveProperty('status');
   });
 
+  test('process navigation returns to the exact task and preserves its selected run', async ({ page }) => {
+    await createTask(page);
+    await page.locator('.scheduled-task-detail').getByRole('button', { name: 'Run now', exact: true }).click();
+    await expect(page.locator('.scheduled-result')).toContainText('The scheduled review was delivered.');
+    await page.locator('.scheduled-result').getByRole('button', { name: 'View process', exact: true }).click();
+    await expect(page.locator('.thread-trajectory-panel')).toBeVisible();
+    await page.locator('.thread-trajectory-panel').getByRole('button', { name: 'Previous page', exact: true }).click();
+    await expect(page.locator('.scheduled-task-detail h2')).toHaveText('Repository review');
+    await expect(page.locator('.scheduled-result')).toContainText('The scheduled review was delivered.');
+    await expect(page.locator('.scheduled-earlier-runs [aria-pressed="true"]')).toHaveCount(1);
+  });
+
+  test('external edits preserve the draft and require an explicit reload or deliberate revision', async ({ page }) => {
+    await createTask(page);
+    await page.locator('.scheduled-task-detail').getByRole('button', { name: 'Edit task', exact: true }).click();
+    const sheet = page.getByRole('dialog', { name: 'Edit task' });
+    await sheet.getByRole('textbox', { name: 'Task', exact: true }).fill('Unsent local instructions');
+    await page.evaluate(async () => {
+      const task = (await window.lin!.automationRequest('list', {})).data[0]!;
+      await window.lin!.automationRequest('update', { id: task.id, expectedRevision: task.revision, prompt: 'Externally saved instructions' });
+    });
+    await sheet.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect(sheet.getByRole('textbox', { name: 'Task', exact: true })).toHaveValue('Unsent local instructions');
+    await sheet.getByText('Saved task changed', { exact: true }).click();
+    await expect(sheet.getByText('Externally saved instructions', { exact: true })).toBeVisible();
+    await sheet.getByRole('button', { name: 'Reload saved task', exact: true }).click();
+    await expect(sheet.getByRole('textbox', { name: 'Task', exact: true })).toHaveValue('Externally saved instructions');
+  });
+
   test('dirty close requires an explicit discard and restores the opener', async ({ page }) => {
     const opener = page.getByRole('button', { name: 'New task', exact: true });
     await opener.click();
@@ -66,7 +95,7 @@ test.describe('Scheduled tasks workspace', () => {
     await expect(opener).toBeFocused();
   });
 
-  test('supports shared date/time controls, materials and one primary location', async ({ page }) => {
+  test('supports shared date/time controls, materials and one primary location', async ({ page }, testInfo) => {
     await page.getByRole('button', { name: 'New task', exact: true }).click();
     const sheet = page.getByRole('dialog', { name: 'New task' });
     await expect(sheet.getByRole('combobox', { name: 'Destination' })).toHaveCount(0);
@@ -89,6 +118,8 @@ test.describe('Scheduled tasks workspace', () => {
     await expect(sheet.getByRole('combobox', { name: 'In', exact: true })).toBeVisible();
     await expect(sheet.getByRole('button', { name: 'On days', exact: true })).toBeVisible();
     await expect(sheet.getByText('/mock/workspace', { exact: true })).toBeVisible();
+    await sheet.locator('.automation-editor-scroll').evaluate((element) => { element.scrollTop = 0; });
+    await page.screenshot({ path: testInfo.outputPath('scheduled-task-editor.png') });
   });
 
   for (const colorScheme of ['light', 'dark'] as const) {

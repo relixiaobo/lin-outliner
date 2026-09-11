@@ -35,6 +35,7 @@ export class AutomationRendererStore {
   private snapshot = EMPTY_SNAPSHOT;
   private readonly listeners = new Set<() => void>();
   private unsubscribe: (() => void) | null = null;
+  private consumers = 0;
   private initializePromise: Promise<void> | null = null;
   private reloadGeneration = 0;
   private mutationVersion = 0;
@@ -57,6 +58,16 @@ export class AutomationRendererStore {
   };
 
   getSnapshot = (): AutomationStoreSnapshot => this.snapshot;
+
+  acquire(): { ready: Promise<void>; release: () => void } {
+    this.consumers++;
+    let released = false;
+    return { ready: this.initialize(), release: () => {
+      if (released) return;
+      released = true;
+      if (--this.consumers === 0) this.dispose();
+    } };
+  }
 
   initialize(): Promise<void> {
     if (!this.unsubscribe) {

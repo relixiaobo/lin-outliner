@@ -21,7 +21,8 @@ const ScheduledTasksWorkspace = lazy(() => import('../agent/automations/Schedule
 const PANE_DRAG_SETTLE_MS = 200;
 
 interface WorkspaceCanvasProps {
-  onOpenScheduledProcess?: (threadId: string, turnId: string) => void;
+  onOpenScheduledProcess?: (panelId: string, threadId: string, turnId: string) => void;
+  onScheduledViewChange?: (panelId: string, view: import('./workspaceLayoutTypes').ScheduledTasksPanelView) => void;
   activePanelId: string | null;
   panels: WorkspacePanelState[];
   canvasRef: RefObject<HTMLElement | null>;
@@ -260,9 +261,9 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
           >
             {panel.view.kind === 'scheduled-tasks' ? (
               <Suspense fallback={<p>{t.agent.automations.loading}</p>}>
-                <ScheduledTasksWorkspace onOpenNode={(nodeId, options) => props.onNavigatePanelRoot(panel.id, nodeId, options)} index={props.index} panelDragHandle={panelDragHandleFor(panel)} showClose={activePanels.length > 1}
+                <ScheduledTasksWorkspace view={panel.view} onViewChange={(view) => props.onScheduledViewChange?.(panel.id, view)} onOpenNode={(nodeId, options) => props.onNavigatePanelRoot(panel.id, nodeId, options)} index={props.index} panelDragHandle={panelDragHandleFor(panel)} showClose={activePanels.length > 1}
                   onClose={() => props.onClosePanel(panel.id)} onBack={panel.backStack.length > 0 ? () => props.onNavigatePanelBack(panel.id) : undefined}
-                  onOpenProcess={(threadId, turnId) => props.onOpenScheduledProcess?.(threadId, turnId)} />
+                  onOpenProcess={(threadId, turnId) => props.onOpenScheduledProcess?.(panel.id, threadId, turnId)} />
               </Suspense>
             ) : panel.view.kind === 'outliner' ? (
               <NodePanel

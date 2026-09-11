@@ -1500,6 +1500,7 @@ export const en = {
     },
     automations: {
       work: {
+        reloadTasks: 'Reload tasks',
         origin: 'Originating conversation',
         questionNotice: 'A scheduled task needs your answer.',
         failureNotice: 'A scheduled task needs attention.',
@@ -1542,6 +1543,7 @@ export const en = {
         "clipped": "This is a partial answer. Open the original record for the full result.",
         "noAnswer": "No delivered answer is available.",
         "results": {
+          stopping: 'Stopping',
           blocked: 'Could not start',
                 "waiting": "Waiting",
                 "running": "Running",

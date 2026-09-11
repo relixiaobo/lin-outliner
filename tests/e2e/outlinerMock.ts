@@ -3846,7 +3846,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const result = run ? { run, state: 'completed', answer: 'The scheduled review was delivered.',
             parts: [{ text: 'The scheduled review was delivered.', itemId: 'mock-answer', turnId: run.turnId, finalCitations: [] }], answerTruncated: false,
             resultTurnId: run.turnId, startedAt: run.createdAt, finishedAt: run.createdAt + 20,
-            recordPath: '/mock/record.md', issue: null, issueKey: null, acknowledged: false } : null;
+            recordPath: '/mock/record.md', issues: [], issue: null, issueKey: null, acknowledged: false } : null;
           return clone(method === 'summary' ? { attentionCount: 0, latest: result, current: null } : result) as T;
         }
         if (method === 'archive' || method === 'restore') {

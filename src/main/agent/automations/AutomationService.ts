@@ -129,9 +129,9 @@ export class AutomationService {
         for (const run of this.options.store.allRunsForAutomation(id)) {
           const result = await this.result(run.id);
           latest ??= result;
-          if (['running', 'waiting'].includes(result.state)) current ??= result;
+          if (['running', 'waiting', 'stopping'].includes(result.state)) current ??= result;
           if (latest && !latest.answer && !latest.issue && result.answer) latest = result;
-          if (result.issue && !result.acknowledged) attentionCount++;
+          attentionCount += result.issues.filter((issue) => !issue.acknowledged).length;
           if (run.threadId && result.state === 'running') {
             const input = await this.options.threads.request('userInput/read', { threadId: run.threadId });
             if (input.state.pending && this.ownership.forTurn(run.threadId, input.state.pending.turnId)?.id === run.id) attentionCount++;
@@ -171,14 +171,14 @@ export class AutomationService {
           const previous = this.options.store.operationReceipt<{ acknowledged: true }>(value.requestId, { method, ...value });
           const result = await this.result(value.id);
           if (!previous) {
-            if (result.state === 'running' || result.state === 'waiting') throw new Error('Acknowledge cannot settle active work or answer a live question');
-            if (!result.issueKey || value.issueKey !== result.issueKey) throw new Error('The displayed issue changed; inspect it before acknowledging');
+            const issue = result.issues.find((issue) => issue.key === value.issueKey);
+            if (!issue?.terminal) throw new Error('Acknowledge must name an exact terminal issue; it cannot answer a live question');
             await authorize?.();
             this.options.store.withOperationReceipt(value.requestId, { method, ...value }, () => {
               this.options.store.acknowledge(value.id, value.issueKey, this.now());
               return { acknowledged: true };
             });
-            await this.runChanged(result.run);
+            await this.runChanged(this.requireRun(result.run.id));
           }
           return await this.result(value.id) as AutomationResponseByMethod[Method];
         });
@@ -307,7 +307,8 @@ export class AutomationService {
       await authorize?.();
       const receipt = input.requestId ? this.options.store.operationReceipt<Automation>(input.requestId, { method: 'update', ...input }) : null;
       if (receipt) return receipt;
-      const current = this.options.store.read(input.id, this.now());
+      const current = this.options.store.read(input.id, this.now(), true);
+      if (current?.archivedAt !== null && current?.archivedAt !== undefined) throw new Error('Restore the archived task before editing it.');
       if (!current) {
         throw new AgentToolFailure(
           'automation_not_found',
@@ -371,6 +372,7 @@ export class AutomationService {
       const input = { method: status === 'paused' ? 'pause' : 'resume', id, expectedRevision };
       const receipt = requestId ? this.options.store.operationReceipt<Automation>(requestId, input) : null;
       if (receipt) return receipt;
+      this.requireRevision(id, expectedRevision);
       if (status === 'active') {
         const current = this.options.store.read(id, this.now());
         if (!current) throw new Error('Automation no longer exists');
@@ -448,8 +450,9 @@ export class AutomationService {
   }
 
   private requireRevision(id: string, expectedRevision?: number): Automation {
-    const automation = this.options.store.read(id, this.now());
+    const automation = this.options.store.read(id, this.now(), true);
     if (!automation) throw new Error(`Scheduled task not found: ${id}`);
+    if (automation.archivedAt !== null) throw new Error('The task is archived. Restore it before editing or running it.');
     if (expectedRevision !== undefined && automation.revision !== expectedRevision) {
       throw new AutomationRevisionConflict(automation.revision);
     }
@@ -470,6 +473,13 @@ export class AutomationService {
 
   private result(id: string): Promise<ScheduledRunResult> {
     return scheduledRunResult(this.requireRun(id), {
+      resourceIssues: (run) => this.ownership.processes(run).flatMap((task) => {
+        const uncertain = task.state === 'settling' && task.error !== null;
+        const failed = ['failed', 'lost', 'timed_out'].includes(task.state) && task.continuation.event?.disposition === 'pending';
+        return uncertain || failed ? [{ key: `task:${task.taskId}:${task.continuation.event?.id ?? task.outcomeReason ?? 'coordination'}`,
+          text: `${task.description}: ${task.error ?? task.outcomeReason ?? task.state}`, turnId: task.sourceTurnId, terminal: !uncertain }] : [];
+      }),
+      stopping: (run) => this.ownership.processes(run).some((task) => (task.state === 'running' || task.state === 'settling') && task.continuation.stop?.source === 'turnCancellation'),
       additionalTurns: (run) => this.ownership.turns(run),
       readTurn: (threadId, turnId) => this.options.threads.readTurnForHost(threadId, turnId),
       recordPath: (threadId) => this.options.threads.threadRecordPath(threadId),

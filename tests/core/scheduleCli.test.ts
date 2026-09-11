@@ -63,6 +63,13 @@ describe('Packaged scheduling CLI admission', () => {
     expect(JSON.parse(output.join(''))).toMatchObject({ ok: false, error: { code: 'revision_conflict', currentRevision: 4 } });
   });
 
+  test('result inspection returns a canonical reference without bypassing file access for source text', async () => {
+    const service = new ScheduleCliService(() => ({ request: async () => ({ state: 'completed', recordPath: '/records/one.md',
+      answer: 'Private source text', parts: [{ text: 'Private source text' }], futureTextField: 'Also private' }) }) as AutomationService, async () => undefined);
+    const result = await service.execute(invocation('', parseScheduleCommand(['result', taskId, '--output', 'json'])));
+    expect(result).toEqual({ state: 'completed', recordPath: '/records/one.md', contentAvailability: 'available' });
+  });
+
   test('direct CLI invocation has no authority and does not even consume mutation stdin', async () => {
     let reads = 0;
     const output: string[] = [];
@@ -90,11 +97,16 @@ describe('Packaged scheduling CLI admission', () => {
     const execution = invocation('{}');
     const task = { ownerThreadId: 'root', sourceTurnId: 'turn', sourceItemId: 'item', producer: 'bash', nonce: 'nonce', cwd: '/tmp',
       commandDigest: createHash('sha256').update(canonicalDelegateCommand(command)).digest('hex'),
-      stopRequestedAt: null, state: 'running', executionContext: { policy: { capability: 'full-access', isolation: 'unsandboxed' } } };
+      stopRequestedAt: null, state: 'running', outcomeReason: null as string | null, continuation: { stop: null as object | null }, executionContext: { policy: { capability: 'full-access', isolation: 'unsandboxed' } } };
     const service = { projectInvocationContext: () => ({ thread: { id: 'root' }, configuration: { tools: ['bash'] } }),
       toolTaskService: () => ({ store: { read: () => task } }) } as unknown as ThreadService;
     const runtime = new ToolRuntime(service, { capabilityTools: () => [], capabilityConfig: { blocks: [] } });
     await runtime.authorizeHostCliInvocation(execution);
+    task.state = 'settling'; task.outcomeReason = 'ownership_unverified';
+    await runtime.authorizeHostCliInvocation(execution);
+    task.continuation.stop = { source: 'user' };
+    await expect(runtime.authorizeHostCliInvocation(execution)).rejects.toThrow('stop binding');
+    task.continuation.stop = null; task.state = 'running'; task.outcomeReason = null;
     task.nonce = 'different';
     await expect(runtime.authorizeHostCliInvocation(execution)).rejects.toThrow('authority');
     task.nonce = 'nonce'; task.executionContext.policy.capability = 'read-only';

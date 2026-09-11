@@ -68,7 +68,9 @@ test('scheduled assignment created through Bash survives restart and delivers to
     await expect(page.locator('.scheduled-result')).toContainText('Scheduled delivery proof from the real Host.');
     for (const theme of ['light', 'dark'] as const) {
       await smoke.app.evaluate(({ nativeTheme }, theme) => { nativeTheme.themeSource = theme; }, theme);
-      await page.screenshot({ path: testInfo.outputPath(`native-scheduled-${theme}.png`) });
+      await page.emulateMedia({ colorScheme: theme });
+      await expect.poll(() => page.evaluate(() => matchMedia('(prefers-color-scheme: dark)').matches)).toBe(theme === 'dark');
+      await page.screenshot({ path: testInfo.outputPath(`native-scheduled-${theme}.png`), animations: 'disabled' });
     }
     await closeSmokeApp(smoke, { keepUserData: true }); smoke = undefined;
     smoke = await launchSmokeApp({ userDataDir });
@@ -105,7 +107,7 @@ test('an expired scheduled question retains its draft and foreground slot until 
     if (!asked && requestTool) {
       asked = true;
       send({ role: 'assistant', tool_calls: [{ index: 0, id: 'scheduled-question', type: 'function', function: { name: requestTool,
-        arguments: JSON.stringify({ questions: [{ id: 'direction', header: 'Direction', question: 'Which direction should this review take?', options: [] }], autoResolutionMs: 5000 }) } }] }, null);
+        arguments: JSON.stringify({ questions: [{ id: 'direction', header: 'Direction', question: 'Which direction should this review take?', options: [] }] }) } }] }, null);
       send({}, 'tool_calls');
     } else { send({ role: 'assistant', content: 'Scheduled answer after timeout.' }, null); send({}, 'stop'); }
     response.end('data: [DONE]\n\n');
@@ -127,7 +129,10 @@ test('an expired scheduled question retains its draft and foreground slot until 
     const association = admitted.runs[0]!;
     await expect(page.locator('.scheduled-workspace .thread-user-input-other')).toBeVisible();
     await page.locator('.scheduled-workspace .thread-user-input-other').fill('Keep this unsent answer.');
-    await expect.poll(() => followupWaiting, { timeout: 15_000 }).toBe(true);
+    const pending = await page.evaluate((threadId) => window.lin!.agentCoreRequest('userInput/read', { threadId: threadId! }), association.threadId);
+    expect(pending.state.pending?.autoResolutionMs).toBe(60_000);
+    // Exercise the real shared 60-second Host deadline, without a separate scheduling timer.
+    await expect.poll(() => followupWaiting, { timeout: 75_000 }).toBe(true);
     await expect(page.locator('.scheduled-workspace .thread-user-input')).toHaveCount(0);
     await expect(page.locator('.scheduled-workspace .thread-user-input-recovery')).toContainText('Keep this unsent answer.');
     const replay = await page.evaluate(async (task) => window.lin!.automationRequest('startNow', { id: task.id, expectedRevision: task.revision, requestId: 'question-repeat' }), task);
@@ -136,7 +141,7 @@ test('an expired scheduled question retains its draft and foreground slot until 
     expect(input.state.pending).toBeNull();
     expect(input.state.settled?.outcome).toBe('timedOut');
     expect(input.state.activeTurnId).toBe(association.turnId);
-    await page.screenshot({ path: testInfo.outputPath('native-scheduled-question-expired.png') });
+    await page.screenshot({ path: testInfo.outputPath('native-scheduled-question-expired.png'), animations: 'disabled' });
     releaseFollowup();
     await expect.poll(() => page.evaluate((id) => window.lin!.automationRequest('result', { id }), association.id))
       .toMatchObject({ state: 'completed', answer: 'Scheduled answer after timeout.' });

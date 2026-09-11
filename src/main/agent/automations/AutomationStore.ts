@@ -213,14 +213,26 @@ export class AutomationStore {
     return receipt as T;
   }
 
+  *priorRuns(current: AutomationRun): Iterable<AutomationRun> {
+    let before = current.id;
+    while (true) {
+      const page = this.listRuns({ automationId: current.automationId, before, limit: 50 });
+      yield* page;
+      if (page.length < 50) return;
+      before = page.at(-1)!.id;
+    }
+  }
+
   isAcknowledged(automationRunId: string, issueKey: string): boolean {
     return Boolean(this.db.prepare('SELECT 1 FROM automation_issue_acknowledgements WHERE run_id = ? AND issue_key = ?')
       .get(automationRunId, issueKey));
   }
 
   acknowledge(automationRunId: string, issueKey: string, now = Date.now()): void {
-    this.db.prepare('INSERT OR IGNORE INTO automation_issue_acknowledgements (run_id, issue_key, acknowledged_at) VALUES (?, ?, ?)')
+    const inserted = this.db.prepare('INSERT OR IGNORE INTO automation_issue_acknowledgements (run_id, issue_key, acknowledged_at) VALUES (?, ?, ?)')
       .run(automationRunId, issueKey, now);
+    if (inserted.changes) this.db.prepare('UPDATE automation_runs SET event_sequence = ?, updated_at = ? WHERE id = ?')
+      .run(this.nextRunEventSequence(), now, automationRunId);
   }
 
   restore(id: string, expectedRevision: number, now = Date.now()): Automation {
@@ -640,11 +652,14 @@ export class AutomationStore {
     const run = this.requireRun(id);
     if (run.state !== 'pending') return run;
     const automation = this.require(run.automationId, now);
-    if (automation.revision === run.automationRevision) return run;
-    const binding = automation.contextHints[0] ?? null;
+    const binding = automation.revision === run.automationRevision
+      ? automation.contextHints.find((hint) => hint.contextHintId === run.contextHintId) ?? null
+      : automation.contextHints[0] ?? null;
+    const snapshot = this.captureSnapshot(automation, binding);
+    if (automation.revision === run.automationRevision && json(snapshot.projectSnapshot) === json(run.snapshot.projectSnapshot)) return run;
     this.db.prepare(`UPDATE automation_runs SET automation_revision = ?, snapshot_json = ?, context_hint_id = ?,
       dispatch_snapshot_ref_json = NULL, event_sequence = ?, updated_at = ? WHERE id = ? AND state = 'pending'`)
-      .run(automation.revision, json(this.captureSnapshot(automation, binding)), contextHintKey(binding), this.nextRunEventSequence(), now, id);
+      .run(automation.revision, json(snapshot), contextHintKey(binding), this.nextRunEventSequence(), now, id);
     return this.requireRun(id);
   }
 

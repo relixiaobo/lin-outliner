@@ -1,3 +1,5 @@
+import { scheduledRunResult } from './AutomationRunResult';
+import { ScheduledRunOwnership } from './ScheduledRunOwnership';
 import { checkScheduledMaterials, scheduledMaterialInstructions } from './ScheduledMaterials';
 import { realpath } from 'node:fs/promises';
 import { automationDirectoryHint } from '../../../core/agent/automation';
@@ -59,9 +61,18 @@ export class AutomationDispatcher {
    */
   private get continuity(): AutomationRunContinuityReader {
     return {
-      recentRunsForContextHint: (...args) => this.options.store.recentRunsForContextHint(...args),
+      priorRuns: (current) => this.options.store.priorRuns(current),
+      acknowledged: async (run) => {
+        const result = await scheduledRunResult(run, {
+          readTurn: (threadId, turnId) => this.options.threads.readTurnForHost(threadId, turnId),
+          additionalTurns: (association) => new ScheduledRunOwnership(this.options.store, this.options.threads).turns(association),
+          recordPath: (threadId) => this.options.threads.threadRecordPath(threadId),
+          acknowledged: (id, key) => this.options.store.isAcknowledged(id, key),
+        });
+        return result.issues.length > 0 && result.issues.every((issue) => issue.acknowledged);
+      },
       readTurn: (threadId, turnId) => this.options.threads.readTurnForHost(threadId, turnId),
-      transcriptPath: (threadId) => this.options.threads.threadRecordPath(threadId),
+      recordPath: (threadId) => this.options.threads.threadRecordPath(threadId),
     };
   }
 
@@ -100,7 +111,8 @@ export class AutomationDispatcher {
     let acceptedTurn = false;
     try {
       let prepared = this.options.store.refreshPendingBrief(current.id, this.now());
-      if (current.worktree && JSON.stringify(current.snapshot.contextHint) !== JSON.stringify(prepared.snapshot.contextHint)) {
+      if (current.worktree && (JSON.stringify(current.snapshot.contextHint) !== JSON.stringify(prepared.snapshot.contextHint)
+        || current.snapshot.projectSnapshot?.primaryFolder !== prepared.snapshot.projectSnapshot?.primaryFolder)) {
         await this.options.worktrees.snapshotAndRemove(current.worktree, async (metadata) => {
           this.options.store.setWorktree(current.id, metadata, this.now());
         });

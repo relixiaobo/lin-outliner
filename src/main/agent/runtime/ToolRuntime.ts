@@ -418,8 +418,11 @@ export class ToolRuntime {
       ['Item', task.sourceItemId !== admission.source.sourceItemId],
       ['producer', task.producer !== 'bash'],
       ['nonce', task.nonce !== admission.toolTaskNonce],
-      ['stop', task.stopRequestedAt !== null],
-      ['state', !['queued', 'running'].includes(task.state)],
+      ['stop', task.stopRequestedAt !== null || task.continuation.stop !== null],
+      // The broker has already authenticated the invocation. Delayed supervisor
+      // observations cannot revoke its active source; actual stop/teardown still does.
+      ['state', !['queued', 'running'].includes(task.state)
+        && !(task.state === 'settling' && task.outcomeReason === 'ownership_unverified')],
       ['Bash capability', !source.configuration.tools.includes('bash') || (await this.options.disabledTools?.() ?? []).includes('bash')],
     ];
     const mismatch = mismatches.find(([, differs]) => differs);

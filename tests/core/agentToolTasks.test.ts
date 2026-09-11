@@ -808,6 +808,22 @@ describe('ToolTaskService', () => {
     expect((await second.output(task.taskId, OWNER_ID))?.stdout).toBe('after-restart');
   });
 
+  test('a verified heartbeat heals only an ownership uncertainty and preserves stop fences', async () => {
+    const fixture = await createFixture();
+    const service = await createService(fixture, passiveHost());
+    const task = await startHidden(service, 'sleep 30');
+    await waitUntil(() => fixture.store.read(task.taskId)?.childPid !== null);
+    fixture.store.setCoordinationError(task.taskId, 'Identity publication was delayed', Date.now(), 'ownership_unverified');
+    await waitUntil(() => fixture.store.read(task.taskId)?.state === 'running');
+    expect(fixture.store.read(task.taskId)).toMatchObject({ error: null, outcomeReason: null, stopRequestedAt: null });
+    fixture.store.markSettling(task.taskId, Date.now(), true);
+    fixture.store.setCoordinationError(task.taskId, 'Identity publication was delayed', Date.now(), 'ownership_unverified');
+    expect(fixture.store.restoreVerifiedOwnership(task.taskId, Date.now())).toBeNull();
+    expect(fixture.store.read(task.taskId)?.state).toBe('settling');
+    await service.stop(task.taskId, OWNER_ID);
+    expect((await waitForTerminal(service, task.taskId)).state).toBe('cancelled');
+  }, 15_000);
+
   test('does not declare loss during the restart identity-publication window', async () => {
     const fixture = await createFixture();
     const task = await seedRunningTask(fixture, 'task-publishing-identity', Date.now());

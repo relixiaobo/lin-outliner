@@ -70,6 +70,24 @@ describe('Scheduled run canonical ownership', () => {
     expect(result.issue).toContain('without a delivered answer');
   });
 
+  test('an interrupted Turn remains stopping until its cancellation-owned process settles', async () => {
+    const f = fixture();
+    const result = await scheduledRunResult(f.run, { readTurn: () => ({ ...f.original, status: 'interrupted' }),
+      stopping: () => true, recordPath: async () => '/records/one.md', acknowledged: () => false });
+    expect(result.state).toBe('stopping');
+    expect(result.finishedAt).toBeNull();
+    expect(result.issues[0]?.text).toBe('Execution was interrupted.');
+  });
+
+  test('unsettled resource attention stays separate from a delivered answer', async () => {
+    const f = fixture();
+    const result = await scheduledRunResult(f.run, { readTurn: () => f.original, recordPath: async () => '/records/one.md', acknowledged: () => false,
+      resourceIssues: () => [{ key: 'task:service:ownership_unverified', text: 'Service ownership needs recovery', turnId: f.original.id, terminal: false }] });
+    expect(result.state).toBe('completed');
+    expect(result.answer).toBe('Delivered answer');
+    expect(result.issues).toEqual([expect.objectContaining({ text: 'Service ownership needs recovery', terminal: false, acknowledged: false })]);
+  });
+
   test('missing canonical output shows unavailable and never preserves completed from a dispatch association', async () => {
     const f = fixture();
     const result = await scheduledRunResult(f.run, { readTurn: () => null, recordPath: async () => null, acknowledged: () => false });
@@ -85,6 +103,16 @@ describe('Scheduled run canonical ownership', () => {
     expect(result.state).toBe('completed');
     expect(result.answerTruncated).toBe(true);
     expect(result.recordPath).toBeNull();
+  });
+
+  test('a later delivery does not dismiss an older failed Turn in the same run', async () => {
+    const f = fixture();
+    const first = { ...f.original, status: 'failed', error: { message: 'Unresolved original failure' } } as Turn;
+    const update = { ...f.original, id: 'later-delivery', startedAt: 3, completedAt: 4 };
+    const result = await scheduledRunResult(f.run, { readTurn: () => first, additionalTurns: () => [update],
+      recordPath: async () => '/records/retained.md', acknowledged: () => false });
+    expect(result.state).toBe('completed');
+    expect(result.issues).toEqual([expect.objectContaining({ text: 'Unresolved original failure', acknowledged: false, turnId: first.id })]);
   });
 
   test('acknowledgement changes attention only and a different terminal cause remains new', async () => {

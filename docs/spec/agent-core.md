@@ -1264,8 +1264,8 @@ Timer callbacks, system resume, snapshots, and answer acceptance all reconcile
 against that original deadline. The timeout releases the same active Turn with
 an explicit `timedOut` result and no answers. It removes only input waiting;
 it does not complete a Turn, release an executing Task/run slot, or mark results
-read. Existing Automation execution admission remains unchanged; the future
-scheduled-work consumer must consume this same settlement, not add a timer.
+read. The Scheduled tasks workspace consumes this same settlement and retains
+the original foreground execution; it adds no independent question timer.
 
 Answer, Continue, discussion, timeout, cancellation, tool abort, Turn termination, and shutdown share
 one per-Thread input mutex. Answer validation checks the exact identity, complete

@@ -207,6 +207,7 @@ export function App() {
     openPreview,
     openThreadTrajectoryPanel,
     openScheduledTasks,
+    updateScheduledView,
     panels,
     repairInvalidPanelViews,
     resizePanelPair,
@@ -220,11 +221,7 @@ export function App() {
   });
   useEffect(() => {
     const unsubscribe = api.onAutomationNotification((notification) => {
-      if (notification.type !== 'automation/open') return;
-      openScheduledTasks();
-      void import('../agent/automations/automationStore').then(async ({ automationStore }) => {
-        await automationStore.initialize(); automationStore.select(notification.automationId);
-      }).catch((error) => setError(String(error)));
+      if (notification.type === 'automation/open') openScheduledTasks(notification.automationId);
     });
     return () => { unsubscribe(); };
   }, [openScheduledTasks]);
@@ -718,7 +715,7 @@ export function App() {
 
       <div className="app-shell">
         <Sidebar
-          onOpenScheduledTasks={openScheduledTasks}
+          onOpenScheduledTasks={() => openScheduledTasks()}
           expandedIds={sidebarExpandedIds}
           index={index}
           isNodePinned={isNodePinned}
@@ -741,7 +738,8 @@ export function App() {
         />
 
         <WorkspaceCanvas
-          onOpenScheduledProcess={(threadId, turnId) => openThreadTrajectoryPanel(threadId, { turnId })}
+          onScheduledViewChange={updateScheduledView}
+          onOpenScheduledProcess={(panelId, threadId, turnId) => openThreadTrajectoryPanel(threadId, { turnId }, panelId)}
           activePanelId={activePanelId}
           panels={panels}
           canvasRef={canvasRef}

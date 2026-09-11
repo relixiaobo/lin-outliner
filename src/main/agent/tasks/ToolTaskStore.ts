@@ -657,12 +657,20 @@ export class ToolTaskStore {
     return this.require(taskId);
   }
 
-  setCoordinationError(taskId: string, error: string, now: number): ToolTaskRecord {
+  setCoordinationError(taskId: string, error: string, now: number, reason: 'ownership_unverified' | null = null): ToolTaskRecord {
     this.db.prepare(`
-      UPDATE tool_tasks SET state = 'settling', error_message = ?, updated_at = ?
+      UPDATE tool_tasks SET state = 'settling', error_message = ?, outcome_reason = ?, updated_at = ?
       WHERE task_id = ? AND state IN ('running', 'settling')
-    `).run(error, now, taskId);
+    `).run(error, reason, now, taskId);
     return this.require(taskId);
+  }
+
+  restoreVerifiedOwnership(taskId: string, now: number): ToolTaskRecord | null {
+    const changed = this.db.prepare(`UPDATE tool_tasks SET state = 'running', error_message = NULL,
+      outcome_reason = NULL, updated_at = ? WHERE task_id = ? AND state = 'settling'
+      AND outcome_reason = 'ownership_unverified' AND stop_requested_at IS NULL AND terminal_digest IS NULL`)
+      .run(now, taskId);
+    return changed.changes ? this.require(taskId) : null;
   }
 
   commitTerminal(

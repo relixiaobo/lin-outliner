@@ -939,3 +939,30 @@
 .scheduled-panel > .scheduled-workspace { flex: 1; height: auto; }
 .scheduled-task-row strong { font-size: var(--font-ui-sm); font-weight: 500; }
 .scheduled-material { display: grid; gap: var(--space-4); margin-block: var(--space-6); }
+
+.scheduled-material-required {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  font-size: var(--font-ui-sm);
+  user-select: none;
+}
+.scheduled-material-required > input {
+  position: absolute;
+  inline-size: var(--space-hairline);
+  block-size: var(--space-hairline);
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.scheduled-material-required > input:focus-visible + .checkbox-mark { box-shadow: var(--focus-ring-shadow); }
+.scheduled-advanced > summary {
+  padding: var(--space-6);
+  font-size: var(--font-ui-sm);
+  color: var(--text-secondary);
+  list-style-position: inside;
+  user-select: none;
+}
+.scheduled-advanced > summary:hover { color: var(--text-primary); }
+.scheduled-advanced > summary:focus-visible { outline: none; box-shadow: var(--focus-ring-shadow); }
