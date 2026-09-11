@@ -238,6 +238,14 @@ Agent Core. It is a contract checklist, not project status.
 - Run typecheck, Core tests, renderer tests, E2E, docs check, and diff check
   before the PR is ready.
 
+Service handoff verification must exercise actual Bash evidence with different
+admitted directories and saved-folder changes. Task/Item ownership, success and
+post-launch ordering establish evidence eligibility; cwd equality does not.
+Application acceptance checks the exact isolated Runtime and content root with
+no-start inspection. A listening frontend or healthy sibling is insufficient.
+Scripted provider fixtures verify transport and lifecycle plumbing; semantic
+Agent acceptance and unresolved startup causes must be reported separately.
+
 ## Settings discovery and source settlement
 
 `settingsDefinitions.ts` is the scalar definition authority shared by validation,

@@ -1,5 +1,7 @@
 import { _electron as electron, type ElectronApplication, type Page } from '@playwright/test';
 import { mkdtempSync, rmSync } from 'node:fs';
+import { readdir } from 'node:fs/promises';
+import { ManagedSkillStore } from '../../src/main/managedSkillStore';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -55,7 +57,10 @@ export async function launchSmokeApp(options: LaunchOptions = {}): Promise<Smoke
   const packagedExecutable = process.env.TENON_SMOKE_EXECUTABLE;
   const app = await electron.launch({
     ...(packagedExecutable ? { executablePath: packagedExecutable } : {}),
-    args: packagedExecutable ? [] : [MAIN_ENTRY],
+    // Use package.json's built main entry through the package root. Launching
+    // the JS file directly makes app.getAppPath() point at out/main, hiding the
+    // development built-in Skills and testing an incomplete application.
+    args: packagedExecutable ? [] : [REPO_ROOT],
     cwd: REPO_ROOT,
     env: {
       ...baseEnv(),
@@ -81,6 +86,15 @@ async function waitForMainWindow(app: ElectronApplication): Promise<Page> {
 export async function closeSmokeApp(smoke: SmokeApp, { keepUserData = false } = {}): Promise<void> {
   await smoke.app.close();
   if (!keepUserData) {
+    // A complete app can acquire immutable managed Skills. Remove those through
+    // their owner before deleting this disposable userData tree.
+    const skills = new ManagedSkillStore(smoke.userDataDir);
+    const names = await readdir(skills.contentRoot).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return [];
+      throw error;
+    });
+    for (const name of names) await skills.removeSkill(name);
+    await skills.pruneStaging();
     rmSync(smoke.userDataDir, { recursive: true, force: true });
   }
 }

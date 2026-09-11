@@ -13,19 +13,21 @@ test('real gateway hands over a usable service silently and delivers a finite re
   const artifacts = join(REPO_ROOT, 'tmp/background-task-continuation');
   await mkdir(artifacts, { recursive: true });
   const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+  const checkDirectory = join(root, 'verification');
+  await mkdir(checkDirectory);
   const serverFile = join(root, 'application.cjs');
   const portFile = join(root, 'port');
   const exitFile = join(root, 'exit');
   const finiteGate = join(root, 'finite-done');
   await writeFile(serverFile, `const fs = require('node:fs'); const http = require('node:http');
 const server = http.createServer((req, res) => { res.end('usable application'); });
-server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portFile)}, String(server.address().port)));
+server.listen({ port: 0, host: '::1', ipv6Only: true }, () => fs.writeFileSync(${JSON.stringify(portFile)}, String(server.address().port)));
 setInterval(() => { if (fs.existsSync(${JSON.stringify(exitFile)})) process.exit(7); }, 30);`);
   const checkFile = join(root, 'check.cjs');
   await writeFile(checkFile, `const fs = require('node:fs');
 (async () => { for (let attempt = 0; attempt < 80; attempt++) { try {
  const port = fs.readFileSync(${JSON.stringify(portFile)}, 'utf8');
- const response = await fetch('http://127.0.0.1:' + port);
+ const response = await fetch('http://[::1]:' + port);
  if (await response.text() === 'usable application') { console.log('Application endpoint verified'); return; }
  } catch {} await new Promise(r => setTimeout(r, 50)); } process.exitCode = 1; })();`);
   let smoke: SmokeApp | undefined;
@@ -75,7 +77,7 @@ setInterval(() => { if (fs.existsSync(${JSON.stringify(exitFile)})) process.exit
           description: 'Local application', run_in_background: true, completion_agreement: { kind: 'service' } });
         else if (step === 2 && data?.backgroundTaskId) {
           taskId = data.backgroundTaskId;
-          tool('bash', { command: `${quote(process.execPath)} ${quote(checkFile)}`, cwd: root, description: 'Verify application readiness' });
+          tool('bash', { command: `${quote(process.execPath)} ${quote(checkFile)}`, cwd: checkDirectory, description: 'Verify application readiness' });
         } else if (step === 3 && data?.evidence) tool('task_control', { action: 'handoff', task_id: taskId,
           operation_id: 'smoke-handoff', expected_revision: 0, readiness: [data.evidence] });
         else {
@@ -95,6 +97,7 @@ setInterval(() => { if (fs.existsSync(${JSON.stringify(exitFile)})) process.exit
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   try {
     smoke = await launchSmokeApp();
+    if (!process.env.TENON_SMOKE_EXECUTABLE) expect(await smoke.app.evaluate(({ app }) => app.getAppPath())).toBe(REPO_ROOT);
     await configureSmokeProvider(smoke, `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`);
     let page = smoke.window;
     await page.getByRole('button', { name: 'Show Threads', exact: true }).click();
@@ -107,7 +110,12 @@ setInterval(() => { if (fs.existsSync(${JSON.stringify(exitFile)})) process.exit
     const threadId = await page.evaluate(async () => (await window.lin!.agentCoreRequest('thread/list', {})).data[0]!.id);
     const readTask = (id: string) => page.evaluate(({ threadId, taskId }) => window.lin!.agentCoreRequest('task/read', { threadId, taskId }), { threadId, taskId: id });
     expect((await readTask(taskId)).task.continuation.handoff).toBeTruthy();
+    const port = await (await import('node:fs/promises')).readFile(portFile, 'utf8');
+    await expect(fetch(`http://127.0.0.1:${port}`, { signal: AbortSignal.timeout(1000) })).rejects.toThrow();
+    expect(await (await fetch(`http://[::1]:${port}`)).text()).toBe('usable application');
     const callsBeforeExit = calls;
+    const handedTask = (await readTask(taskId)).task;
+    expect(handedTask.executionContext?.address.cwd).toContain('tenon-continuation-smoke-');
     await expect.poll(async () => (await page.evaluate((threadId) => window.lin!.agentCoreRequest('thread/turns/list', { threadId }), threadId)).data[0]?.status).toBe('completed');
     const userDataDir = smoke.userDataDir;
     const closed = smoke.app.waitForEvent('close');

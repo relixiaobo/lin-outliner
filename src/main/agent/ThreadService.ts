@@ -1,3 +1,4 @@
+import { AgentToolFailure } from './AgentToolFailure';
 import type { Stats } from 'node:fs';
 import { readdir,rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -1499,20 +1500,38 @@ export class ThreadService implements ThreadServiceExtensionHost {
 
   private validateTaskReadiness(task: import('./tasks/toolTaskTypes').ToolTaskRecord,
     references: readonly import('../../core/agent/taskContinuation').TaskItemReference[]): void {
+    const checks = this.toolTasks.store.listAll(task.ownerThreadId);
     for (const reference of references) {
       const item = this.taskEvidenceItem(task.ownerThreadId, reference);
-      const check = this.toolTasks.store.listAll(task.ownerThreadId)
-        .find((candidate) => candidate.sourceTurnId === reference.turnId && candidate.sourceItemId === reference.itemId);
-      if (!item || item.id === task.sourceItemId
-        || (item.type !== 'dynamicToolCall' && item.type !== 'commandExecution') || item.status !== 'completed'
-        || (item.type === 'dynamicToolCall' && (item.success !== true || ['task_status', 'task_control'].includes(item.tool)))
-        || (item.type === 'commandExecution' && item.exitCode !== 0)
-        || (check && (check.state !== 'succeeded' || check.startedAt < task.startedAt || check.cwd !== task.cwd))) {
-        throw new Error('Handoff requires completed successful readiness checks from this service execution lineage; launch progress and Task status are insufficient');
+      if (!item) {
+        throw new AgentToolFailure('readiness_unavailable',
+          "Readiness evidence is unavailable in this service's owning Thread.",
+          'Use the exact evidence reference returned by a successful check in this Thread. Do not copy references from another conversation.');
       }
-      // A successful native check must follow the launch, including within the same Turn.
-      if (!this.taskReferenceFollows(task.ownerThreadId, reference, { turnId: task.sourceTurnId, itemId: task.sourceItemId })) {
-        throw new Error('Readiness evidence predates the service launch');
+      if (item.provenance.originItemId !== item.id
+        || (reference.turnId === task.sourceTurnId && item.id === task.sourceItemId)
+        || (item.type !== 'dynamicToolCall' && item.type !== 'commandExecution')
+        || (item.type === 'dynamicToolCall' && ['task_status', 'task_control'].includes(item.tool))) {
+        throw new AgentToolFailure('readiness_ineligible',
+          `Item ${item.id} is not an application readiness check.`,
+          'Run an application check after launch. Launch output, Task status and control receipts are not readiness evidence.');
+      }
+      const check = checks.find((candidate) => candidate.sourceTurnId === reference.turnId && candidate.sourceItemId === reference.itemId);
+      if (item.status !== 'completed'
+        || (item.type === 'dynamicToolCall' && item.success !== true)
+        || (item.type === 'commandExecution' && item.exitCode !== 0)
+        || (check && check.state !== 'succeeded')) {
+        throw new AgentToolFailure('readiness_unsuccessful',
+          `Readiness check ${item.id} has not completed successfully.`,
+          'Inspect the failed or unfinished check. Only completed successful application checks can support handoff; do not repeat an unchanged failed check.');
+      }
+      // Cwd is an admitted execution fact, not service identity or extra authority.
+      // Task/Item references bind the check; the Agent evaluates what it proves.
+      if ((check && check.startedAt < task.startedAt)
+        || !this.taskReferenceFollows(task.ownerThreadId, reference, { turnId: task.sourceTurnId, itemId: task.sourceItemId })) {
+        throw new AgentToolFailure('readiness_before_launch',
+          `Readiness check ${item.id} predates the service launch.`,
+          'Run a fresh check of this exact running service and use its returned evidence reference.');
       }
     }
   }

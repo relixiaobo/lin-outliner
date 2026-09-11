@@ -7474,9 +7474,27 @@ describe('background Task responsibility authority', () => {
     const valid = await item(context, 'web_fetch', true);
     const caller = await item(context, 'task_control');
     const input = { action: 'handoff' as const, task_id: task.taskId, operation_id: 'handoff', expected_revision: 0, readiness: [valid] };
-    for (const reference of [earlier, launch, failed, status, { ...valid, itemId: 'missing' }]) {
-      await expect(tasks.control(thread.id, caller, { ...input, readiness: [reference] })).rejects.toThrow();
+    const unfinished = await item(context, 'web_fetch');
+    const control = await item(context, 'task_control', true);
+    for (const [reference, code] of [
+      [earlier, 'readiness_before_launch'], [launch, 'readiness_ineligible'],
+      [failed, 'readiness_unsuccessful'], [unfinished, 'readiness_unsuccessful'],
+      [status, 'readiness_ineligible'], [control, 'readiness_ineligible'],
+      [{ ...valid, itemId: 'missing' }, 'readiness_unavailable'],
+    ] as const) {
+      await expect(tasks.control(thread.id, caller, { ...input, readiness: [reference] })).rejects.toMatchObject({ code });
     }
+    const copiedId = context.recorder.createItemId();
+    const copied = { ...context.recorder.item(valid.itemId)!, id: copiedId,
+      provenance: { ...context.recorder.localProvenance(copiedId), originThreadId: uuidV7(), originItemId: valid.itemId } };
+    await context.recorder.started({ ...copied, status: 'inProgress', success: null, durationMs: null } as ThreadItem);
+    await expect(tasks.control(thread.id, caller, { ...input, readiness: [{ turnId: context.turn.id, itemId: copiedId }] }))
+      .rejects.toMatchObject({ code: 'readiness_unavailable' });
+    const localCopyId = context.recorder.createItemId();
+    await context.recorder.started({ ...copied, id: localCopyId, status: 'inProgress', success: null, durationMs: null,
+      provenance: context.recorder.localProvenance(valid.itemId) } as ThreadItem);
+    await expect(tasks.control(thread.id, caller, { ...input, readiness: [{ turnId: context.turn.id, itemId: localCopyId }] }))
+      .rejects.toMatchObject({ code: 'readiness_ineligible' });
     await expect(tasks.control(thread.id, { ...caller, turnId: 'another-turn' }, input)).rejects.toThrow('active Tool Item');
     const foreign = (await fixture.service.startThread({ source: 'app', threadSource: 'user', modelProvider: 'openai', configurationSource: { kind: 'user' } })).thread;
     await expect(tasks.control(foreign.id, caller, input)).rejects.toThrow('active Tool Item');
@@ -7489,6 +7507,65 @@ describe('background Task responsibility authority', () => {
     await writeFile(gate, 'exit');
     await withTimeout(waitUntil(() => tasks.readOwned(task.taskId, thread.id)?.deliveryState === 'silent'), 3000);
     expect(fixture.executor.contexts).toHaveLength(1);
+  });
+
+  test('hands off actual Bash evidence across saved-folder changes without redirecting execution', async () => {
+    const fixture = await admittedFixture();
+    const { context, tasks, thread, service } = fixture;
+    const a = join(fixture.root, 'application'), b = join(fixture.root, 'checks');
+    await mkdir(a); await mkdir(b);
+    await service.projects.manage({ operation: 'setWorkFolder', threadId: thread.id, path: a, expectedRevision: 0 });
+    const runtime = new ToolRuntime(service, {
+      capabilityConfig: { blocks: [] },
+      capabilityTools: () => createLocalTools({
+        workspace: { root: service.defaultExecutionDirectory(), scratchRoot: join(fixture.root, 'scratch'), readFileState: new Map(), threadId: thread.id,
+          resolveWorkFolder: () => service.projects.store.workFolder(thread.id) },
+        toolTaskService: tasks, turnId: context.turn.id,
+      }),
+    });
+    const tools = await runtime.createTools(context);
+    async function execute(name: string, args: Record<string, unknown>) {
+      const id = context.recorder.createItemId();
+      const started = { id, type: 'dynamicToolCall', provenance: context.recorder.localProvenance(id), namespace: null, tool: name, arguments: args,
+        modelCall: replayableModelCall(name, args), status: 'inProgress', outputRef: null, contentItems: null, success: null, durationMs: null } as const;
+      await context.recorder.started(started);
+      const result = await executeTool(tools, name, id, args) as any;
+      await context.recorder.completed({ ...started, status: 'completed', success: result.details.ok, durationMs: 1 });
+      return result.details;
+    }
+    const before = await execute('bash', { command: 'pwd', description: 'Before launch', cwd: b });
+    const launched = await execute('bash', { command: 'touch ready; sleep 30', description: 'Application', cwd: a,
+      run_in_background: true, completion_agreement: { kind: 'service' } });
+    const taskId = launched.data.backgroundTaskId;
+    expect(taskId).toBeTruthy();
+    await withTimeout(waitUntil(() => tasks.readOwned(taskId, thread.id)?.state === 'running'
+      && tasks.readOwned(taskId, thread.id)?.childPid !== null), 3000);
+    const original = tasks.readOwned(taskId, thread.id)!;
+    await service.projects.manage({ operation: 'setWorkFolder', threadId: thread.id, path: b, expectedRevision: 1 });
+    const failed = await execute('bash', { command: 'exit 7', description: 'Failed application check' });
+    for (const [evidence, code] of [[before.data.evidence, 'readiness_before_launch'], [failed.data.evidence, 'readiness_unsuccessful'],
+      [{ turnId: context.turn.id, itemId: 'missing' }, 'readiness_unavailable']] as const) {
+      const refused = await execute('task_control', { action: 'handoff', task_id: taskId, operation_id: `refused-${code}`,
+        expected_revision: 0, readiness: [evidence] });
+      expect(refused).toMatchObject({ ok: false, error: { code } });
+      expect(JSON.stringify(refused)).not.toContain('execution_failed');
+      expect(refused.instructions).toBeTruthy();
+    }
+    const checked = await execute('bash', { command: `test -f '${a}/ready' && pwd`, description: 'Check the original application' });
+    expect(checked.ok).toBe(true);
+    const check = tasks.store.listAll(thread.id).find((entry) => entry.sourceItemId === checked.data.evidence.itemId)!;
+    expect(check).toMatchObject({ state: 'succeeded', cwd: await realpath(b) });
+    const input = { action: 'handoff', task_id: taskId, operation_id: 'cross-directory', expected_revision: 0, readiness: [checked.data.evidence] };
+    const accepted = await execute('task_control', input);
+    expect(accepted).toMatchObject({ ok: true, data: { receipt: { status: 'accepted', revision: 1 } } });
+    expect((await execute('task_control', input)).data.receipt).toEqual(accepted.data.receipt);
+    expect(service.projects.store.workFolder(thread.id)).toMatchObject({ path: await realpath(b), revision: 2 });
+    expect(tasks.readOwned(taskId, thread.id)).toMatchObject({ cwd: await realpath(a), executionContext: { address: original.executionContext.address } });
+    await tasks.stop(taskId, thread.id, context.turn.id, 'agent');
+    expect(await execute('task_control', { ...input, operation_id: 'stopped', expected_revision: tasks.readOwned(taskId, thread.id)!.continuation.revision }))
+      .toMatchObject({ ok: true, data: { receipt: { status: 'conflict' } } });
+    fixture.executor.finish();
+    await service.waitForIdle(thread.id);
   });
 
   test('binds watch requests to reader Items and rejects reusing a revoked request', async () => {
