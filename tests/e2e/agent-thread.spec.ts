@@ -3025,7 +3025,13 @@ test.describe('canonical agent Thread surface', () => {
     const send = page.getByRole('button', { name: 'Send' });
     await expect(send).toBeDisabled();
     await expect(send).toHaveAttribute('title', 'Configure an AI provider before starting a Thread.');
-    await expect(page.getByRole('button', { name: 'Add attachment' })).toBeDisabled();
+    const add = page.locator('.thread-composer-toolbar').getByRole('button', { name: 'Add', exact: true });
+    await expect(add).toBeEnabled();
+    await add.click();
+    await expect(page.getByRole('menuitem', { name: 'Add attachment' })).toBeDisabled();
+    await expect(page.getByRole('menuitem', { name: 'Set work folder', exact: true })).toBeEnabled();
+    await page.keyboard.press('Escape');
+    await expect(add).toBeFocused();
     await expect(composer).toHaveText('Keep this draft.');
   });
 
@@ -5131,7 +5137,13 @@ test.describe('canonical agent Thread surface', () => {
     });
 
     await expect(page.getByRole('button', { name: 'Interrupt Turn' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Add attachment' })).toBeDisabled();
+    const add = page.locator('.thread-composer-toolbar').getByRole('button', { name: 'Add', exact: true });
+    await expect(add).toBeEnabled();
+    await add.click();
+    await expect(page.getByRole('menuitem', { name: 'Add attachment' })).toBeDisabled();
+    await expect(page.getByRole('menuitem', { name: 'Set work folder', exact: true })).toBeEnabled();
+    await page.keyboard.press('Escape');
+    await expect(add).toBeFocused();
     await expect(page.getByRole('button', { name: 'Model and reasoning' })).toBeDisabled();
     const composer = page.getByRole('textbox', { name: 'Message this Thread' });
     await composer.fill('Use the shorter path.');

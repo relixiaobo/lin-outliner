@@ -102,7 +102,7 @@ export function parseDelegateLaunchCapability(bytes: Uint8Array): DelegateLaunch
 function isDelegateStateCommandValue(value: unknown): value is DelegateStateCommand {
   if (!isRecord(value) || typeof value.name !== 'string' || typeof value.output !== 'string') return false;
   if (value.output !== 'text' && value.output !== 'json') return false;
-  if (value.name === 'run') {
+  if (value.name === 'run' || value.name === 'project') {
     return value.input === '-' && exactKeys(value, ['name', 'input', 'output']);
   }
   if (value.name === 'close') {

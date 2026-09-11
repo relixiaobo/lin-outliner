@@ -1453,19 +1453,19 @@ describe('Automation Project hints', () => {
     const next = await realpath(await tempRoot('automation-next-project-'));
     const store = automationStore();
     const now = Date.parse('2026-07-24T09:00:00Z');
-    let project: Project = { id: uuidV7(), name: 'Original', rootHint: source, revision: 1, createdAt: now, updatedAt: now };
+    let project: Project = { id: uuidV7(), name: 'Original', folders: [source], primaryFolder: source, revision: 1, createdAt: now, updatedAt: now };
     store.bindProjectResolver(() => project);
     const service = automationServiceFor(store, now, { resolveProjectHint: () => project });
     const automation = await service.create({ ...definition('20260724T100000'),
       contextHints: [{ source: { kind: 'project', projectId: project.id }, executionMode: 'local' }] });
     const run = store.claimNow(automation, automation.contextHints[0]!, now);
-    project = { ...project, name: 'Edited', rootHint: next, revision: 2 };
+    project = { ...project, name: 'Edited', folders: [next], primaryFolder: next, revision: 2 };
     const host = threadHost();
     expect((await dispatcherFor(store, host, now).dispatch(run)).state).toBe('dispatched');
     expect(host.turnCalls[0]?.dispatchContext.sourceContext.address.cwd).toBe(source);
     expect(host.turnCalls[0]?.dispatchContext.configuration).toEqual(defaultEffectiveThreadConfiguration());
     const fresh = store.claimNow(automation, automation.contextHints[0]!, now + 1);
-    expect(fresh.snapshot.projectSnapshot?.rootHint).toBe(next);
+    expect(fresh.snapshot.projectSnapshot?.primaryFolder).toBe(next);
   });
 
   test('rejects a saved Project path redirected through a symlink before Turn admission', async () => {
@@ -1473,7 +1473,7 @@ describe('Automation Project hints', () => {
     const replacement = await realpath(await tempRoot('automation-project-replacement-'));
     const store = automationStore();
     const now = Date.parse('2026-07-24T09:00:00Z');
-    const project: Project = { id: uuidV7(), name: 'Original', rootHint: source, revision: 1, createdAt: now, updatedAt: now };
+    const project: Project = { id: uuidV7(), name: 'Original', folders: [source], primaryFolder: source, revision: 1, createdAt: now, updatedAt: now };
     store.bindProjectResolver(() => project);
     const service = automationServiceFor(store, now, { resolveProjectHint: () => project });
     const input = { ...definition('20260724T100000'),
@@ -1493,19 +1493,19 @@ describe('Automation Project hints', () => {
     const source = await realpath(await tempRoot('automation-project-cleared-'));
     const store = automationStore();
     const now = Date.parse('2026-07-24T09:00:00Z');
-    let project: Project = { id: uuidV7(), name: 'Workspace', rootHint: source, revision: 1, createdAt: now, updatedAt: now };
+    let project: Project = { id: uuidV7(), name: 'Workspace', folders: [source], primaryFolder: source, revision: 1, createdAt: now, updatedAt: now };
     store.bindProjectResolver(() => project);
     const service = automationServiceFor(store, now, { resolveProjectHint: () => project });
     const automation = await service.create({ ...definition('20260724T100000'),
       contextHints: [{ source: { kind: 'project', projectId: project.id }, executionMode: 'local' }] });
-    project = { ...project, rootHint: null, revision: 2 };
+    project = { ...project, folders: [], primaryFolder: null, revision: 2 };
     const run = store.claimNow(automation, automation.contextHints[0]!, now);
     const host = threadHost();
     const dispatcher = dispatcherFor(store, host, now);
     const failed = await dispatcher.dispatch(run);
     expect(failed.state).toBe('failed');
     expect(failed.error).toContain('no saved directory');
-    expect(failed.snapshot.projectSnapshot?.rootHint).toBeNull();
+    expect(failed.snapshot.projectSnapshot?.primaryFolder).toBeNull();
     expect(host.turnCalls).toHaveLength(0);
     const unrelated = store.create(definition('20260724T100000'), now);
     expect((await dispatcher.dispatch(store.claimNow(unrelated, null, now))).state).toBe('dispatched');
@@ -1515,7 +1515,7 @@ describe('Automation Project hints', () => {
     const source = await realpath(await tempRoot('automation-project-reactivate-'));
     const store = automationStore();
     const now = Date.parse('2026-07-24T09:00:00Z');
-    const project: Project = { id: uuidV7(), name: 'Original', rootHint: source, revision: 1, createdAt: now, updatedAt: now };
+    const project: Project = { id: uuidV7(), name: 'Original', folders: [source], primaryFolder: source, revision: 1, createdAt: now, updatedAt: now };
     let available = true;
     const resolve = () => { if (!available) throw new Error('Project is missing'); return project; };
     store.bindProjectResolver(resolve);

@@ -335,10 +335,10 @@ export function AutomationEditor(props: AutomationEditorProps) {
                       <option value="">{projectLabels.directory}</option>
                       {binding.projectId && !projects.view.projects.some((project) => project.id === binding.projectId)
                         ? <option value={binding.projectId}>{projectLabels.unavailable}</option> : null}
-                      {projects.view.projects.map((project) => <option key={project.id} value={project.id} disabled={!project.rootHint}>{project.name}</option>)}
+                      {projects.view.projects.map((project) => <option key={project.id} value={project.id} disabled={!project.primaryFolder}>{project.name}</option>)}
                     </SelectControl>
                   </Field>
-                  {binding.projectId ? <p className="project-path">{projects.view.projects.find((project) => project.id === binding.projectId)?.rootHint ?? projectLabels.unavailable}</p> : <Field label={t.projectPath({ index: index + 1 })}>
+                  {binding.projectId ? <p className="project-path">{projects.view.projects.find((project) => project.id === binding.projectId)?.primaryFolder ?? projectLabels.unavailable}</p> : <Field label={t.projectPath({ index: index + 1 })}>
                     <Input
                       disabled={props.busy}
                       label={t.projectPath({ index: index + 1 })}

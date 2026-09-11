@@ -128,6 +128,7 @@ export function projectAgentCoreResponse<Method extends AgentCoreMethod>(
     case 'userInput/read':
     case 'userInput/respond':
     case 'identities/get':
+    case 'project/pickFolder':
     case 'project/inspect':
     case 'project/manage':
       return response as unknown as RendererAgentCoreResponseByMethod[Method];
@@ -161,6 +162,7 @@ export function projectAgentCoreNotification(
     case 'item/delta':
     case 'turn/providerRetry/changed':
     case 'turn/plan/updated':
+    case 'project/catalog/changed':
     case 'toolTask/changed':
     case 'userInput/requested':
     case 'userInput/resolved':

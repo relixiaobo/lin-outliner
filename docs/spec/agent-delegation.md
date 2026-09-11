@@ -11,6 +11,14 @@ Delegation is experimental and disabled by default. The former Subagent tools,
 Agent tree, Agent IDs, peer messaging, Role-backed Agent types, and generic
 isolated-Skill execution do not coexist with it.
 
+The invocation broker and packaged executable also transport the independent
+foreground `delegate project --input - --output json` operation. This is a
+supervised Bash Task, never a Delegation Session. Its Host policy and current
+Bash authorization are independent of the delegation experiment and runner
+configuration. The Project service owns native proposals, revisions, and result
+receipts; see [Project organization](agent-tool-design.md#project-organization).
+The delegation commands and background Session rules below remain unchanged.
+
 ## Product Surface
 
 When the experiment and at least one configured launcher are enabled, the root

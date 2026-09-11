@@ -27,14 +27,14 @@ validation result as runtime identity. There are at most 32 hints. Zero hints
 means one implicit `default` hint using the documented Host default. An
 existing-Thread destination accepts at most one explicit hint.
 Directory and Project-ID sources are executable. Project sources resolve through
-`ProjectService` under the scheduler lifecycle lock, require a live saved directory,
+`ProjectService` under the scheduler lifecycle lock, require a live primary source directory,
 and never fall back to the Host default or a guessed directory. Create, edit,
 resume, and reactivation validate that live hint before persistence.
 
 Hint IDs identify scheduling/continuity slots within an Automation. They survive
 reordering and edits to a slot's source or policy, do not encode a directory,
 and are never reused after removal. A removed hint's history retains its saved
-source. Project root-hint edits affect future claim snapshots, not pending
+source. Project primary-folder edits affect future claim snapshots, not pending
 claims or existing execution contexts. Claim creation captures the effective
 root hint and display values under the Project lifecycle fence. A Project-source
 run requires an identity-matching `projectSnapshot` containing the name, canonical
@@ -514,7 +514,9 @@ canonical Thread/Turn. There are no local substitutes for ChatGPT cloud
 Suggestions or Automation-level notification settings.
 
 The Automation editor can select a saved Project or enter a standalone directory
-for each context hint. A Project without a directory is disabled. A removed Project
+for each context hint. A Project without a primary folder is disabled. Secondary
+Project folders do not add execution fan-out, and an originating conversation's
+mutable work-folder preference never changes a saved Automation location. A removed Project
 remains visibly unavailable on a completed definition; editing its source preserves
 the scheduling slot ID. Historical roots are never copied into a reactivation.
 

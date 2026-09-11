@@ -386,9 +386,9 @@ function requireThreadId(run: AutomationRun): string {
 
 function requireProjectSnapshotRoot(snapshot: AutomationRun['snapshot']): string {
   const project = snapshot.projectSnapshot;
-  if (snapshot.contextHint?.source.kind !== 'project' || !project?.rootHint
+  if (snapshot.contextHint?.source.kind !== 'project' || !project?.primaryFolder
     || project.id !== snapshot.contextHint.source.projectId) throw new Error('Automation Project hint is unavailable or has no saved directory');
-  return project.rootHint;
+  return project.primaryFolder;
 }
 
 export function contextHintForRun(
