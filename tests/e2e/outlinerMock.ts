@@ -4041,10 +4041,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       },
       agentCoreRequest: async <T,>(method: string, input: Record<string, unknown> = {}): Promise<T> => {
         calls.push({ cmd: method, args: clone(input) });
-        if (method === 'project/pickFolder') {
-          const state = window as unknown as { __nextProjectFolder?: string | null };
-          const path = state.__nextProjectFolder ?? null; delete state.__nextProjectFolder;
-          return { path } as T;
+        if (method === 'project/pickFolders') {
+          const state = window as unknown as { __nextProjectFolders?: string[] };
+          const paths = state.__nextProjectFolders ?? []; delete state.__nextProjectFolders;
+          return { paths } as T;
         }
         if (method === 'project/inspect') return clone({
           unavailableFolders: (window as unknown as { __unavailableProjectFolders?: string[] }).__unavailableProjectFolders ?? [],

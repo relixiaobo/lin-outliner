@@ -126,7 +126,7 @@ export interface WindowApplicationHostOptions {
 }
 
 export interface WindowApplicationHost {
-  pickProjectFolder(): Promise<{ path: string | null }>;
+  pickProjectFolders(): Promise<{ paths: readonly string[] }>;
   reviewProjectChange(request: import('../agent/projects/ProjectService').ProjectReview, signal: AbortSignal): Promise<boolean>;
   reviewMemoryReset: import('../hostDomain/memoryOperations').ReviewMemoryReset;
   openMemoryNode(nodeId: string, authorize: () => Promise<void>): Promise<'opened' | 'unavailable' | 'unknown'>;
@@ -881,14 +881,14 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
   });
 
   const host: WindowApplicationHost = {
-    pickProjectFolder: async () => {
+    pickProjectFolders: async () => {
       const parent = liveWindow(mainWindow);
       if (released || !parent) throw new Error('The folder picker is unavailable');
       const result = await dialog.showOpenDialog(parent, {
         title: getMessages(effectiveLocale()).agent.projects.chooseFolder,
-        properties: ['openDirectory'],
+        properties: ['openDirectory', 'multiSelections'],
       });
-      return { path: result.canceled ? null : result.filePaths[0] ?? null };
+      return { paths: result.canceled ? [] : result.filePaths };
     },
     reviewProjectChange: async ({ request, project, threadName }, signal) => {
       signal.throwIfAborted();

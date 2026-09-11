@@ -4,7 +4,7 @@ import * as fs from 'node:fs/promises';
 import { mkdtemp, realpath, rm, symlink, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { decodeProjectManageRequest, type Project } from '../../src/core/agent/project';
+import { decodeProjectFolderPick, decodeProjectManageRequest, type Project } from '../../src/core/agent/project';
 import { decodeAutomationResponse, EMPTY_AUTOMATION_CONFIGURATION } from '../../src/core/agent/automation';
 import type { Thread } from '../../src/core/agent/protocol';
 import { defaultEffectiveThreadConfiguration } from '../../src/main/agent/AgentConfigurationLoader';
@@ -494,4 +494,12 @@ describe('invocation-bound Project operations', () => {
     })).rejects.toThrow('Project changed');
     expect(host.projects.require(project.id)).toMatchObject({ name: 'Newer UI edit', revision: 2 });
   });
+});
+
+test('native Project folder results accept multiselection and cancellation but reject invalid paths', () => {
+  expect(decodeProjectFolderPick({ paths: [] })).toEqual({ paths: [] });
+  expect(decodeProjectFolderPick({ paths: ['/work/app', '/work/docs'] })).toEqual({ paths: ['/work/app', '/work/docs'] });
+  for (const invalid of [{ path: '/work/app' }, { paths: null }, { paths: [null] }, { paths: ['relative'] }, { paths: ['/work'], extra: true }]) {
+    expect(() => decodeProjectFolderPick(invalid)).toThrow();
+  }
 });

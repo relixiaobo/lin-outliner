@@ -1482,9 +1482,10 @@ export const en = {
   agent: {
     projects: {
       operations: { create: 'Create Project', update: 'Edit Project', bind: 'Change conversation Project', delete: 'Delete Project' },
-      project: 'Project', create: 'Create project', projectName: 'Project name', addFoldersHint: 'Add folders to this project', noResults: 'No projects found.', retrySelection: 'Retry selection', chooseFolder: 'Choose folder',
+      project: 'Project', create: 'Create project', projectName: 'Project name', addFoldersHint: 'Add folders to this project', noResults: 'No projects found.', retrySelection: 'Retry selection', chooseFolder: 'Choose folders',
       add: 'Add', chooseProject: 'Choose project', changeProject: 'Change project', removeFromChat: 'Remove project from chat', withoutProject: "Don't work in a project", search: 'Search projects', sourceFolders: 'Source folders',
-      primary: 'Primary', makePrimary: 'Make primary', addFolder: 'Add folder', removeFolder: 'Remove folder',
+      primary: 'Primary', makePrimary: 'Make primary', addFolder: 'Add folders', removeFolder: 'Remove folder',
+      folderLimit: 'A Project can contain up to 20 folders. Add fewer folders.',
       duplicateFolder: 'This folder is already in the Project.', choosePrimary: 'Choose a replacement primary folder before saving.',
       organizationOnly: 'Organize conversations; add source folders whenever needed.',
       workFolder: 'Work folder',

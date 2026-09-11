@@ -122,6 +122,13 @@ retains grouping and membership metadata but has no Project management or
 assignment action. Closing the picker
 restores focus to the chip; successful removal restores focus to Add.
 
+Add folders opens a native directory picker with multiselection. Cancellation
+leaves the draft unchanged. A batch appends distinct new paths in picker order;
+the first added folder supplies the initial name suggestion and primary only
+when the source list was empty. Existing names and primaries remain unchanged.
+A batch exceeding the 20-folder total is rejected with a visible message,
+without partially adding its folders.
+
 Project folder rows are single-line and share icon, path, primary-action and
 remove columns. The Project dialog is 560px wide, capped to the viewport with
 16px outer insets. The final folder name takes its intrinsic width before the

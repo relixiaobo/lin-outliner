@@ -57,13 +57,15 @@ export function ProjectDialog({ initialMode, view, thread, unavailable, catalogE
     onClose();
   }
   const addFolder = () => void run(async () => {
-    const { path } = await api.agentCoreRequest('project/pickFolder', {});
-    if (!path) return;
-    if (folders.includes(path)) throw new Error(t.duplicateFolder);
-    setFolders((current) => [...current, path]);
+    const { paths } = await api.agentCoreRequest('project/pickFolders', {});
+    const additions = [...new Set(paths)].filter((path) => !folders.includes(path));
+    if (!additions.length) return;
+    if (folders.length + additions.length > 20) throw new Error(t.folderLimit);
+    setFolders((current) => [...current, ...additions]);
     if (!folders.length) {
-      setPrimaryFolder(path);
-      if (!name.trim()) setName(path.split(/[\\/]/u).filter(Boolean).at(-1) ?? path);
+      const first = additions[0]!;
+      setPrimaryFolder(first);
+      if (!name.trim()) setName(first.split(/[\\/]/u).filter(Boolean).at(-1) ?? first);
     }
   });
   return createPortal(<Dialog backdropClassName="confirm-dialog-backdrop" surfaceClassName="confirm-dialog project-dialog"

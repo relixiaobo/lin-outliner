@@ -77,7 +77,7 @@ test('native Project picker and Agent primary-folder edit drive defaults across 
     await page.getByRole('menu', { name: 'Add', exact: true }).locator('[aria-haspopup="menu"]').hover();
     await page.getByRole('menuitem', { name: 'New Project', exact: true }).click();
     const form = page.getByRole('dialog', { name: 'Create project', exact: true });
-    await form.getByRole('button', { name: 'Add folder', exact: true }).click();
+    await form.getByRole('button', { name: 'Add folders', exact: true }).click();
     await expect(form.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('repository');
     await form.getByRole('textbox', { name: 'Name', exact: true }).fill('Native folder Project');
     await form.getByRole('button', { name: 'Create project', exact: true }).click();
@@ -124,4 +124,27 @@ test('native Project picker and Agent primary-folder edit drive defaults across 
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('native Project folder multiselection returns every directory and handles cancellation', async () => {
+  const smoke = await launchSmokeApp();
+  try {
+    await smoke.app.evaluate(({ dialog }) => {
+      (globalThis as any).__projectPickerOptions = [];
+      let canceled = false;
+      dialog.showOpenDialog = (async (_parent: unknown, options: unknown) => {
+        (globalThis as any).__projectPickerOptions.push(options);
+        const result = { canceled, filePaths: ['/tmp/project-app', '/tmp/project-docs'] };
+        canceled = true;
+        return result;
+      }) as typeof dialog.showOpenDialog;
+    });
+    const picked = await smoke.window.evaluate(() => window.lin!.agentCoreRequest('project/pickFolders', {}));
+    expect(picked).toEqual({ paths: ['/tmp/project-app', '/tmp/project-docs'] });
+    const canceled = await smoke.window.evaluate(() => window.lin!.agentCoreRequest('project/pickFolders', {}));
+    expect(canceled).toEqual({ paths: [] });
+    const options = await smoke.app.evaluate(() => (globalThis as any).__projectPickerOptions);
+    expect(options).toHaveLength(2);
+    expect(options[0].properties).toEqual(['openDirectory', 'multiSelections']);
+  } finally { await closeSmokeApp(smoke); }
 });

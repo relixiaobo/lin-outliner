@@ -595,7 +595,7 @@ function constructAgentHost(): Promise<AgentHost> {
   }),
   createThreadOptions: ({ configuration }) => ({
     defaultExecutionDirectory: agentLocalFileRoot,
-    pickWorkFolder: () => windowApplicationHost.pickProjectFolder(),
+    pickProjectFolders: () => windowApplicationHost.pickProjectFolders(),
     reviewProjectChange: (request, signal) => windowApplicationHost.reviewProjectChange(request, signal),
     resolveConfiguration: (request) => configuration.resolveProfile(
       request.configurationProfile,

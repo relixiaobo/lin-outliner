@@ -154,7 +154,7 @@ function decodeApplicationDefault(value: unknown): ProjectCatalogView['applicati
   return { path: root(entry.path), available: entry.available };
 }
 
-export function decodeProjectFolderPick(value: unknown): { path: string | null } {
-  const entry = record(value, ['path']);
-  return { path: root(entry.path) };
+export function decodeProjectFolderPick(value: unknown): { paths: readonly string[] } {
+  const entry = record(value, ['paths']);
+  return { paths: Object.freeze(array(entry.paths, requiredRoot, 1_000)) };
 }

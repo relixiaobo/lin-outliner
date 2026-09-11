@@ -1,8 +1,8 @@
 import { expect, test, type Page } from '@playwright/test';
 import { commandCalls, openMockedApp } from './outlinerMock';
 
-async function nextFolder(page: Page, path: string) {
-  await page.evaluate((path) => { (window as unknown as { __nextProjectFolder: string }).__nextProjectFolder = path; }, path);
+async function nextFolder(page: Page, path: string | string[]) {
+  await page.evaluate((path) => { (window as unknown as { __nextProjectFolders: string[] }).__nextProjectFolders = Array.isArray(path) ? path : [path]; }, path);
 }
 async function projectMenu(page: Page) {
   await page.locator('.thread-composer-toolbar').getByRole('button', { name: 'Add', exact: true }).click();
@@ -37,13 +37,13 @@ for (const theme of ['light', 'dark'] as const) {
     const form = page.getByRole('dialog', { name: 'Create project', exact: true });
     await expect(form.getByRole('textbox', { name: 'Name', exact: true })).toBeFocused();
     await form.screenshot({ path: testInfo.outputPath(`project-create-empty-${theme}.png`) });
-    expect((await form.getByRole('button', { name: 'Add folder', exact: true }).boundingBox())!.height).toBeGreaterThanOrEqual(100);
+    expect((await form.getByRole('button', { name: 'Add folders', exact: true }).boundingBox())!.height).toBeGreaterThanOrEqual(100);
     await nextFolder(page, '/Users/developer/tenon');
-    await form.getByRole('button', { name: 'Add folder', exact: true }).click();
+    await form.getByRole('button', { name: 'Add folders', exact: true }).click();
     await expect(form.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('tenon');
     await form.getByRole('textbox', { name: 'Name', exact: true }).fill('Tenon');
     await nextFolder(page, '/Users/developer/reference');
-    await form.getByRole('button', { name: 'Add folder', exact: true }).click();
+    await form.getByRole('button', { name: 'Add folders', exact: true }).click();
     const folderAlignment = await form.evaluate((dialog) => {
       const folderIcon = dialog.querySelector('.project-list-row .project-icon-slot')!.getBoundingClientRect();
       const addIcon = dialog.querySelector('.project-add-folder-action .project-icon-slot')!.getBoundingClientRect();
@@ -407,12 +407,15 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(form.getByText('Choose a replacement primary folder before saving.', { exact: true })).toBeVisible();
     await rows.filter({ hasText: '/work/main' }).getByRole('button', { name: 'Make primary', exact: true }).click();
     await nextFolder(page, '/work/main');
-    await form.getByRole('button', { name: 'Add folder', exact: true }).click();
-    await expect(form.getByRole('alert')).toHaveText('This folder is already in the Project.');
+    await form.getByRole('button', { name: 'Add folders', exact: true }).click();
+    await expect(form.getByRole('alert')).toHaveCount(0);
+    await nextFolder(page, Array.from({ length: 20 }, (_, index) => `/too-many/${index}`));
+    await form.getByRole('button', { name: 'Add folders', exact: true }).click();
+    await expect(form.getByRole('alert')).toHaveText('A Project can contain up to 20 folders. Add fewer folders.');
     await form.screenshot({ path: testInfo.outputPath(`project-edit-error-${theme}.png`) });
     const longFolder = '/Users/developer/Projects/' + 'long-parent-directory/'.repeat(6) + 'lin-outliner-workbench-test';
     await nextFolder(page, longFolder);
-    await form.getByRole('button', { name: 'Add folder', exact: true }).click();
+    await form.getByRole('button', { name: 'Add folders', exact: true }).click();
     await rows.filter({ hasText: longFolder }).getByRole('button', { name: 'Make primary', exact: true }).click();
     await name.fill('Renamed workspace');
     const pathGeometry = await rows.filter({ hasText: longFolder }).locator('.project-folder-path').evaluate((el) => ({
@@ -494,3 +497,30 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(empty.getByRole('menuitem', { name: 'New Project', exact: true })).toBeVisible();
   });
 }
+
+test('Project folder multiselection appends unique folders and preserves existing primary', async ({ page }) => {
+  await openMockedApp(page);
+  await (await projectMenu(page)).getByRole('menuitem', { name: 'New Project', exact: true }).click();
+  const form = page.getByRole('dialog', { name: 'Create project', exact: true });
+  const add = form.getByRole('button', { name: 'Add folders', exact: true });
+  await nextFolder(page, []);
+  await add.click();
+  await expect(form.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('');
+  await expect(form.locator('.project-list-row')).toHaveCount(0);
+  await nextFolder(page, ['/sources/app', '/sources/docs', '/sources/app', '/sources/shared']);
+  await add.click();
+  await expect(form.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('app');
+  await expect(form.locator('.project-list-row')).toHaveCount(3);
+  await expect(form.locator('.project-list-row').filter({ hasText: '/sources/app' }).getByText('Primary', { exact: true })).toBeVisible();
+  await form.getByRole('textbox', { name: 'Name', exact: true }).fill('My workspace');
+  await form.locator('.project-list-row').filter({ hasText: '/sources/docs' }).getByRole('button', { name: 'Make primary', exact: true }).click();
+  await nextFolder(page, ['/sources/shared', '/sources/tests', '/sources/examples']);
+  await add.click();
+  await expect(form.locator('.project-list-row')).toHaveCount(5);
+  await expect(form.locator('.project-list-row').filter({ hasText: '/sources/docs' }).getByText('Primary', { exact: true })).toBeVisible();
+  await form.getByRole('button', { name: 'Create project', exact: true }).click();
+  await expect(form).toHaveCount(0);
+  const catalog = await page.evaluate(() => window.lin.agentCoreRequest('project/inspect', {}));
+  expect(catalog.projects[0]).toMatchObject({ name: 'My workspace', primaryFolder: '/sources/docs',
+    folders: ['/sources/app', '/sources/docs', '/sources/shared', '/sources/tests', '/sources/examples'] });
+});

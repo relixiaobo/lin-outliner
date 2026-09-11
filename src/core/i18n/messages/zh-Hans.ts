@@ -1403,6 +1403,7 @@ export const zhHans: PartialMessages = {
       project: '项目', create: '创建项目', projectName: '项目名称', addFoldersHint: '添加文件夹到此项目', noResults: '未找到项目。', retrySelection: '重试选择', chooseFolder: '选择文件夹',
       add: '添加', chooseProject: '选择项目', changeProject: '更换项目', removeFromChat: '从对话中移除项目', withoutProject: '不使用项目', search: '搜索项目', sourceFolders: '来源文件夹',
       primary: '主文件夹', makePrimary: '设为主文件夹', addFolder: '添加文件夹', removeFolder: '移除文件夹',
+      folderLimit: '一个项目最多可包含 20 个文件夹，请减少本次选择的数量。',
       duplicateFolder: '项目已包含此文件夹。', choosePrimary: '保存前请选择新的主文件夹。',
       organizationOnly: '用于整理对话，可随时添加来源文件夹。',
       workFolder: '工作文件夹',

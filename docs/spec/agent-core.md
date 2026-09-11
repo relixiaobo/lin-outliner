@@ -366,8 +366,9 @@ primary. An unavailable retained secondary source does not block unrelated edits
 Membership is revisioned organizational state. No separate conversation folder is
 stored or editable. `project/inspect` exposes Projects, membership, source
 availability, and the canonical application default. `project/manage` provides
-create/update/delete and bind; `project/pickFolder` uses the native directory
-picker. The UI and invocation-bound Project CLI share `ProjectService`, directory
+create/update/delete and bind; `project/pickFolders` uses the native directory
+picker with multiselection, returning `{ paths: string[] }` (empty on cancel).
+The UI and invocation-bound Project CLI share `ProjectService`, directory
 identity revalidation, lifecycle locking, and optimistic revisions.
 
 Plain new Chats are ungrouped. An explicit `thread/start.project` checks the

@@ -189,7 +189,7 @@ export interface ThreadServiceOptions {
   readonly executor: TurnExecutor;
   readonly attachmentScratchRoot: string;
   readonly defaultExecutionDirectory?: string;
-  readonly pickWorkFolder?: () => Promise<{ path: string | null }>;
+  readonly pickProjectFolders?: () => Promise<{ paths: readonly string[] }>;
   readonly reviewProjectChange?: (request: import('./projects/ProjectService').ProjectReview, signal: AbortSignal) => Promise<boolean>;
   /** App-owned root for derived conversation records. Never a workspace path. */
   readonly recordRoot: string;
@@ -310,7 +310,7 @@ export interface PersistentThreadExecutionContext {
 
 export class ThreadService implements ThreadServiceExtensionHost {
   readonly projects: ProjectService;
-  private readonly pickWorkFolder: NonNullable<ThreadServiceOptions['pickWorkFolder']>;
+  private readonly pickProjectFolders: NonNullable<ThreadServiceOptions['pickProjectFolders']>;
   readonly reviewProjectChange: NonNullable<ThreadServiceOptions['reviewProjectChange']>;
   defaultExecutionDirectory(): string { return this.hostDefaultDirectory; }
   writeFeatureContext(ownerId: string, payload: import('../../core/agent/protocol').ThreadContextPayload) {
@@ -409,7 +409,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       options.resolvePersona?.(thread, reportConfigurationReadFailure) ?? null
     );
     this.hostDefaultDirectory = options.defaultExecutionDirectory ?? homedir();
-    this.pickWorkFolder = options.pickWorkFolder ?? (() => Promise.reject(new Error('Native folder picker is unavailable')));
+    this.pickProjectFolders = options.pickProjectFolders ?? (() => Promise.reject(new Error('Native folder picker is unavailable')));
     this.reviewProjectChange = options.reviewProjectChange ?? (() => Promise.reject(new Error('Native Project confirmation is unavailable')));
     this.beforeInitialTurnAdmission = options.beforeInitialTurnAdmission ?? (() => undefined);
     this.now = options.now ?? Date.now;
@@ -1178,7 +1178,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     decoded: AgentCoreRequestByMethod[Method],
   ): Promise<AgentCoreResponseByMethod[Method]> {
     switch (method) {
-      case 'project/pickFolder': return this.pickWorkFolder() as Promise<AgentCoreResponseByMethod[Method]>;
+      case 'project/pickFolders': return this.pickProjectFolders() as Promise<AgentCoreResponseByMethod[Method]>;
       case 'project/inspect': return this.projects.inspect(decoded) as Promise<AgentCoreResponseByMethod[Method]>;
       case 'project/manage': return this.projects.manage(decoded) as Promise<AgentCoreResponseByMethod[Method]>;
       case 'thread/list':
