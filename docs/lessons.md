@@ -2940,3 +2940,24 @@ pending snapshot read. The old result could then replace the visible question
 without fetching the new generation. Verify generation changes during an
 outstanding read, including delayed old results and notifications, and assert
 both the recovered request identity and the preserved session-local draft.
+
+## Result responsibility outlives the producer execution
+
+**Keep cancellation of an exact pending result separate from fencing a live
+producer.** Recheck both lifetimes under their owners' gates: final settlement
+can release a producer while Stop waits, and that Session may already have a
+successor. Preserve any committed result handler.
+
+PR #673 initially sent terminal delegated Stop through the active-Session fence.
+The execution had already released `currentTaskId`, so Stop rejected and left the
+completion pending. Verify released idle producers, running successors, existing
+acknowledgements, admission before batch linking, and settlement-versus-Stop races
+using the actual stores and coordinator.
+
+## Stable test identities keep CI attribution accurate
+
+**Compare CI samples with stable test identities and keep source lines only for
+navigation.** In #673, one added fixture line made six unchanged failures appear
+new because the classifier keyed them by `file:line`. All six failed 5/5 on both
+the branch and exact base. Before attributing a regression, compare the raw
+samples by test identity; correcting attribution does not make failing tests pass.

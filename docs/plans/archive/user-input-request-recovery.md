@@ -33,7 +33,7 @@ live on [the board](../../TASKS.md).
   historical request after its owning execution has ended.
 - Claiming that reload caused the reported incident without evidence, or that
   repairing question presentation fixes unnecessary background continuations.
-  That policy has its own [plan](../background-task-continuation-policy.md).
+  That policy has its own [plan](background-task-continuation-policy.md).
 - A general workflow engine, new history source, or independent request database.
 
 ## Design
@@ -510,7 +510,7 @@ response contract and must be included in the claim and shared-interface check
 before implementation; it is not merely a renderer-only change. No dependency,
 build, core document-command, main-owned board, or changelog edits are required.
 
-This feature and [background continuation](../background-task-continuation-policy.md)
+This feature and [background continuation](background-task-continuation-policy.md)
 can each ship alone. Select an integration order for their shared
 `ThreadService`, `TurnLifecycle`, protocol, and renderer-store edits; reliable
 questions do not depend on adopting new background agreements. The

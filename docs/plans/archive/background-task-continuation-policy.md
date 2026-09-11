@@ -9,8 +9,8 @@ build, test, export, or delegated job still owes the user a result.
 **Shape:** ONE complete feature in one PR. Task intent, explicit service handoff,
 Host admission, durable event disposition, tool/Skill guidance, presentation, and
 recovery tests ship together. This is a proposed implementation contract; current
-behavior remains defined by [tool design](../spec/agent-tool-design.md). Work
-status and merge ordering belong to [the board](../TASKS.md).
+behavior remains defined by [tool design](../../spec/agent-tool-design.md). Work
+status and merge ordering belong to [the board](../../TASKS.md).
 
 ## Non-goals
 
@@ -22,7 +22,7 @@ status and merge ordering belong to [the board](../TASKS.md).
   dropping logs and process ownership to avoid notifications.
 - Fixing Outline Runtime startup or asserting that its logs caused the reported
   exit. Reliable question presentation uses the existing
-  [structured input lifecycle](../spec/agent-core.md#structured-input-lifecycle).
+  [structured input lifecycle](../../spec/agent-core.md#structured-input-lifecycle).
 
 ## Design
 
@@ -260,16 +260,16 @@ choices must preserve the target, authority, receipt, and race contracts above.
   implementation, wherever their existing all-results-deliver premise changes.
 
 Implementation uses the current `ThreadService`, runtime/context and
-[published record owners](../spec/agent-core.md#published-conversation-records).
+[published record owners](../../spec/agent-core.md#published-conversation-records).
 Preserve their source and lifecycle contracts when adding Task responsibility;
 coordinate any new shared interface separately. PR #670's Project/work-directory design must continue using the
 same execution addresses; this feature does not add directory ownership.
 Refresh open claims before implementation rather than relying on this snapshot.
 
-Coordinate with [scheduled work](scheduled-work-redesign.md): process events keep
+Coordinate with [scheduled work](../scheduled-work-redesign.md): process events keep
 their original run relationship; pure observations occupy no foreground slot,
 and an actual continuation uses the existing run/Turn admission owner. The
-[structured input lifecycle](../spec/agent-core.md#structured-input-lifecycle)
+[structured input lifecycle](../../spec/agent-core.md#structured-input-lifecycle)
 already owns question settlement; preserve that contract when changing shared
 Turn/store behavior and refresh the board's selected ordering.
 
