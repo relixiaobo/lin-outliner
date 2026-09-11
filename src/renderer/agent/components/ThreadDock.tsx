@@ -1,3 +1,4 @@
+import { rememberProject } from '../projects/recentProjects';
 import { lazy, memo, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
 import type { RendererUserViewHints, ThreadUserContent } from '../../../core/agent/protocol';
@@ -75,6 +76,7 @@ export const ThreadDock = memo(function ThreadDock({
   const open = railState === 'open';
   const snapshot = useThreadStore(open);
   const [listOpen, setListOpen] = useState(false);
+  const [projectInitialMode, setProjectInitialMode] = useState<'new' | undefined>();
   const [projectTarget, setProjectTarget] = useState<Thread | 'catalog' | null>(null);
   const [surface, setSurface] = useState<'thread' | 'automations'>('thread');
   /**
@@ -451,7 +453,7 @@ export const ThreadDock = memo(function ThreadDock({
             <div className="thread-dock-conversation">
             <ThreadView
               projectContext={{ view: projects.view, loading: projects.loading, error: projects.error,
-                onChooseProject: () => setProjectTarget(thread) }}
+                onChooseProject: (mode) => { setProjectInitialMode(mode); setProjectTarget(thread); } }}
               active={open}
               composerEnabled={thread.parentThreadId === null && thread.threadSource === 'user'}
               composerFocusExpectedActiveElement={composerFocusRequest.expectedActiveElement}
@@ -551,11 +553,16 @@ export const ThreadDock = memo(function ThreadDock({
         ) : null}
       </div>
       {projectTarget ? <Suspense fallback={null}><ProjectDialog
+        initialMode={projectTarget === 'catalog' ? undefined : projectInitialMode}
         view={projects.view} unavailable={projects.loading || !!projects.error}
         catalogError={projects.error} createDisabled={creating || providerBlocksCreation}
         createTitle={providerBlocksCreation ? t.agent.thread.providerRequired : t.agent.thread.new}
         thread={projectTarget === 'catalog' ? null : projectTarget}
-        onClose={() => setProjectTarget(null)} onNewChat={(project) => createThread('explicit', project)}
+        onClose={() => { setProjectTarget(null); setProjectInitialMode(undefined); }} onNewChat={async (project) => {
+          const created = await createThread('explicit', project);
+          if (created) rememberProject(project.id);
+          return created;
+        }}
       /></Suspense> : null}
       {renameTarget ? (
         <Dialog

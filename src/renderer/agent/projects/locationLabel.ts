@@ -4,26 +4,15 @@ export function conversationLocationLabel(threadId: string, view: ProjectCatalog
   applicationDefault: string; unavailable: string; loading: string;
 }): { project: string; location: string; text: string; detail: string; unavailable: boolean } {
   const membership = view.memberships.find((entry) => entry.threadId === threadId);
-  const folder = view.workFolders.find((entry) => entry.threadId === threadId);
-  if (!membership || !folder) return { project: '', location: labels.loading, text: labels.loading, detail: labels.loading, unavailable: false };
+  if (!membership) return { project: '', location: labels.loading, text: labels.loading, detail: labels.loading, unavailable: false };
   const project = view.projects.find((entry) => entry.id === membership.projectId);
+  if (membership.projectId && !project) return { project: labels.unavailable, location: '', text: labels.unavailable, detail: labels.unavailable, unavailable: true };
+  const folder = project?.primaryFolder ?? null;
   const projectName = project?.name ?? (membership.projectId ? labels.unavailable : '');
-  const unavailable = folder.path ? view.unavailableFolders.includes(folder.path) : !view.applicationDefault.available;
-  const location = folder.path
-    ? project?.primaryFolder === folder.path ? '' : uniqueFolderLabel(folder.path, view.workFolders.flatMap((entry) => entry.path ? [entry.path] : []))
-    : projectName ? labels.applicationDefault : '';
-  const showUnavailable = unavailable && Boolean(folder.path || projectName);
+  const unavailable = folder ? view.unavailableFolders.includes(folder) : !view.applicationDefault.available;
+  const location = project && !folder ? labels.applicationDefault : '';
+  const showUnavailable = unavailable && Boolean(projectName);
   const text = [projectName, location, showUnavailable ? labels.unavailable : ''].filter(Boolean).join(' · ');
   return { project: projectName, location, text, unavailable: showUnavailable,
-    detail: [text, folder.path ?? `${labels.applicationDefault}: ${view.applicationDefault.path ?? labels.unavailable}`].filter(Boolean).join('\n') };
-}
-
-export function uniqueFolderLabel(path: string, paths: readonly string[]): string {
-  const parts = path.split(/[\\/]/u).filter(Boolean);
-  const others = [...new Set(paths)].filter((entry) => entry !== path);
-  for (let count = 1; count <= parts.length; count++) {
-    const suffix = parts.slice(-count).join('/');
-    if (!others.some((entry) => entry.split(/[\\/]/u).filter(Boolean).slice(-count).join('/') === suffix)) return suffix;
-  }
-  return path;
+    detail: [text, folder ?? `${labels.applicationDefault}: ${view.applicationDefault.path ?? labels.unavailable}`].filter(Boolean).join('\n') };
 }

@@ -37,7 +37,7 @@ Remove the retired conversation-folder reader and writer without a migration.
 - **FR-3:** The flyout shows No Project, up to six recent projects with the current
   choice checked, then All Projects… and New Project…. Empty history still offers
   creation and the full searchable picker. Recent selection IDs persist per local
-  profile as UI preference metadata, are recorded only after successful selection
+  userData as UI preference metadata, are recorded only after successful selection
   or explicit project-chat creation, and are filtered against the current catalog.
 - **BR-1:** An explicit composer Project selection binds the Project. Each subsequent task
   resolves its default from that Project's current primary folder, or Application

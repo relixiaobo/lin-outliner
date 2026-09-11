@@ -5,27 +5,24 @@ import type { ProjectCatalogView } from '../../src/core/agent/project';
 
 const labels = { applicationDefault: 'Application default', unavailable: 'Unavailable', loading: 'Loading' };
 function view(project: boolean, path: string | null): ProjectCatalogView {
-  return { projects: [{ id: 'p', name: 'Project', folders: ['/one/source'], primaryFolder: '/one/source', revision: 1, createdAt: 1, updatedAt: 1 }],
+  return { projects: [{ id: 'p', name: 'Project', folders: path ? [path] : [], primaryFolder: path, revision: 1, createdAt: 1, updatedAt: 1 }],
     memberships: [{ threadId: 'chat', projectId: project ? 'p' : null, revision: 1 }],
-    workFolders: [{ threadId: 'chat', path, revision: 1 }], unavailableFolders: [], applicationDefault: { path: '/one/source', available: true } };
+    unavailableFolders: [], applicationDefault: { path: '/one/source', available: true } };
 }
 describe('conversation location presentation', () => {
   test.each([
-    [false, null, ''], [true, '/one/source', 'Project'], [true, '/two/worktree', 'Project · worktree'],
-    [true, null, 'Project · Application default'], [false, '/two/worktree', 'worktree'],
+    [false, null, ''], [true, '/one/source', 'Project'], [true, '/two/worktree', 'Project'],
+    [true, null, 'Project · Application default'], [false, '/two/worktree', ''],
   ] as const)('saved settings %s %s render %s', (project, path, text) => {
     expect(conversationLocationLabel('chat', view(project, path), labels).text).toBe(text);
   });
   test('unknown membership and missing paths remain distinguishable from an unbound chat', () => {
     expect(conversationLocationLabel('unknown', view(false, null), labels).text).toBe('Loading');
+    expect(conversationLocationLabel('chat', { ...view(true, null), projects: [] }, labels)).toMatchObject({ text: 'Unavailable', detail: 'Unavailable', unavailable: true });
     const selected = view(true, '/one/source');
     expect(conversationLocationLabel('chat', { ...selected, unavailableFolders: ['/one/source'] }, labels)).toMatchObject({ text: 'Project · Unavailable', detail: 'Project · Unavailable\n/one/source' });
   });
-  test('equal basenames gain parent context and full accepted paths stay accessible', () => {
-    const selected = view(false, '/one/source');
-    const result = conversationLocationLabel('chat', { ...selected, workFolders: [...selected.workFolders, { threadId: 'other', path: '/two/source', revision: 1 }] }, labels);
-    expect(result.text).toBe('one/source'); expect(result.detail).toContain('/one/source');
-  });
+
 });
 
 describe('compact composer model identity', () => {

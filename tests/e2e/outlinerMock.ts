@@ -923,7 +923,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const mockThreads: MockThread[] = [];
     type MockProject = { id: string; name: string; folders: string[]; primaryFolder: string | null; revision: number; createdAt: number; updatedAt: number };
     const mockProjects = new Map<string, MockProject>();
-    const mockWorkFolders = new Map<string, { threadId: string; path: string | null; revision: number }>();
     const mockMemberships = new Map<string, { threadId: string; projectId: string | null; revision: number }>();
       const mockTurns = new Map<string, MockTurn[]>();
       const mockGoals = new Map<string, unknown>();
@@ -1089,8 +1088,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       }
       const projectId = selection?.projectId ?? inherited;
       if (projectId) mockMemberships.set(thread.id, { threadId: thread.id, projectId, revision: 1 });
-      if (forkedFromId) mockWorkFolders.set(thread.id, { threadId: thread.id, path: mockWorkFolders.get(forkedFromId)?.path ?? null, revision: 1 });
-      else if (selection) mockWorkFolders.set(thread.id, { threadId: thread.id, path: mockProjects.get(selection.projectId)?.primaryFolder ?? null, revision: 1 });
       mockThreads.push(thread);
       mockTurns.set(thread.id, []);
       mockThreadConfigurations.set(thread.id, {
@@ -4050,7 +4047,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           return { path } as T;
         }
         if (method === 'project/inspect') return clone({
-          workFolders: ((input.threadIds ?? []) as string[]).map((threadId) => mockWorkFolders.get(threadId) ?? { threadId, path: null, revision: 0 }),
           unavailableFolders: (window as unknown as { __unavailableProjectFolders?: string[] }).__unavailableProjectFolders ?? [],
           applicationDefault: { path: '/Users/developer', available: true }, projects: [...mockProjects.values()],
           memberships: ((input.threadIds ?? []) as string[]).map((threadId) => mockMemberships.get(threadId)
@@ -4059,29 +4055,17 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const operation = String(input.operation);
           const id = operation === 'create' ? nextCanonicalId() : String(input.projectId);
           let project = mockProjects.get(id) ?? null;
-          if (operation !== 'create' && operation !== 'setWorkFolder' && input.projectId !== null
+          if (operation !== 'create' && input.projectId !== null
             && (!project || project.revision !== input.expectedRevision)) throw new Error('Project changed');
           const affectedThreadIds: string[] = [];
           if (operation === 'create' || operation === 'update') {
             project = { id, name: String(input.name), folders: input.folders as string[], primaryFolder: input.primaryFolder as string | null,
               revision: (project?.revision ?? 0) + 1, createdAt: project?.createdAt ?? now, updatedAt: ++now };
             mockProjects.set(id, project);
-          } else if (operation === 'setWorkFolder') {
-            const threadId = String(input.threadId);
-            const revision = mockWorkFolders.get(threadId)?.revision ?? 0;
-            if (revision !== input.expectedRevision) throw new Error('Conversation work folder changed');
-            mockWorkFolders.set(threadId, { threadId, path: input.path as string | null, revision: revision + 1 });
-            affectedThreadIds.push(threadId);
           } else if (operation === 'bind') {
             const threadId = String(input.threadId);
             const revision = mockMemberships.get(threadId)?.revision ?? 0;
             if (revision !== input.expectedMembershipRevision) throw new Error('Membership changed');
-            if (input.workFolder) {
-              const folder = input.workFolder as { path: string | null; expectedRevision: number };
-              const currentRevision = mockWorkFolders.get(threadId)?.revision ?? 0;
-              if (currentRevision !== folder.expectedRevision) throw new Error('Conversation work folder changed');
-              mockWorkFolders.set(threadId, { threadId, path: folder.path, revision: currentRevision + 1 });
-            }
             mockMemberships.set(threadId, { threadId, projectId: input.projectId as string | null, revision: revision + 1 });
             affectedThreadIds.push(threadId);
           } else if (operation === 'delete') {

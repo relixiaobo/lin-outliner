@@ -56,34 +56,40 @@ appear in navigation, or enter the renderer Thread map. The renderer has no
 Agent tree, child navigation stack, delegated transcript, or descendant-running
 indicator.
 
-The Thread chooser retains Project grouping and shows each user conversation's
-saved location beside existing source, startup-availability, activity, and time
-metadata. A folder-only chat shows its basename; colliding basenames include the
-shortest distinguishing parent suffix. Project membership shows the Project name,
-plus the folder when different from its primary. A Project chat with no saved
-folder always reads `Project · Application default`, even if the resolved default
-happens to equal the primary. Unknown membership is never labeled No Project.
-Full accepted paths are accessible, and unavailable folders retain their identity.
-The composer preserves the folder label beside a separate unavailable indicator;
-long Project names yield space to the location and its status.
+The Thread chooser retains Project grouping alongside existing source, startup
+availability, activity and time metadata. A member conversation shows its Project
+name; a folderless Project also shows Application default. Unknown membership is
+never labeled No Project. The composer shows the same compact chip beside Add,
+with full primary and secondary paths in read-only details and a separate
+unavailable indicator. No Project shows no persistent chip or extra row.
 
-The composer's Add (`+`) menu offers attachments, Choose project, and Set work
-folder. With neither Project nor saved folder there is no persistent location
-chip or extra row. A selected location appears immediately beside Add and uses the
-same labels as history. Its details expose canonical paths, primary and secondary
-sources, application-default resolution, and clear/reselect repair actions.
-Attachment limits disable only the attachment action. Existing paste/drop, draft,
-tray and removal owners are unchanged; attachment use never changes location.
+The composer's Add (`+`) menu opens above and leading-aligned to its trigger. It
+offers Add attachment, a separator and Project with a trailing chevron. Hover,
+click or Right Arrow opens the Project flyout to the right, flipping left only at
+the window edge. Pointer traversal keeps both surfaces open. Left Arrow returns
+to the parent; Escape dismisses the menus and restores focus to Add. Attachment
+limits disable only the attachment action; paste/drop and attachment ownership
+remain unchanged.
 
-The Project picker supports search, New Project and No Project. It previews the
-resulting work folder and preserves it on existing-chat moves unless Use project
-primary folder is explicitly checked. That choice uses one atomic Host operation.
-Project forms use the native directory picker, editable first-folder name
-suggestion, and add/remove/make-primary controls. Removing the primary requires an
-explicit replacement unless every folder was removed. New Chat in Project copies
-the primary. Deletion explains retained chats, folders and task evidence plus
-Automation dependencies. Folder changes remain available during a Turn and never
-redirect admitted tasks or change permissions.
+The flyout offers No Project, up to six recent successful choices with the current
+selection checked, All Projects… and New Project. Recent IDs are bounded local
+userData UI metadata, filtered against the catalog; Project edits are not usage.
+A current selection absent from recent history is included. Successful selection
+and explicit project-chat creation update recency; failed selection does not.
+The full picker provides search and the same direct selection rule. New Project
+opens the creation form directly, then creates and selects the Project. If creation
+succeeds but selection fails, the dialog retains the created Project and offers
+selection retry without another create. Cancellation changes no membership.
+
+Project is the sole user-facing default-directory choice. Selection adopts its
+current primary for subsequent task admissions, including in existing chats;
+No Project and folderless Projects use Application default. There is no separate
+Set/Clear work folder action or Use project primary checkbox. Project forms use
+the native directory picker, editable first-folder name suggestion and
+add/remove/make-primary controls. Removing the primary requires a replacement
+unless every folder is removed. Primary edits affect subsequent tasks in all
+member conversations; admitted tasks remain unchanged. Deletion explains retained
+chats/files/tasks and Automation dependencies.
 
 The renderer refreshes after mutations, global `project/catalog/changed`
 notifications (including Agent writes), Thread creation and window focus. Reads

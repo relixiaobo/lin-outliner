@@ -885,12 +885,12 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
       const parent = liveWindow(mainWindow);
       if (released || !parent) throw new Error('The folder picker is unavailable');
       const result = await dialog.showOpenDialog(parent, {
-        title: getMessages(effectiveLocale()).agent.projects.setWorkFolder,
+        title: getMessages(effectiveLocale()).agent.projects.chooseFolder,
         properties: ['openDirectory'],
       });
       return { path: result.canceled ? null : result.filePaths[0] ?? null };
     },
-    reviewProjectChange: async ({ request, project, threadName, currentWorkFolder }, signal) => {
+    reviewProjectChange: async ({ request, project, threadName }, signal) => {
       signal.throwIfAborted();
       const parent = liveWindow(mainWindow);
       if (released || !parent) throw new Error('The Project review window is unavailable');
@@ -904,9 +904,8 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
           'name' in request ? request.name : project?.name ?? strings.agent.projects.none,
           threadName,
           ...folders.map((path) => `${path}${path === primary ? ` · ${strings.agent.projects.primary}` : ''}`),
-          ...('workFolder' in request && request.workFolder ? [`${strings.agent.projects.workFolder}: ${request.workFolder.path ?? strings.agent.projects.applicationDefault}`] : []),
-          request.operation === 'bind' && !request.workFolder ? strings.agent.projects.keepWorkFolder : null,
-          request.operation === 'bind' && !request.workFolder ? currentWorkFolder ?? strings.agent.projects.applicationDefault : null,
+          request.operation === 'bind' ? `${strings.agent.projects.workFolder}: ${project?.primaryFolder ?? strings.agent.projects.applicationDefault}` : null,
+          request.operation === 'update' ? strings.agent.projects.rootHelp : null,
           request.operation === 'delete' ? strings.agent.projects.deleteHelp : null,
         ].filter(Boolean).join('\n'),
         buttons: [strings.dialog.cancel, strings.dialog.confirm], defaultId: 0, cancelId: 0,

@@ -1481,20 +1481,20 @@ export const en = {
   // Canonical Thread, Turn, and Item surfaces.
   agent: {
     projects: {
-      keepWorkFolder: 'Keep the current conversation work folder.',
-      operations: { create: 'Create Project', update: 'Edit Project', bind: 'Change conversation Project', delete: 'Delete Project', setWorkFolder: 'Set conversation work folder' },
+      operations: { create: 'Create Project', update: 'Edit Project', bind: 'Change conversation Project', delete: 'Delete Project' },
+      project: 'Project', allProjects: 'All Projects…', retrySelection: 'Retry selection', chooseFolder: 'Choose folder',
       add: 'Add', chooseProject: 'Choose project', search: 'Search projects', sourceFolders: 'Source folders',
       primary: 'Primary', makePrimary: 'Make primary', addFolder: 'Add folder', removeFolder: 'Remove folder',
       duplicateFolder: 'This folder is already in the Project.', choosePrimary: 'Choose a replacement primary folder before saving.',
-      organizationOnly: 'Organize conversations; add source folders whenever needed.', usePrimary: 'Use project primary folder',
-      workFolder: 'Work folder', setWorkFolder: 'Set work folder', clearWorkFolder: 'Clear work folder',
-      applicationDefault: 'Application default', locationDetails: 'Project and work folder', reviewTitle: 'Apply Project changes?',
+      organizationOnly: 'Organize conversations; add source folders whenever needed.',
+      workFolder: 'Work folder',
+      applicationDefault: 'Application default', locationDetails: 'Project details', reviewTitle: 'Apply Project changes?',
       title: 'Projects', new: 'New Project', edit: 'Edit Project', name: 'Name', root: 'Source folders',
       empty: 'No Projects yet.', none: 'No Project', directory: 'Directory', unavailable: 'Unavailable',
       save: 'Save', cancel: 'Cancel', close: 'Close', remove: 'Delete Project', move: 'Move to Project',
       newChat: 'New Chat in Project', back: 'Back', loading: 'Loading Projects…',
-      rootHelp: 'New chats start in the primary folder. Existing chats keep their own work folder.',
-      membershipHelp: 'Move this chat and its related conversations. Work folders stay unchanged unless you choose the primary folder for this chat.',
+      rootHelp: 'New tasks in this Project use its primary folder. Running tasks keep their current directory.',
+      membershipHelp: 'This chat and its related conversations use the selected Project. New tasks use its primary folder.',
       deleteHelp: 'Remove this Project and its Chat grouping. Chats, files, and running tasks are kept. Automations that still reference it must be updated first.',
     },
     automations: {

@@ -11,9 +11,11 @@ import { Input } from '../../ui/primitives/Input';
 import { Field } from '../../ui/primitives/Field';
 import { IconButton } from '../../ui/primitives/IconButton';
 import { manageProject } from './useProjectCatalog';
+import { selectConversationProject } from './recentProjects';
 import '../../styles/projects.css';
 
 interface Props {
+  readonly initialMode?: 'new';
   readonly view: ProjectCatalogView;
   readonly thread: Thread | null;
   readonly unavailable: boolean;
@@ -24,17 +26,16 @@ interface Props {
   readonly onNewChat: (project: Project) => Promise<boolean>;
 }
 
-export function ProjectDialog({ view, thread, unavailable, catalogError, createDisabled, createTitle, onClose, onNewChat }: Props) {
+export function ProjectDialog({ initialMode, view, thread, unavailable, catalogError, createDisabled, createTitle, onClose, onNewChat }: Props) {
   const t = useT().agent.projects;
   const titleId = useId();
   const nameRef = useRef<HTMLInputElement>(null);
   const busyRef = useRef(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [editing, setEditing] = useState<Project | 'new' | null>(null);
+  const [editing, setEditing] = useState<Project | 'new' | null>(initialMode ?? null);
   const [deleting, setDeleting] = useState<Project | null>(null);
   const [selection, setSelection] = useState<{ project: Project | null } | null>(null);
-  const [adoptPrimary, setAdoptPrimary] = useState(false);
   const [name, setName] = useState('');
   const [folders, setFolders] = useState<readonly string[]>([]);
   const [primaryFolder, setPrimaryFolder] = useState<string | null>(null);
@@ -52,16 +53,10 @@ export function ProjectDialog({ view, thread, unavailable, catalogError, createD
     setFolders(project === 'new' ? [] : project.folders);
     setPrimaryFolder(project === 'new' ? null : project.primaryFolder); setError(null);
   }
-  function select(project: Project | null) { setSelection({ project }); setAdoptPrimary(false); setError(null); }
-  const currentFolder = view.workFolders.find((entry) => entry.threadId === thread?.id);
-  async function bind() {
-    if (!thread || !selection) return;
-    const membership = view.memberships.find((entry) => entry.threadId === thread.id);
-    if (!membership || !currentFolder) throw new Error('Conversation settings are unavailable; reopen Projects');
-    const project = selection.project;
-    await manageProject({ operation: 'bind', threadId: thread.id, projectId: project?.id ?? null,
-      expectedRevision: project?.revision ?? null, expectedMembershipRevision: membership.revision,
-      ...(adoptPrimary && project ? { workFolder: { path: project.primaryFolder, expectedRevision: currentFolder.revision } } : {}) });
+  async function select(project: Project | null) {
+    if (!thread || unavailable) return;
+    setSelection({ project });
+    await selectConversationProject(thread.id, project, view);
     onClose();
   }
   return createPortal(<Dialog backdropClassName="confirm-dialog-backdrop" surfaceClassName="confirm-dialog project-dialog"
@@ -86,7 +81,7 @@ export function ProjectDialog({ view, thread, unavailable, catalogError, createD
           ? { operation: 'create', name, folders, primaryFolder }
           : { operation: 'update', projectId: editing.id, expectedRevision: editing.revision, name, folders, primaryFolder });
         setEditing(null);
-        if (thread && result.project) select(result.project);
+        if (thread && result.project) await select(result.project);
       });
     }}>
       <Field label={t.name}><Input ref={nameRef} label={t.name} value={name} disabled={busy} onChange={(event) => setName(event.target.value)} /></Field>
@@ -112,18 +107,12 @@ export function ProjectDialog({ view, thread, unavailable, catalogError, createD
         <Button disabled={busy} onClick={() => setEditing(null)} variant="ghost">{t.cancel}</Button>
         <Button disabled={busy || !name.trim() || (folders.length > 0 && primaryFolder === null)} type="submit" variant="primary">{t.save}</Button>
       </div>
-    </form> : selection ? <>
-      <p>{selection.project?.name ?? t.none}</p>
-      {selection.project ? <label className="project-list-row"><input type="checkbox" checked={adoptPrimary} onChange={(event) => setAdoptPrimary(event.target.checked)} disabled={busy} />{t.usePrimary}</label> : null}
-      <p className="project-path">{t.workFolder}: {currentFolder ? (adoptPrimary ? selection.project?.primaryFolder : currentFolder.path) ?? t.applicationDefault : t.unavailable}</p>
-      <p className="confirm-dialog-message">{t.membershipHelp}</p>
-      <div className="confirm-dialog-actions"><Button disabled={busy} variant="ghost" onClick={() => setSelection(null)}>{t.back}</Button><Button disabled={busy || unavailable} variant="primary" onClick={() => void run(bind)}>{t.save}</Button></div>
-    </> : <>
+    </form> : <>
       <Input label={t.search} placeholder={t.search} value={search} onChange={(event) => setSearch(event.target.value)} />
       {catalogError ? <p className="automation-error" role="alert">{catalogError}</p> : unavailable ? <p role="status">{t.loading}</p> : <ul className="project-list">
-        {thread ? <li><button className="project-list-open" onClick={() => select(null)} disabled={busy} type="button">{t.none}</button></li> : null}
+        {thread ? <li><button className="project-list-open" onClick={() => void run(() => select(null))} disabled={busy} type="button">{t.none}</button></li> : null}
         {view.projects.filter((project) => project.name.toLocaleLowerCase().includes(search.toLocaleLowerCase())).map((project) => <li className="project-list-row" key={project.id}>
-          <button className="project-list-open" disabled={busy} type="button" onClick={() => thread ? select(project) : edit(project)}>
+          <button className="project-list-open" disabled={busy} type="button" onClick={() => thread ? void run(() => select(project)) : edit(project)}>
             <span>{project.name}</span><small className="project-path">{project.primaryFolder ?? t.organizationOnly}</small>
           </button>
           {!thread ? <>
@@ -139,6 +128,7 @@ export function ProjectDialog({ view, thread, unavailable, catalogError, createD
       </div>
     </>}
     {catalogError && (editing || deleting || selection) ? <p className="automation-error" role="alert">{catalogError}</p> : null}
+    {selection && error ? <Button disabled={busy || unavailable} onClick={() => void run(() => select(view.projects.find((project) => project.id === selection.project?.id) ?? selection.project))}>{t.retrySelection}</Button> : null}
     {error ? <p className="automation-error" role="alert">{error}</p> : null}
   </Dialog>, document.body);
 }

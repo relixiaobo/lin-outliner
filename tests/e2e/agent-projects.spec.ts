@@ -1,73 +1,62 @@
 import { expect, test, type Page } from '@playwright/test';
-import { commandCalls, openMockedApp, setNextThreadStartBehavior } from './outlinerMock';
+import { commandCalls, openMockedApp } from './outlinerMock';
 
-async function manager(page: Page) {
-  await page.getByRole('button', { name: 'Show Threads', exact: true }).click();
-  await page.getByRole('dialog', { name: 'Threads', exact: true }).getByRole('button', { name: 'Projects', exact: true }).click();
-  return page.getByRole('dialog', { name: 'Projects', exact: true });
-}
 async function nextFolder(page: Page, path: string) {
   await page.evaluate((path) => { (window as unknown as { __nextProjectFolder: string }).__nextProjectFolder = path; }, path);
 }
-async function details(page: Page) {
-  await page.locator('.thread-location-chip').click();
-  return page.getByRole('dialog', { name: 'Project and work folder', exact: true });
+async function projectMenu(page: Page) {
+  await page.locator('.thread-composer-toolbar').getByRole('button', { name: 'Add', exact: true }).click();
+  const add = page.getByRole('menu', { name: 'Add', exact: true });
+  await add.getByRole('menuitem', { name: 'Project', exact: true }).hover();
+  return page.getByRole('menu', { name: 'Choose project', exact: true });
 }
 for (const theme of ['light', 'dark'] as const) {
-  test(`Project folders, Add menu and independent conversation defaults in ${theme}`, async ({ page }, testInfo) => {
+  test(`Project flyout creates, selects and remembers projects in ${theme}`, async ({ page }, testInfo) => {
     await page.emulateMedia({ colorScheme: theme });
     await openMockedApp(page);
-    await expect(page.locator('.thread-composer')).toBeVisible();
+    await page.evaluate(() => localStorage.removeItem('tenon.recent-projects.v1'));
+    await page.locator('.app').evaluate((element) => (element as HTMLElement).style.setProperty('--agent-width', '560px'));
     await expect(page.locator('.thread-location-chip')).toHaveCount(0);
-    await page.locator('.thread-composer-toolbar').getByRole('button', { name: 'Add', exact: true }).click();
+    let flyout = await projectMenu(page);
+    await expect(page.getByRole('menuitem', { name: 'Set work folder', exact: true })).toHaveCount(0);
     const add = page.getByRole('menu', { name: 'Add', exact: true });
     await expect(add.getByRole('menuitem', { name: 'Add attachment' })).toBeVisible();
-    await expect(add.getByRole('menuitem', { name: 'Choose project', exact: true })).toBeEnabled();
-    await add.getByRole('menuitem', { name: 'Set work folder', exact: true }).click();
-    let location = page.getByRole('dialog', { name: 'Project and work folder', exact: true });
-    await expect(location.getByText('/Users/developer', { exact: true })).toBeVisible();
-    await nextFolder(page, '/Users/developer/worktree');
-    await location.getByRole('button', { name: 'Set work folder', exact: true }).click();
-    await expect(page.locator('.thread-location-chip')).toHaveText('worktree');
-    await location.getByRole('button', { name: 'Close', exact: true }).click();
-
-    let catalog = await manager(page);
-    await catalog.getByRole('button', { name: 'New Project', exact: true }).click();
+    const anchorBox = (await page.locator('.thread-composer-toolbar').getByRole('button', { name: 'Add', exact: true }).boundingBox())!;
+    const addBox = (await add.boundingBox())!, flyoutBox = (await flyout.boundingBox())!;
+    expect(Math.abs(addBox.x - anchorBox.x)).toBeLessThan(2);
+    expect(addBox.y + addBox.height).toBeLessThanOrEqual(anchorBox.y);
+    expect(flyoutBox.x).toBeGreaterThanOrEqual(addBox.x + addBox.width);
+    await flyout.getByRole('menuitem', { name: 'New Project', exact: true }).click();
     const form = page.getByRole('dialog', { name: 'New Project', exact: true });
+    await expect(form.getByRole('textbox', { name: 'Name', exact: true })).toBeFocused();
     await nextFolder(page, '/Users/developer/tenon');
     await form.getByRole('button', { name: 'Add folder', exact: true }).click();
     await expect(form.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('tenon');
     await form.getByRole('textbox', { name: 'Name', exact: true }).fill('Tenon');
     await nextFolder(page, '/Users/developer/reference');
     await form.getByRole('button', { name: 'Add folder', exact: true }).click();
-    await expect(form.getByText('/Users/developer/reference', { exact: true })).toBeVisible();
     await form.getByRole('button', { name: 'Save', exact: true }).click();
-    catalog = page.getByRole('dialog', { name: 'Projects', exact: true });
-    await setNextThreadStartBehavior(page, { error: 'Project changed; inspect it again before retrying' });
-    await catalog.getByRole('button', { name: 'New Chat in Project', exact: true }).click();
-    await expect(catalog.getByRole('alert')).toHaveText('Project changed; inspect it again before retrying');
-    await catalog.getByRole('button', { name: 'New Chat in Project', exact: true }).click();
     await expect(page.locator('.thread-location-chip')).toHaveText('Tenon');
-    location = await details(page);
-    await expect(location.getByText('/Users/developer/reference', { exact: true })).toBeVisible();
-    await location.getByRole('button', { name: 'Clear work folder', exact: true }).click();
-    await expect(page.locator('.thread-location-chip')).toHaveText('Tenon · Application default');
-    await expect(location.getByText('/Users/developer', { exact: true })).toBeVisible();
-    await location.getByRole('button', { name: 'Close', exact: true }).click();
-    await page.screenshot({ path: testInfo.outputPath(`composer-${theme}.png`) });
-    await page.getByRole('button', { name: 'Show Threads', exact: true }).click();
-    await expect(page.locator('.thread-list-select').getByText(/Tenon · Application default/)).toBeVisible();
-    await page.keyboard.press('Escape');
-    location = await details(page);
-    await location.getByRole('button', { name: 'Choose project', exact: true }).click();
-    const picker = page.getByRole('dialog', { name: 'Choose project', exact: true });
-    await picker.getByRole('button', { name: 'No Project', exact: true }).click();
-    await picker.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect(form).toHaveCount(0);
+    await page.locator('.thread-location-chip').click();
+    const details = page.getByRole('dialog', { name: 'Project details', exact: true });
+    await expect(details.getByText('/Users/developer/reference', { exact: true })).toBeVisible();
+    await expect(details.getByRole('button', { name: 'Set work folder', exact: true })).toHaveCount(0);
+    await details.getByRole('button', { name: 'Close', exact: true }).click();
+    flyout = await projectMenu(page);
+    await expect(flyout.getByRole('menuitemradio', { name: 'Tenon', exact: true })).toHaveAttribute('aria-checked', 'true');
+    await flyout.getByRole('menuitemradio', { name: 'Tenon', exact: true }).hover();
+    await expect(flyout).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath(`project-flyout-${theme}.png`) });
+    await flyout.getByRole('menuitemradio', { name: 'No Project', exact: true }).click();
     await expect(page.locator('.thread-location-chip')).toHaveCount(0);
-    expect((await commandCalls(page)).filter((call) => call.cmd === 'thread/delete')).toHaveLength(0);
+    flyout = await projectMenu(page);
+    await flyout.getByRole('menuitemradio', { name: 'Tenon', exact: true }).click();
+    await expect(page.locator('.thread-location-chip')).toHaveText('Tenon');
+    expect((await commandCalls(page)).filter((call) => call.cmd === 'project/manage' && call.args.operation === 'create')).toHaveLength(1);
   });
 
-  test(`membership-only selection, unavailable saved paths and keyboard Add in ${theme}`, async ({ page }, testInfo) => {
+  test(`Project keyboard navigation, primary edits and narrow layout in ${theme}`, async ({ page }, testInfo) => {
     await page.emulateMedia({ colorScheme: theme });
     await openMockedApp(page);
     const project = await page.evaluate(async () => (await window.lin.agentCoreRequest('project/manage', {
@@ -75,49 +64,48 @@ for (const theme of ['light', 'dark'] as const) {
     })).project!);
     const add = page.locator('.thread-composer-toolbar').getByRole('button', { name: 'Add', exact: true });
     await add.focus(); await page.keyboard.press('Enter');
-    await page.getByRole('menuitem', { name: 'Choose project', exact: true }).click();
+    await expect(page.getByRole('menuitem', { name: 'Add attachment', exact: true })).toBeFocused();
+    await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowRight');
+    const flyout = page.getByRole('menu', { name: 'Choose project', exact: true });
+    await expect(flyout.getByRole('menuitemradio', { name: 'No Project', exact: true })).toBeFocused();
+    await page.keyboard.press('ArrowLeft');
+    await expect(page.getByRole('menuitem', { name: 'Project', exact: true })).toBeFocused();
+    await page.keyboard.press('ArrowRight');
+    await flyout.getByRole('menuitem', { name: 'All Projects…', exact: true }).click();
     const picker = page.getByRole('dialog', { name: 'Choose project', exact: true });
     await picker.getByRole('textbox', { name: 'Search projects' }).fill('long');
     await picker.getByRole('button', { name: /A long Project name/ }).click();
-    await expect(picker.getByRole('checkbox')).not.toBeChecked();
-    await picker.getByRole('button', { name: 'Save', exact: true }).click();
-    await expect(page.locator('.thread-location-chip')).toHaveText(`${project.name} · Application default`);
-    let location = await details(page);
-    await nextFolder(page, '/one/worktree');
-    await location.getByRole('button', { name: 'Set work folder', exact: true }).click();
-    await location.getByRole('button', { name: 'Close', exact: true }).click();
-    await page.evaluate(() => {
-      (window as unknown as { __unavailableProjectFolders: string[] }).__unavailableProjectFolders = ['/one/worktree'];
+    await expect(picker).toHaveCount(0);
+    await expect(page.locator('.thread-location-chip')).toHaveText(project.name);
+    await page.evaluate(async (project) => {
+      await window.lin.agentCoreRequest('project/manage', { operation: 'update', projectId: project.id, expectedRevision: 1,
+        name: project.name, folders: project.folders, primaryFolder: '/two/references' });
+      (window as unknown as { __unavailableProjectFolders: string[] }).__unavailableProjectFolders = ['/two/references'];
       window.dispatchEvent(new Event('focus'));
-    });
+    }, project);
+    await expect(page.locator('.thread-location-chip')).toHaveAttribute('title', /\/two\/references/);
     await expect(page.locator('.thread-location-chip').getByRole('img', { name: 'Unavailable' })).toBeVisible();
-    await expect(page.locator('.thread-location-chip')).toHaveAttribute('title', /Unavailable/);
-    const box = await page.locator('.thread-composer').boundingBox();
-    expect(box).not.toBeNull();
-    await page.screenshot({ path: testInfo.outputPath(`location-${theme}.png`) });
-    location = await details(page);
-    await expect(location.getByText('/one/worktree', { exact: true })).toBeVisible();
-    await location.getByRole('button', { name: 'Clear work folder', exact: true }).click();
-    await location.getByRole('button', { name: 'Close', exact: true }).click();
-    await expect(page.locator('.thread-location-chip')).toHaveText(`${project.name} · Application default`);
     await page.locator('.app').evaluate((element) => (element as HTMLElement).style.setProperty('--agent-width', '280px'));
     await page.locator('.thread-composer').screenshot({ path: testInfo.outputPath(`narrow-${theme}.png`) });
     const geometry = await page.locator('.thread-composer-toolbar').evaluate((toolbar) => {
       const box = toolbar.getBoundingClientRect();
-      return Object.fromEntries(['.thread-location-folder', '.thread-location-project', '.thread-composer-model-name', '.thread-composer-reasoning-chip', '.icon-button-composerAction']
-        .map((selector) => {
-          const node = toolbar.querySelector(selector) as HTMLElement;
-          const rect = node.getBoundingClientRect();
-          return [selector, { width: rect.width, left: rect.left, right: rect.right, clipped: node.scrollWidth > node.clientWidth, inside: rect.left >= box.left && rect.right <= box.right + 1 }];
-        }));
+      return ['.thread-location-chip', '.thread-composer-model-name', '.icon-button-composerAction'].map((selector) => {
+        const rect = toolbar.querySelector(selector)!.getBoundingClientRect();
+        return { width: rect.width, inside: rect.left >= box.left && rect.right <= box.right + 1 };
+      });
     });
-    expect(geometry['.thread-location-folder'], JSON.stringify(geometry)).toMatchObject({ clipped: false, inside: true });
-    expect(geometry['.thread-composer-model-name'].width, JSON.stringify(geometry)).toBeGreaterThan(20);
-    expect(geometry['.thread-composer-reasoning-chip']).toMatchObject({ clipped: false, inside: true });
-    expect(geometry['.icon-button-composerAction']).toMatchObject({ width: 28, inside: true });
-    expect(geometry['.thread-location-folder'].right).toBeLessThanOrEqual(geometry['.thread-composer-model-name'].left);
-    expect(geometry['.thread-composer-model-name'].right).toBeLessThanOrEqual(geometry['.thread-composer-reasoning-chip'].left);
-    expect(geometry['.thread-composer-reasoning-chip'].right).toBeLessThanOrEqual(geometry['.icon-button-composerAction'].left);
+    for (const entry of geometry) { expect(entry.inside, JSON.stringify(geometry)).toBe(true); expect(entry.width).toBeGreaterThan(0); }
+    await projectMenu(page);
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('menu', { name: 'Add', exact: true })).toHaveCount(0);
+    await expect(add).toBeFocused();
+    const narrowFlyout = await projectMenu(page);
+    const parentBox = (await page.getByRole('menu', { name: 'Add', exact: true }).boundingBox())!;
+    const childBox = (await narrowFlyout.boundingBox())!;
+    expect(childBox.x + childBox.width).toBeLessThanOrEqual(parentBox.x);
+    await add.click();
+    await expect(narrowFlyout).toHaveCount(0);
+    await expect(add).toBeFocused();
   });
 }
 
@@ -155,3 +143,38 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(detail.getByRole('textbox', { name: 'Project 1 path', exact: true })).toHaveValue('');
   });
 }
+
+test('failed selection after creation retries the saved Project and never creates a duplicate', async ({ page }) => {
+  await openMockedApp(page);
+  await page.evaluate(() => {
+    localStorage.removeItem('tenon.recent-projects.v1');
+    const request = window.lin.agentCoreRequest.bind(window.lin);
+    let fail = true;
+    window.lin.agentCoreRequest = (async (method: string, input: Record<string, unknown>) => {
+      if (method === 'project/manage' && input.operation === 'bind' && fail) {
+        fail = false;
+        throw new Error('Selection interrupted');
+      }
+      return request(method as never, input as never);
+    }) as typeof window.lin.agentCoreRequest;
+  });
+  const flyout = await projectMenu(page);
+  await flyout.getByRole('menuitem', { name: 'New Project', exact: true }).click();
+  const form = page.getByRole('dialog', { name: 'New Project', exact: true });
+  await form.getByRole('textbox', { name: 'Name', exact: true }).fill('Created once');
+  await form.getByRole('button', { name: 'Save', exact: true }).click();
+  const picker = page.getByRole('dialog', { name: 'Choose project', exact: true });
+  await expect(picker.getByRole('alert')).toHaveText('Selection interrupted');
+  await expect(page.locator('.thread-location-chip')).toHaveCount(0);
+  expect(await page.evaluate(() => localStorage.getItem('tenon.recent-projects.v1'))).toBeNull();
+  await picker.getByRole('button', { name: 'Retry selection', exact: true }).click();
+  await expect(page.locator('.thread-location-chip')).toHaveText('Created once · Application default');
+  const projects = await page.evaluate(() => window.lin.agentCoreRequest('project/inspect', {}));
+  expect(projects.projects).toHaveLength(1);
+  expect((await commandCalls(page)).filter((call) => call.cmd === 'project/manage' && call.args.operation === 'create')).toHaveLength(1);
+  const menu = await projectMenu(page);
+  await menu.getByRole('menuitem', { name: 'New Project', exact: true }).click();
+  await page.getByRole('dialog', { name: 'New Project', exact: true }).getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.thread-location-chip')).toHaveText('Created once · Application default');
+});

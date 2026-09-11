@@ -3,7 +3,7 @@ import type { ProjectCatalogView, ProjectManageRequest } from '../../../core/age
 import { api } from '../../api/client';
 
 const changed = new Set<() => void>();
-const EMPTY_CATALOG: ProjectCatalogView = { projects: [], memberships: [], workFolders: [], unavailableFolders: [], applicationDefault: { path: null, available: false } };
+const EMPTY_CATALOG: ProjectCatalogView = { projects: [], memberships: [], unavailableFolders: [], applicationDefault: { path: null, available: false } };
 export function invalidateProjectCatalog(): void { for (const listener of changed) listener(); }
 export async function manageProject(request: ProjectManageRequest) {
   const result = await api.agentCoreRequest('project/manage', request);
@@ -35,7 +35,6 @@ export function useProjectCatalog(threadIds: readonly string[] = []) {
       .then((views) => {
         if (!live) return;
         setView({ ...views[0]!, memberships: views.flatMap((entry) => entry.memberships),
-          workFolders: views.flatMap((entry) => entry.workFolders),
           unavailableFolders: [...new Set(views.flatMap((entry) => entry.unavailableFolders))] });
         setError(null);
       }).catch((error: unknown) => { if (live) setError(error instanceof Error ? error.message : String(error)); })

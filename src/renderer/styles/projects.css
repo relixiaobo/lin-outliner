@@ -83,3 +83,7 @@
     width: calc(var(--space-6) * 5);
   }
 }
+
+.project-menu-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-menu-separator { margin: var(--space-1) var(--space-2); border-top: 1px solid var(--separator); }
+.project-menu-status { margin: var(--space-2); color: var(--text-secondary); font-size: var(--font-ui-sm); overflow-wrap: anywhere; }
