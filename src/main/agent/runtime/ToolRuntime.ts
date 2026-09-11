@@ -1,3 +1,4 @@
+import { taskControlInstructions, taskStatusInstructions } from './taskRecoveryInstructions';
 import { createHash } from 'node:crypto';
 import { canonicalDelegateCommand } from '../../../delegate/contract';
 import { decodeTaskControlToolInput } from '../../../core/agent/taskContinuation';
@@ -677,6 +678,11 @@ function toolResult(tool: string, value: unknown): AgentToolResult<unknown> {
       ...(details.continuation ? { continuation: details.continuation } : {}),
     });
   }
+  if (tool === 'task_control' && isRecord(details)) {
+    return agentToolResult(successEnvelope(tool, details, {
+      instructions: taskControlInstructions(details.receipt as unknown as import('../../../core/agent/taskContinuation').TaskControlReceipt),
+    }), details);
+  }
   if (tool === 'task_status' && isRecord(details)) {
     const terminal = details.state !== 'running' && details.state !== 'settling';
     const visible = {
@@ -714,9 +720,9 @@ function toolResult(tool: string, value: unknown): AgentToolResult<unknown> {
       capture.outputTruncated ||= capture.output !== details.output;
     }
     return agentToolResult(successEnvelope(tool, details, {
-      instructions: details.state === 'running' || details.state === 'settling'
-        ? 'This observation is not readiness proof. Verify a service with a completed endpoint, Runtime or application check, then commit task_control handoff before reporting it available. Handoff retains any explicit watch. Avoid repetitive polling.'
-        : 'Use task_control acknowledge with the exact pending event before reporting a result in this Turn. An existing handler or silent disposition grants no new work. Exit facts and logs do not establish who closed a process or authorize a restart.',
+      instructions: taskStatusInstructions(String(details.state),
+        details.continuation as unknown as import('../../../core/agent/taskContinuation').TaskContinuation ?? null,
+        details.operation as unknown as import('../../../core/agent/taskContinuation').TaskControlReceipt ?? null),
     }), visible);
   }
   return agentToolResult(successEnvelope(tool, details), details);
