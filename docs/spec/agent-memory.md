@@ -146,8 +146,9 @@ The former whole-Thread exclusion flag and its support-deletion path are retired
 
 The model compares new evidence with at most eighty current canonical records
 and 20,000 characters of comparison text. The comparison is not new evidence.
-Candidates must name a concrete future use and novel signal or a necessary
-correction, with narrow applicability and sufficient context. One-off requests,
+Candidates must name a concrete future use and novel signal, a necessary
+correction, or additional independent support for retained content, with narrow
+applicability and sufficient context. One-off requests,
 routine completion, generic advice, silence, and repeated Agent prose do not
 establish useful durable knowledge. Existing project documents, configuration,
 and Skills retain their own facts. The Node-only unit still allows supported
@@ -185,6 +186,13 @@ Agent prose alone cannot support a new statement. A no-signal or empty-date
 result accepts its exact coverage without creating a day/container or withdrawing
 any previously accepted support. Unknown source availability never acknowledges
 an unread batch.
+
+No new wording is required for new support: when the current evidence independently
+confirms an existing statement, extraction emits its exact retained text and
+category with the new supporting Item IDs and their source date. A no-output
+result is reserved for no useful signal or repetition without independent
+support. Recalled Memory, copied assistant prose, or a different Item ID alone
+does not establish independent support.
 
 Exact repeated canonical statements are reused, across Threads and source dates,
 with independent support added only to untouched generated records. Identity

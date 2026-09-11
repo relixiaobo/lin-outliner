@@ -77,7 +77,8 @@
       "language": "en",
       "source": "The same deferred-sync decision still holds. Nothing changed.",
       "prospectiveTask": "Recall the decision with the existing dated record.",
-      "expectedNewCategories": []
+      "expectedNewCategories": [],
+      "expectedSupport": "Attach the new independent reader evidence to the existing record without creating another Node."
     },
     {
       "id": "web-correction-zh",

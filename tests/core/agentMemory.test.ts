@@ -1665,6 +1665,78 @@ describe('Codex Memory contracts', () => {
     expect(timeline.graph().containers).toHaveLength(1);
   });
 
+  test('independent confirmation in another Thread survives withdrawal of the original source', async () => {
+    const store = memoryStore();
+    const projection = memoryProjection();
+    projection.nodes = projection.nodes.filter((node) => ![MEMORY_NODE_ID, EPISODE_NODE_ID, BELIEF_NODE_ID].includes(node.id));
+    projection.nodes.find((node) => node.id === 'day')!.children = [];
+    const state = mutableTimelineHost(projection);
+    const timeline = new TimelineMemoryStore(state.host);
+    const text = 'Research reports lead with conclusions and then key evidence.';
+    const first = userTurn(text);
+    const firstThread = rootThread([first]);
+    const secondThreadId = '018f0f24-7b2e-7a3f-8a4b-123456789ac2';
+    const secondTime = new Date(2026, 6, 25).getTime();
+    const secondBase = userTurn(text, undefined, { kind: 'user' }, 'turn:independent', 'item:independent', secondThreadId);
+    const second: Turn = {
+      ...secondBase, startedAt: secondTime, completedAt: secondTime,
+      provenance: { ...secondBase.provenance, originThreadId: secondThreadId },
+      items: secondBase.items.map((item) => item.type === 'userMessage' ? { ...item, acceptedAt: secondTime } : item),
+    };
+    const secondThread = { ...rootThread([second]), id: secondThreadId, sessionId: secondThreadId };
+    store.writeAdmission(admissionSnapshot(first));
+    store.writeAdmission({ ...admissionSnapshot(second), threadId: secondThreadId });
+    let confirmations = 0;
+    const phase = new Phase1(store, timeline, { run: async ({ prompt, systemPrompt }) => {
+      const input = JSON.parse(prompt);
+      const existing = input.existingMemory.find((node: { text: string }) => node.text === text);
+      const evidence = input.evidence[0];
+      // Reproduce a model following the reviewed duplicate/no-output instruction.
+      // The real control and publication owners must preserve the second source.
+      if (existing && systemPrompt.includes('for no signal or duplicates')) return '{"dates":[]}';
+      if (existing) {
+        expect(systemPrompt).toContain('independently supports an existing Memory statement');
+        expect(input.comparison).toContain('independent support');
+        confirmations++;
+      }
+      return JSON.stringify({ dates: [{ sourceDate: evidence.sourceDate, episode: null, beliefs: [], questions: [],
+        guidance: [{ ...statement(existing?.text ?? text, [evidence.originItemId], 'user'), rationale: {
+          futureUse: 'Apply the requested structure to subsequent research reports.',
+          novelty: existing ? 'A different reader-authored Item independently confirms the same scoped preference.' : 'A new explicit ongoing reader preference.',
+        } }],
+      }] });
+    } });
+    await phase.run({ thread: firstThread, turns: [first] }, new AbortController().signal);
+    const record = timeline.graph().nodes.find((node) => node.node.content.text === text)!;
+    const containerId = record.containerId;
+    await phase.run({ thread: secondThread, turns: [second] }, new AbortController().signal);
+    expect(store.processedOrigins(secondThreadId).has('item:independent')).toBe(true);
+    expect(store.isOriginClaimed('item:independent')).toBe(true);
+    expect(timeline.graph().nodes.filter((node) => node.node.content.text === text)).toHaveLength(1);
+    expect(timeline.graph().containers).toHaveLength(1);
+    expect(timeline.graph().containers[0]!.sourceDate).toBe('2026-07-24');
+
+    const suppressed = store.generatedNodeIdsSupportedOnlyByTurns([first.id]);
+    store.prepareRollback({ rollbackId: 'rollback:original-source', threadId: firstThread.id,
+      omittedTurnIds: [first.id], beforeVersion: 1, afterVersion: 2,
+      suppressedNodeIds: suppressed.nodeIds, suppressAllGenerated: false });
+    store.commitRollback('rollback:original-source');
+    const consolidation = new Phase2(store, timeline, { run: async () => '{"changes":[]}' }, () => secondThread);
+    await consolidation.run(new AbortController().signal);
+
+    expect(timeline.graph().nodes.some((node) => node.node.id === record.node.id)).toBe(true);
+    expect(store.lineageForNode(record.node.id).filter((edge) => store.isOriginClaimed(edge.originItemId))).toEqual([{
+      nodeId: record.node.id, threadId: secondThreadId, turnId: second.id, originItemId: 'item:independent',
+    }]);
+    expect(store.lineageForNode(containerId).map((edge) => edge.originItemId)).toEqual(['item:independent']);
+    expect(store.isOriginClaimed(ITEM_ID)).toBe(false);
+    expect(store.isOriginClaimed('item:independent')).toBe(true);
+    expect(store.generatedNodeIdsWithoutCurrentSupport()).toEqual([]);
+    expect(store.rollback('rollback:original-source')?.status).toBe('reconciled');
+    expect(confirmations).toBe(1);
+    await expect(phase.run({ thread: secondThread, turns: [second] }, new AbortController().signal)).resolves.toBe('unchanged');
+  });
+
   test('keeps large complete evidence pending instead of accepting a misleading prefix', async () => {
     const store = memoryStore();
     const turn = userTurn('x'.repeat(120_001));
