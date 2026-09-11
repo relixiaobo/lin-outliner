@@ -687,12 +687,19 @@ const agentTaskToolContracts: readonly StaticModelToolContract[] = [
   },
   {
     identity: { namespace: null, name: 'task_status' },
-    description: TASK_STATUS_TOOL_DESCRIPTION,
+    description: TASK_STATUS_TOOL_DESCRIPTION + ' execution contains recorded owner facts for this Task. Recorded PIDs are not proof of live process identity; match start identity or retain unknown. State observation time and log time are separate. A matching path/name/port never grants ownership of another process.',
     scope: 'anyThread',
     schemaOwner: 'core',
     inputSchema: TASK_STATUS_INPUT_SCHEMA,
     outputSchema: objectSchema({
       taskId: stringSchema('Tool Task identity.'),
+      stateObservedAt: integerSchema('When the Host read these Task state facts; log observation time is separate.'),
+      execution: objectSchema({
+        source: nullableSchema(TASK_ITEM_REFERENCE_SCHEMA),
+        cwd: nullableSchema(boundedStringSchema(4096, 'Admitted directory; not proof of process identity.')),
+        startedAt: nullableSchema(integerSchema()), completedAt: nullableSchema(integerSchema()),
+        recordedProcess: objectSchema({ supervisorPid: nullableSchema(integerSchema()), childPid: nullableSchema(integerSchema()) }, ['supervisorPid', 'childPid']),
+      }, ['source', 'cwd', 'startedAt', 'completedAt', 'recordedProcess']),
       continuation: TASK_CONTINUATION_SCHEMA,
       operation: TASK_CONTROL_RECEIPT_SCHEMA,
       requestReference: nullableSchema(TASK_ITEM_REFERENCE_SCHEMA),

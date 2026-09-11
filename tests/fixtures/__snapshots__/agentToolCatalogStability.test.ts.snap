@@ -82,7 +82,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
         "cwd": {
           "type": "string",
           "minLength": 1,
-          "description": "Directory for this call only. Relative paths resolve from the saved conversation work folder or application default; this does not change later calls."
+          "description": "Directory for this call only. Relative paths resolve from the selected Project primary folder or application default; this does not change later calls."
         }
       }
     }
@@ -140,7 +140,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
         "cwd": {
           "type": "string",
           "minLength": 1,
-          "description": "Directory for this call only. Relative paths resolve from the saved conversation work folder or application default; this does not change later calls."
+          "description": "Directory for this call only. Relative paths resolve from the selected Project primary folder or application default; this does not change later calls."
         }
       }
     }
@@ -168,7 +168,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
         "cwd": {
           "type": "string",
           "minLength": 1,
-          "description": "Directory for this call only. Relative paths resolve from the saved conversation work folder or application default; this does not change later calls."
+          "description": "Directory for this call only. Relative paths resolve from the selected Project primary folder or application default; this does not change later calls."
         }
       }
     }
@@ -257,7 +257,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
         "cwd": {
           "type": "string",
           "minLength": 1,
-          "description": "Directory for this call only. Relative paths resolve from the saved conversation work folder or application default; this does not change later calls."
+          "description": "Directory for this call only. Relative paths resolve from the selected Project primary folder or application default; this does not change later calls."
         }
       }
     }
@@ -302,7 +302,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
         "cwd": {
           "type": "string",
           "minLength": 1,
-          "description": "Directory for this call only. Relative paths resolve from the saved conversation work folder or application default; this does not change later calls."
+          "description": "Directory for this call only. Relative paths resolve from the selected Project primary folder or application default; this does not change later calls."
         }
       }
     }
@@ -330,7 +330,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
         "cwd": {
           "type": "string",
           "minLength": 1,
-          "description": "Directory for this call only. Relative paths resolve from the saved conversation work folder or application default; this does not change later calls."
+          "description": "Directory for this call only. Relative paths resolve from the selected Project primary folder or application default; this does not change later calls."
         }
       }
     }
@@ -604,7 +604,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
   },
   {
     "name": "task_status",
-    "description": "Read one background Tool Task owned by this Thread.\\nRead bounded running logs and responsibility/event facts without changing them. Running observations are not readiness proof. Use for readiness, an explicit status request, or recovery; avoid repetitive polling. operation_id reconciles an exact Task control receipt. Finite unhandled results and unfinished service launches continue automatically; handed-over services do not unless watched.",
+    "description": "Read one background Tool Task owned by this Thread.\\nRead bounded running logs and responsibility/event facts without changing them. Running observations are not readiness proof. Use for readiness, an explicit status request, or recovery; avoid repetitive polling. operation_id reconciles an exact Task control receipt. Finite unhandled results and unfinished service launches continue automatically; handed-over services do not unless watched. execution contains recorded owner facts for this Task. Recorded PIDs are not proof of live process identity; match start identity or retain unknown. State observation time and log time are separate. A matching path/name/port never grants ownership of another process.",
     "parameters": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",

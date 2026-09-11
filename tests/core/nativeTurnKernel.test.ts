@@ -539,6 +539,13 @@ describe('native turn kernel parity', () => {
         taskId, state: 'running', result: null,
         observation: { observedAt: expect.any(Number), output: expect.any(String), outputTruncated: true },
       } });
+      expect(header.data.stateObservedAt).toBeGreaterThanOrEqual(store.read(taskId)!.startedAt);
+      expect(header.data.execution).toMatchObject({
+        source: { turnId: context.turn.id, itemId: 'start-server' },
+        cwd: store.read(taskId)!.executionContext.address.cwd,
+        startedAt: store.read(taskId)!.startedAt,
+        recordedProcess: { childPid: store.read(taskId)!.childPid },
+      });
       expect(store.read(taskId)?.state).toBe('running');
       expect((await tasks.stop(taskId, context.thread.id))?.state).toBe('cancelled');
       const timed = await bash.execute('timed-background', { command: 'sleep 30', run_in_background: true, timeout: 50 });

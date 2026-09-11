@@ -1,3 +1,4 @@
+import { taskExecutionObservation } from './taskExecutionObservation';
 import { createHash } from 'node:crypto';
 import { canonicalDelegateCommand } from '../../../delegate/contract';
 import { decodeTaskControlInput } from '../../../core/agent/taskContinuation';
@@ -340,11 +341,14 @@ export class ToolRuntime {
             'Use a task_id returned by a background-producing tool in this Thread.',
           );
         }
+        const stateObservedAt = Date.now();
+        const execution = taskExecutionObservation(task);
         const observation = await toolTasks.observeOutput(task.taskId, threadId);
         const output = observation ?? await toolTasks.output(task.taskId, threadId);
         const combined = [output?.stdout, output?.stderr].filter(Boolean).join('\n');
         return toolResult('task_status', {
           taskId: task.taskId,
+          stateObservedAt, execution,
           continuation: task.continuation,
           requestReference: this.service.taskReaderRequest?.(threadId, turnId) ?? null,
           operation: input.operation_id ? task.controlReceipts.find(({ receipt }) => receipt.operationId === input.operation_id)?.receipt ?? null : null,
@@ -681,6 +685,8 @@ function toolResult(tool: string, value: unknown): AgentToolResult<unknown> {
     const terminal = details.state !== 'running' && details.state !== 'settling';
     const visible = {
       taskId: details.taskId,
+      stateObservedAt: details.stateObservedAt,
+      execution: details.execution,
       ...(details.continuation ? { continuation: details.continuation } : {}),
       operation: details.operation ?? null,
       requestReference: details.requestReference ?? null,

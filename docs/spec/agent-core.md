@@ -62,7 +62,9 @@ its active Tool Item. Handoff/watch receipts and terminal dispositions remain in
 the existing Task store. Acknowledgement binds an event to its handling Turn/Item;
 automatic continuation commits through the existing canonical Turn/batch owner
 only when a recorded responsibility remains. Silent service exits allocate no
-Turn. A service handoff consumes exact owned post-launch successful Item
+Turn. Task status projects existing source Item, admitted address and recorded process/timing facts with an observation timestamp. Those facts describe the owned execution; a later matching PID or path is not proof of live identity. Missing inspection-only facts remain nullable.
+
+A service handoff consumes exact owned post-launch successful Item
 references; checks may execute in a different independently admitted cwd. A saved
 conversation-folder edit changes future defaults, never an existing service or
 check's recorded address. Evidence references do not grant additional authority.
