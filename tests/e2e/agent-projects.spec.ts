@@ -59,6 +59,29 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(remove).toHaveCSS('opacity', '1');
     expect(await chip.boundingBox()).toEqual(restingBox);
     await page.locator('.thread-composer').screenshot({ path: testInfo.outputPath(`project-chip-hover-${theme}.png`) });
+    const hoverColor = await chip.evaluate((element) => getComputedStyle(element).backgroundColor);
+    const addButton = page.locator('.thread-composer-toolbar').getByRole('button', { name: 'Add', exact: true });
+    await addButton.hover();
+    await expect(addButton).toHaveCSS('background-color', hoverColor);
+    const addSize = (await addButton.boundingBox())!;
+    expect(addSize.width).toBe(addSize.height);
+    await page.locator('.thread-composer').screenshot({ path: testInfo.outputPath(`composer-add-hover-${theme}.png`) });
+    const modelButton = page.locator('.thread-composer-model-button');
+    await modelButton.hover();
+    await expect(modelButton).toHaveCSS('background-color', hoverColor);
+    await page.locator('.thread-composer').screenshot({ path: testInfo.outputPath(`composer-model-hover-${theme}.png`) });
+    for (const width of ['280px', '560px']) {
+      await page.locator('.app').evaluate((element, width) => (element as HTMLElement).style.setProperty('--agent-width', width), width);
+      await chip.hover();
+      const content = await chip.evaluate((element) => {
+        const box = element.getBoundingClientRect();
+        const name = element.querySelector('.thread-location-project')!.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        return { width: box.width, trailingGap: box.right - name.right, padding: parseFloat(style.paddingRight) };
+      });
+      expect(content.width).toBeLessThan(100);
+      expect(content.trailingGap).toBeCloseTo(content.padding, 0);
+    }
     await page.locator('.thread-dock-header').hover();
     await remove.focus();
     await expect(remove).toHaveCSS('opacity', '1');
@@ -74,10 +97,16 @@ for (const theme of ['light', 'dark'] as const) {
     await flyout.getByRole('menuitemradio', { name: 'Tenon', exact: true }).hover();
     await expect(flyout).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath(`project-flyout-${theme}.png`) });
-    await flyout.getByRole('menuitemradio', { name: 'No Project', exact: true }).click();
+    const clearProject = flyout.getByRole('menuitem', { name: "Don't work in a project", exact: true });
+    const newProject = flyout.getByRole('menuitem', { name: 'New Project', exact: true });
+    expect((await clearProject.boundingBox())!.y).toBeGreaterThan((await newProject.boundingBox())!.y);
+    await flyout.getByRole('textbox', { name: 'Search projects' }).fill('no matching project');
+    await expect(flyout.getByRole('status')).toHaveText('No projects found.');
+    await expect(clearProject).toBeVisible();
+    await clearProject.click();
     await expect(page.locator('.thread-location-chip')).toHaveCount(0);
     flyout = await projectMenu(page);
-    await expect(flyout.getByRole('menuitemradio', { name: 'No Project', exact: true })).toHaveCount(0);
+    await expect(flyout.getByRole('menuitem', { name: "Don't work in a project", exact: true })).toHaveCount(0);
     await expect(page.getByRole('menu', { name: 'Add', exact: true }).getByRole('menuitem', { name: 'Choose project', exact: true })).toBeVisible();
     await flyout.getByRole('menuitemradio', { name: 'Tenon', exact: true }).click();
     await expect(page.locator('.thread-location-chip')).toHaveText('Tenon');

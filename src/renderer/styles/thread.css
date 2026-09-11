@@ -2500,7 +2500,7 @@
 .thread-composer-model-button:hover:not(:disabled),
 .thread-composer-model-button[aria-expanded='true'] {
   background: var(--control-hover);
-  color: var(--surface-inverse);
+  color: var(--text-primary);
 }
 
 .thread-composer-model-button:disabled {
@@ -2661,8 +2661,9 @@
   color: var(--text-faint);
 }
 
-.thread-composer .icon-button-composerTool:hover:not(:disabled) {
-  background: transparent;
+.thread-composer .icon-button-composerTool:hover:not(:disabled),
+.thread-composer .icon-button-composerTool[aria-expanded='true'] {
+  background: var(--control-hover);
   color: var(--text-primary);
 }
 

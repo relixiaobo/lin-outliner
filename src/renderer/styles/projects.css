@@ -57,7 +57,7 @@
   white-space: nowrap;
 }
 .thread-location-chip:hover,
-.thread-location-chip:focus-within { background: var(--fill-2); color: var(--text-primary); }
+.thread-location-chip:focus-within { background: var(--control-hover); color: var(--text-primary); }
 .thread-location-chip:focus-visible { outline: none; box-shadow: var(--focus-ring-shadow); }
 .thread-location-project { flex: 0 1 auto; min-width: 1ch; overflow: hidden; text-overflow: ellipsis; }
 .thread-location-folder { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
@@ -71,17 +71,17 @@
   .thread-composer-toolbar:has(.thread-location-chip) .thread-composer-model-button {
     gap: var(--space-1);
   }
-  .thread-location-chip { flex: 1 1 0; max-width: none; padding-inline: 0; font-size: var(--font-meta); }
+  .thread-location-chip { flex: 0 1 auto; font-size: var(--font-meta); }
   .thread-composer-toolbar:has(.thread-location-chip) .thread-composer-control-group,
   .thread-composer-toolbar:has(.thread-location-chip) .thread-composer-model-control { flex: 0 0 auto; }
   .thread-composer-toolbar:has(.thread-location-chip) .thread-composer-model-button {
-    width: calc(var(--space-6) * 6);
+    max-width: calc(var(--space-6) * 6);
     padding-inline: 0;
     font-size: var(--font-meta);
   }
   .thread-composer-toolbar:has(.thread-location-chip) .thread-composer-model-button > svg { display: none; }
   .thread-composer-toolbar:has(.is-application-default):has(.thread-location-unavailable) .thread-composer-model-button {
-    width: calc(var(--space-6) * 5);
+    max-width: calc(var(--space-6) * 5);
   }
 }
 

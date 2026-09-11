@@ -314,7 +314,10 @@ catalog, and a fixed creation footer. Project creation uses an icon/name field a
 a bordered, fully clickable empty source-folder area.
 A selected Project adds one compact chip directly beside it: click its name to
 change selection. Its leading folder icon switches in place to a remove button on
-hover or keyboard focus, with neutral pill feedback and no geometry change. Full paths remain in details;
+hover or keyboard focus, with neutral pill feedback and no geometry change.
+Add, Project and model selection share `--control-hover`; Add uses a circular
+hit area, while text controls hug content plus padding under their truncation
+ceilings. The spacer absorbs spare toolbar width, never a hover background. Full paths remain in details;
 no selection adds no status row. Project names truncate before the application-
 default qualifier. Flexible space precedes the compact model/effort button and
 Send/Stop. Full model and effort identity remains accessible from keyboard and

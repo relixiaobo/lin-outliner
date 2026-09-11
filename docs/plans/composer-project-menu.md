@@ -34,7 +34,7 @@ Remove the retired conversation-folder reader and writer without a migration.
   flips it left. Clicking or Right Arrow also opens it. Moving into the flyout
   keeps it open; Left Arrow returns to the parent, Escape dismisses, and closing
   restores focus. Reuse the existing composer flyout and keyboard mechanisms.
-- **FR-3:** The flyout contains inline search, No Project, and the complete
+- **FR-3:** The flyout contains inline search and the complete
   project list with folder icons and the current choice checked. Up to six recent
   choices lead the remaining catalog; the list scrolls while New Project stays
   fixed below a separator. Search filters the whole catalog without another dialog.
@@ -65,9 +65,14 @@ Remove the retired conversation-folder reader and writer without a migration.
 The Project chip stays beside Add in the bottom composer toolbar. Its leading
 folder icon switches in place to the remove button on hover or keyboard focus;
 neutral pill hover feedback groups the icon and name without changing geometry.
+Add, Project and model selection share the control-hover fill. Add has a circular
+hit area; text controls size to their displayed content plus padding, with width
+ceilings for truncation instead of growing into the toolbar spacer.
 
 The parent Project row displays the selected Project name, or Choose project when
-unselected. The child shows No Project only when there is a selection to clear.
+unselected. The child shows a bottom Don't work in a project action, with a close icon,
+only when there is a selection to clear. It follows New Project, remains available
+while searching, and clears chat membership without deleting the Project.
 With an empty catalog, omit search and the deselection row: show one No Projects
 yet message and New Project. With available projects and no selection, show the
 searchable catalog directly without a redundant checked empty choice.
