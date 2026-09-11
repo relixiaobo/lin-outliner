@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { canonicalDelegateCommand } from '../../../delegate/contract';
-import { decodeTaskControlInput } from '../../../core/agent/taskContinuation';
+import { decodeTaskControlToolInput } from '../../../core/agent/taskContinuation';
 import { decodeRequestUserInputResult } from '../../../core/agent/codec';
 import type { TSchema } from 'typebox';
 import type { JsonValue } from '../../../core/agent/protocol';
@@ -322,11 +322,11 @@ export class ToolRuntime {
         return this.service.updateGoalForTurn(threadId, turnId, status);
       }),
       coreResultTool('task_control', 'Task Control', async (itemId, params) => {
-        const input = decodeTaskControlInput(params);
+        const { request: input } = decodeTaskControlToolInput(params);
         const tasks = this.service.toolTaskService();
         const receipt = await tasks.control(threadId, { turnId, itemId }, input);
         return toolResult('task_control', { receipt, continuation: tasks.readOwned(input.task_id, threadId)!.continuation });
-      }, decodeTaskControlInput),
+      }, decodeTaskControlToolInput),
       coreResultTool('task_status', 'Task Status', async (_itemId, params) => {
         const input = normalizeTaskStatusToolInput(params);
         const toolTasks = typeof this.service.toolTaskService === 'function'

@@ -7526,6 +7526,7 @@ describe('background Task responsibility authority', () => {
     });
     const tools = await runtime.createTools(context);
     async function execute(name: string, args: Record<string, unknown>) {
+      if (name === 'task_control') args = { request: args };
       const id = context.recorder.createItemId();
       const started = { id, type: 'dynamicToolCall', provenance: context.recorder.localProvenance(id), namespace: null, tool: name, arguments: args,
         modelCall: replayableModelCall(name, args), status: 'inProgress', outputRef: null, contentItems: null, success: null, durationMs: null } as const;
