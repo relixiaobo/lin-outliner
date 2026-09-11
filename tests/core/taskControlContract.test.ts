@@ -4,6 +4,7 @@ import { providerToolSchemaFailure } from '../../src/core/agent/tools';
 import { compileToolParameters } from '../../src/main/agent/runtime/kernel/exactToolArguments';
 import { convertResponsesTools } from '@earendil-works/pi-ai/api/openai-responses-shared';
 import { convertTools } from '@earendil-works/pi-ai/api/google-shared';
+import { stream as streamCompletions } from '@earendil-works/pi-ai/api/openai-completions';
 import { stream as streamAnthropic } from '@earendil-works/pi-ai/api/anthropic-messages';
 import { agentProviderPayload } from '../../src/main/agent/runtime/agentProviderPayload';
 import type { AgentTool } from '../../src/main/agent/runtime/kernel/types';
@@ -75,4 +76,17 @@ test('actual Anthropic serialization and Host profile preserve the action langua
     onPayload: (payload, target) => agentProviderPayload(payload, target, null, [tool]),
   }).result();
   assertParity(captured.tools[0].input_schema);
+});
+
+
+test('actual OpenAI Completions serialization preserves the action language', async () => {
+  const model: Model<'openai-completions'> = { id: 'fixture', name: 'fixture', provider: 'openai', api: 'openai-completions',
+    baseUrl: 'https://example.test', reasoning: false, input: ['text'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 128000, maxTokens: 1000 };
+  let captured: any;
+  await streamCompletions(model, { messages: [{ role: 'user', content: 'Test', timestamp: 1 }], tools: [tool] }, {
+    apiKey: 'fixture-key',
+    onPayload: (payload) => { captured = payload; },
+    fetch: async () => new Response('data: {"id":"fixture","choices":[{"index":0,"delta":{"role":"assistant","content":"done"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream' } }),
+  }).result();
+  assertParity(captured.tools[0].function.parameters);
 });
