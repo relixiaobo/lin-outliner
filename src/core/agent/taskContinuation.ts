@@ -103,24 +103,7 @@ export function decodeTaskCompletionAgreement(value: unknown): TaskCompletionAgr
 }
 
 export function decodeTaskControlInput(value: unknown): TaskControlInput {
-  const r = record(value, ['task_id', 'operation_id', 'action', 'expected_revision', 'readiness', 'request', 'event_id', 'watch_id']);
-  const common = { task_id: identifier(r.task_id), operation_id: identifier(r.operation_id) };
-  const exact = (fields: string[]) => record(value, ['task_id', 'operation_id', 'action', ...fields]);
-  switch (r.action) {
-    case 'handoff':
-      exact(['expected_revision', 'readiness']);
-      return { ...common, action: r.action, expected_revision: integer(r.expected_revision), readiness: references(r.readiness) };
-    case 'acknowledge':
-      exact(['event_id']);
-      return { ...common, action: r.action, event_id: identifier(r.event_id) };
-    case 'start_watch':
-      exact(['expected_revision', 'request']);
-      return { ...common, action: r.action, expected_revision: integer(r.expected_revision), request: decodeTaskItemReference(r.request) };
-    case 'revoke_watch':
-      exact(['expected_revision', 'watch_id']);
-      return { ...common, action: r.action, expected_revision: integer(r.expected_revision), watch_id: identifier(r.watch_id) };
-    default: throw new Error('Invalid Task control action');
-  }
+  return decodeActionRequest(value, 'request') as TaskControlInput;
 }
 
 export function decodeTaskContinuation(value: unknown): TaskContinuation {
@@ -211,9 +194,86 @@ export const TASK_CONTROL_RECEIPT_SCHEMA = { type: ['object', 'null'], propertie
   status: { enum: ['accepted', 'conflict', 'already_handled'] }, revision: revisionSchema,
   watchId: { type: ['string', 'null'] }, event: eventSchema,
 }, required: ['operationId', 'taskId', 'action', 'status', 'revision', 'watchId', 'event'], additionalProperties: false } as const;
-export const TASK_CONTROL_INPUT_SCHEMA = { type: 'object', properties: {
-  task_id: idSchema, operation_id: { ...idSchema, description: 'Stable operation identity. Retry the same input with this identity after reconciling task_status; never reuse it for different input.' },
-  action: { enum: ['handoff', 'acknowledge', 'start_watch', 'revoke_watch'] },
-  expected_revision: revisionSchema, readiness: { type: 'array', items: TASK_ITEM_REFERENCE_SCHEMA, minItems: 1, maxItems: 8 },
-  request: TASK_ITEM_REFERENCE_SCHEMA, event_id: idSchema, watch_id: idSchema,
-}, required: ['task_id', 'operation_id', 'action'], additionalProperties: false } as const;
+// One action definition feeds model schemas and exact action admission.
+// Field order (including reference properties) preserves stored operation digests.
+const actionFields = {
+  handoff: ['expected_revision', 'readiness'],
+  acknowledge: ['event_id'],
+  start_watch: ['expected_revision', 'request'],
+  revoke_watch: ['expected_revision', 'watch_id'],
+} as const;
+const inputIdSchema = { ...idSchema, pattern: '\\S' } as const;
+const inputReferenceSchema = { ...TASK_ITEM_REFERENCE_SCHEMA,
+  properties: { turnId: inputIdSchema, itemId: inputIdSchema } };
+const fieldSchemas: Record<string, Record<string, unknown>> = {
+  task_id: inputIdSchema,
+  operation_id: { ...inputIdSchema, description: 'Stable exact-input identity. Reconcile lost replies with task_status; never reuse it for different input.' },
+  expected_revision: { ...revisionSchema, maximum: Number.MAX_SAFE_INTEGER },
+  readiness: { type: 'array', items: inputReferenceSchema, minItems: 1, maxItems: 8 },
+  request: inputReferenceSchema, event_id: inputIdSchema, watch_id: inputIdSchema,
+};
+const commonFields = ['task_id', 'operation_id', 'action'];
+export const TASK_CONTROL_INPUT_SCHEMA = {
+  type: 'object', additionalProperties: false, required: ['request'],
+  properties: { request: { anyOf: Object.entries(actionFields).map(([action, fields]) => ({
+    type: 'object', additionalProperties: false,
+    properties: { ...Object.fromEntries([...commonFields, ...fields]
+      .filter((field) => field !== 'action').map((field) => [field, fieldSchemas[field]])),
+      action: { type: 'string', const: action } },
+    required: [...commonFields, ...fields],
+  })) } },
+} as const;
+
+export function decodeTaskControlToolInput(value: unknown): { request: TaskControlInput } {
+  const outer = inputRecord(value, '', ['request']);
+  return { request: decodeTaskControlInput(outer.request) };
+}
+
+function inputError(path: string, reason: string, fields?: readonly string[]): never {
+  // Paths contain only contract field names or bounded array indices, never
+  // arbitrary rejected keys/values (which can contain credentials).
+  throw new Error(`Invalid Task control input at ${path || '/'}: ${reason}.`
+    + (fields ? ` Required and allowed fields: ${fields.join(', ')}.` : '')
+    + ' Correct the input before retrying; changing operation_id alone does not repair it.');
+}
+function inputRecord(value: unknown, path: string, fields: readonly string[]): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) inputError(path, 'expected an object', fields);
+  const r = value as Record<string, unknown>;
+  const missing = fields.find((field) => !Object.hasOwn(r, field));
+  if (missing) inputError(`${path}/${missing}`, 'required field is missing', fields);
+  const extra = Object.keys(r).find((field) => !fields.includes(field));
+  if (extra !== undefined) inputError(Object.hasOwn(fieldSchemas, extra) ? `${path}/${extra}` : path,
+    'field is not allowed for this action', fields);
+  return r;
+}
+function decodeActionRequest(value: unknown, path: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) inputError(path, 'expected an action object');
+  const action = (value as Record<string, unknown>).action;
+  if (typeof action !== 'string' || !Object.hasOwn(actionFields, action)) {
+    inputError(`${path}/action`, `expected one of ${Object.keys(actionFields).join(', ')}`);
+  }
+  const fields = [...commonFields, ...actionFields[action as keyof typeof actionFields]];
+  const r = inputRecord(value, path, fields);
+  return Object.fromEntries(fields.map((field) => [field, field === 'action' ? action
+    : decodeInputField(r[field], fieldSchemas[field]!, `${path}/${field}`)]));
+}
+function decodeInputField(value: unknown, schema: Record<string, unknown>, path: string): unknown {
+  if (schema.type === 'string') {
+    if (typeof value !== 'string' || !value.trim() || value.length > Number(schema.maxLength)) {
+      inputError(path, `expected a nonblank string of at most ${schema.maxLength} characters`);
+    }
+  } else if (schema.type === 'integer') {
+    if (!Number.isSafeInteger(value) || Number(value) < Number(schema.minimum)) inputError(path, 'expected a nonnegative safe integer');
+  } else if (schema.type === 'array') {
+    if (!Array.isArray(value) || value.length < Number(schema.minItems) || value.length > Number(schema.maxItems)) {
+      inputError(path, `expected ${schema.minItems} to ${schema.maxItems} references`);
+    }
+    return (value as unknown[]).map((entry, index) => decodeInputField(entry, schema.items as Record<string, unknown>, `${path}/${index}`));
+  } else if (schema.type === 'object') {
+    const properties = schema.properties as Record<string, Record<string, unknown>>;
+    const r = inputRecord(value, path, Object.keys(properties));
+    return Object.fromEntries(Object.entries(properties)
+      .map(([field, child]) => [field, decodeInputField(r[field], child, `${path}/${field}`)]));
+  }
+  return value;
+}

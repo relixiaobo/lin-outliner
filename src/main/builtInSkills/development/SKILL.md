@@ -6,6 +6,11 @@ user-invocable: true
 
 # Development Processes
 
+Every `task_control` call wraps its action fields inside `request`, for example
+`{"request":{"task_id":"<task>","operation_id":"<operation>","action":"acknowledge","event_id":"<event>"}}`.
+Only include fields allowed by that action. `acknowledge` has no
+`expected_revision`; changing an operation ID does not fix invalid arguments.
+
 A request to start an application means its required frontend and backend must
 work together, unless the person explicitly requests only one component.
 "Do not start or repair the backend" forbids backend lifecycle changes; it does

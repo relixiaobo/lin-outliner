@@ -31,6 +31,7 @@ setInterval(() => { if (fs.existsSync(${JSON.stringify(exitFile)})) process.exit
  if (await response.text() === 'usable application') { console.log('Application endpoint verified'); return; }
  } catch {} await new Promise(r => setTimeout(r, 50)); } process.exitCode = 1; })();`);
   let smoke: SmokeApp | undefined;
+  let statusObservation: any;
   let phase: 'service' | 'finite' | 'idle' = 'service';
   let step = 0;
   let calls = 0;
@@ -52,10 +53,11 @@ setInterval(() => { if (fs.existsSync(${JSON.stringify(exitFile)})) process.exit
     const toolName = (name: string) => names.find((candidate) => candidate === name || candidate.endsWith(`_${name}`))!;
     const lastTool = [...body.messages].reverse().find((message: any) => message.role === 'tool');
     let data: any;
+    let instructions: string | undefined;
     if (lastTool) {
       const content = typeof lastTool.content === 'string' ? lastTool.content
         : lastTool.content.map((part: any) => part.text ?? '').join('\n');
-      try { data = JSON.parse(content).data; } catch { data = null; }
+      try { const result = JSON.parse(content); data = result.data; instructions = result.instructions; } catch { data = null; }
     }
     response.writeHead(200, { 'content-type': 'text/event-stream', connection: 'close' });
     const send = (delta: unknown, finish_reason: string | null) => response.write(`data: ${JSON.stringify({
@@ -78,10 +80,13 @@ setInterval(() => { if (fs.existsSync(${JSON.stringify(exitFile)})) process.exit
         else if (step === 2 && data?.backgroundTaskId) {
           taskId = data.backgroundTaskId;
           tool('bash', { command: `${quote(process.execPath)} ${quote(checkFile)}`, cwd: checkDirectory, description: 'Verify application readiness' });
-        } else if (step === 3 && data?.evidence) tool('task_control', { action: 'handoff', task_id: taskId,
-          operation_id: 'smoke-handoff', expected_revision: 0, readiness: [data.evidence] });
-        else {
-          handoff = data;
+        } else if (step === 3 && data?.evidence) tool('task_control', { request: { action: 'handoff', task_id: taskId,
+          operation_id: 'smoke-handoff', expected_revision: 0, readiness: [data.evidence] } });
+        else if (step === 4) {
+          handoff = { ...data, instructions };
+          tool('task_status', { task_id: taskId });
+        } else {
+          statusObservation = data;
           done('Application is ready.'); phase = 'idle';
         }
       } else if (phase === 'finite') {
@@ -107,9 +112,17 @@ setInterval(() => { if (fs.existsSync(${JSON.stringify(exitFile)})) process.exit
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     await expect(page.getByText('Application is ready.', { exact: true })).toBeVisible();
     expect(handoff?.receipt?.status, JSON.stringify(handoff)).toBe('accepted');
+    expect(handoff.instructions).toContain('This exact operation was accepted');
     const threadId = await page.evaluate(async () => (await window.lin!.agentCoreRequest('thread/list', {})).data[0]!.id);
     const readTask = (id: string) => page.evaluate(({ threadId, taskId }) => window.lin!.agentCoreRequest('task/read', { threadId, taskId }), { threadId, taskId: id });
     expect((await readTask(taskId)).task.continuation.handoff).toBeTruthy();
+    const ownedTask = (await readTask(taskId)).task;
+    expect(statusObservation.execution).toMatchObject({
+      source: { turnId: ownedTask.sourceTurnId, itemId: ownedTask.sourceItemId },
+      cwd: ownedTask.executionContext.address.cwd, startedAt: ownedTask.startedAt,
+    });
+    expect(statusObservation.execution.recordedProcess.childPid).toBeGreaterThan(0);
+    expect(statusObservation.stateObservedAt).toBeGreaterThanOrEqual(ownedTask.startedAt);
     const port = await (await import('node:fs/promises')).readFile(portFile, 'utf8');
     await expect(fetch(`http://127.0.0.1:${port}`, { signal: AbortSignal.timeout(1000) })).rejects.toThrow();
     expect(await (await fetch(`http://[::1]:${port}`)).text()).toBe('usable application');
@@ -126,6 +139,7 @@ setInterval(() => { if (fs.existsSync(${JSON.stringify(exitFile)})) process.exit
     composer = page.getByRole('textbox', { name: 'Message this Thread', includeHidden: true });
     await expect.poll(async () => (await readTask(taskId)).task.state).toBe('running');
     expect((await readTask(taskId)).task.continuation.handoff).toBeTruthy();
+
     expect(calls).toBe(callsBeforeExit);
     const gatewayRequestsBeforeExit = requests.length;
     await writeFile(exitFile, 'external close');

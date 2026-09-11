@@ -1,3 +1,4 @@
+import { TASK_CONTROL_INPUT_SCHEMA, decodeTaskControlToolInput } from '../../src/core/agent/taskContinuation';
 import { readFileSync } from 'node:fs';
 import { generateKeyPairSync } from 'node:crypto';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
@@ -533,13 +534,26 @@ describe('native turn kernel parity', () => {
       const { gateway } = await executeToolWithArguments(status, { task_id: taskId });
       const result = gateway.requests[1]!.context.messages.find((message) => message.role === 'toolResult')!;
       const header = JSON.parse((result.content[0] as { text: string }).text);
+      expect(header.data.stateObservedAt).toBeGreaterThanOrEqual(store.read(taskId)!.startedAt);
+      expect(header.data.execution).toMatchObject({
+        source: { turnId: context.turn.id, itemId: 'start-server' },
+        cwd: store.read(taskId)!.executionContext.address.cwd,
+        startedAt: store.read(taskId)!.startedAt,
+        recordedProcess: { childPid: store.read(taskId)!.childPid },
+      });
       expectToolOutputContract('task_status', header.data);
       expect(header).toMatchObject({ ok: true, data: {
         taskId, state: 'running', result: null,
         observation: { observedAt: expect.any(Number), output: expect.any(String), outputTruncated: true },
       } });
+      expect(header.instructions).toContain('There is no pending terminal event to acknowledge');
       expect(store.read(taskId)?.state).toBe('running');
       expect((await tasks.stop(taskId, context.thread.id))?.state).toBe('cancelled');
+      const stopped = await executeToolWithArguments(status, { task_id: taskId });
+      const stoppedMessage = stopped.gateway.requests[1]!.context.messages.find((message) => message.role === 'toolResult')!;
+      const stoppedHeader = JSON.parse((stoppedMessage.content[0] as { text: string }).text);
+      expect(stoppedHeader.instructions).toContain('There is no pending terminal event to acknowledge');
+      expect(stoppedHeader.instructions).toContain('availability is unknown, not proven unavailable');
       const timed = await bash.execute('timed-background', { command: 'sleep 30', run_in_background: true, timeout: 50 });
       const timedId = (timed.details as { data: { backgroundTaskId: string } }).data.backgroundTaskId;
       expect((await tasks.waitForTerminal(timedId, context.thread.id, 5_000))?.state).toBe('timed_out');
@@ -942,6 +956,64 @@ describe('native turn kernel parity', () => {
       }),
     ]);
     expect(events.some((event) => event.type === 'tool_execution_start')).toBe(false);
+  });
+
+  test('rejects wrong Task action fields before execution and admits the corrected call', async () => {
+    const executions: unknown[] = [];
+    const control = parameterTool('task_control', TASK_CONTROL_INPUT_SCHEMA, async (_id, args) => {
+      executions.push(args); return toolResult('accepted');
+    });
+    control.prepareArguments = decodeTaskControlToolInput as never;
+    const request = { task_id: 'task', operation_id: 'operation', action: 'acknowledge', event_id: 'event' };
+    const gateway = new ScriptedGateway([
+      () => terminalStream(assistant([{ type: 'toolCall', id: 'bad', name: 'task_control', arguments: { request: { ...request, expected_revision: 0 } } }], 'toolUse')),
+      () => terminalStream(assistant([{ type: 'toolCall', id: 'good', name: 'task_control', arguments: { request } }], 'toolUse')),
+      () => terminalStream(assistant([{ type: 'text', text: 'done' }])),
+    ]);
+    const runtime = createRuntime(gateway, { tools: [control] });
+    const events: AgentEvent[] = [];
+    runtime.subscribe((event) => events.push(event));
+    await runtime.prompt(USER);
+    expect(executions).toEqual([{ request }]);
+    expect(events.filter((event) => event.type === 'tool_execution_start')).toHaveLength(1);
+    expect(events.find((event) => event.type === 'tool_execution_end' && event.isError)).toMatchObject({
+      result: { content: [{ text: expect.stringContaining('request/expected_revision') }] },
+    });
+  });
+
+  test('rejects empty extra Task keys before canonicalization without entering the executor', async () => {
+    const request = { task_id: 'task', operation_id: 'operation', action: 'acknowledge', event_id: 'event' };
+    const reference = { turnId: 'turn', itemId: 'item', '': null };
+    const malformed = [
+      { request, '': null },
+      { request: { ...request, '': null } },
+      { request: { ...request, '': null, expected_revision: 0 } },
+      { request: { task_id: 'task', operation_id: 'operation', action: 'handoff', expected_revision: 0, readiness: [reference] } },
+      { request: { task_id: 'task', operation_id: 'operation', action: 'start_watch', expected_revision: 0, request: reference } },
+    ];
+    for (const args of malformed) {
+      const executions: unknown[] = [];
+      const control = parameterTool('task_control', TASK_CONTROL_INPUT_SCHEMA, async (_id, input) => {
+        executions.push(input); return toolResult('accepted');
+      });
+      control.prepareArguments = decodeTaskControlToolInput as never;
+      const gateway = new ScriptedGateway([
+        () => terminalStream(assistant([{ type: 'toolCall', id: 'bad', name: 'task_control', arguments: args }], 'toolUse')),
+        () => terminalStream(assistant([{ type: 'text', text: 'done' }])),
+      ]);
+      const runtime = createRuntime(gateway, { tools: [control] });
+      const events: AgentEvent[] = [];
+      runtime.subscribe((event) => events.push(event));
+      await runtime.prompt(USER);
+      expect(executions).toEqual([]);
+      expect(events.some((event) => event.type === 'tool_execution_start')).toBe(false);
+      expect(events.find((event) => event.type === 'tool_call_admission')).toMatchObject({
+        decision: { execute: false, modelCall: { disposition: 'evidenceOnly', reason: 'invalidArguments' } },
+      });
+      expect(events.find((event) => event.type === 'tool_execution_end' && event.isError)).toMatchObject({
+        result: { content: [{ text: expect.stringContaining('field is not allowed') }] },
+      });
+    }
   });
 
   test('admits exact nested JSON values after preparing arguments exactly once', async () => {

@@ -544,19 +544,26 @@ export const TASK_STATUS_INPUT_SCHEMA: ObjectJsonSchema = {
 const agentTaskToolContracts: readonly StaticModelToolContract[] = [
   {
     identity: { namespace: null, name: 'task_control' },
-    description: 'Change responsibility for an owned Task. handoff requires expected_revision and completed successful readiness references; launch progress/status alone is insufficient. acknowledge binds an exact terminal event_id to this Turn before reporting its result. start_watch requires expected_revision and an explicit reader request reference; revoke_watch requires expected_revision and the exact watch_id and keeps the process running. Handoff preserves a watch. All actions require operation_id; reconcile lost replies with task_status. A conflict or existing handler never transfers responsibility or grants repair/restart authority.',
+    description: 'Change responsibility for an owned Task. Put all fields inside request; select exactly one action and only its fields. acknowledge forbids expected_revision. handoff requires expected_revision and completed successful readiness references; launch progress/status alone is insufficient. acknowledge binds an exact terminal event_id to this Turn before reporting its result. start_watch requires expected_revision and an explicit reader request reference; revoke_watch requires expected_revision and the exact watch_id and keeps the process running. Handoff preserves a watch. All actions require operation_id; reconcile lost replies with task_status. A conflict or existing handler never transfers responsibility or grants repair/restart authority.',
     scope: 'rootThread', schemaOwner: 'core', inputSchema: TASK_CONTROL_INPUT_SCHEMA,
     outputSchema: objectSchema({ receipt: TASK_CONTROL_RECEIPT_SCHEMA, continuation: TASK_CONTINUATION_SCHEMA }, ['receipt', 'continuation']),
     actionKinds: ['task.control'],
   },
   {
     identity: { namespace: null, name: 'task_status' },
-    description: TASK_STATUS_TOOL_DESCRIPTION,
+    description: TASK_STATUS_TOOL_DESCRIPTION + ' execution contains recorded owner facts for this Task. Recorded PIDs are not proof of live process identity; match start identity or retain unknown. State observation time and log time are separate. A matching path/name/port never grants ownership of another process.',
     scope: 'anyThread',
     schemaOwner: 'core',
     inputSchema: TASK_STATUS_INPUT_SCHEMA,
     outputSchema: objectSchema({
       taskId: stringSchema('Tool Task identity.'),
+      stateObservedAt: integerSchema('When the Host read these Task state facts; log observation time is separate.'),
+      execution: objectSchema({
+        source: nullableSchema(TASK_ITEM_REFERENCE_SCHEMA),
+        cwd: nullableSchema(boundedStringSchema(4096, 'Admitted directory; not proof of process identity.')),
+        startedAt: nullableSchema(integerSchema()), completedAt: nullableSchema(integerSchema()),
+        recordedProcess: objectSchema({ supervisorPid: nullableSchema(integerSchema()), childPid: nullableSchema(integerSchema()) }, ['supervisorPid', 'childPid']),
+      }, ['source', 'cwd', 'startedAt', 'completedAt', 'recordedProcess']),
       continuation: TASK_CONTINUATION_SCHEMA,
       operation: TASK_CONTROL_RECEIPT_SCHEMA,
       requestReference: nullableSchema(TASK_ITEM_REFERENCE_SCHEMA),
