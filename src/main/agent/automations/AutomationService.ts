@@ -299,7 +299,7 @@ async function validateContextHint(binding: AutomationContextHintInput,
   resolveProject?: AutomationServiceOptions['resolveProjectHint'],
 ): Promise<string> {
   const rootHint = binding.source.kind === 'project'
-    ? resolveProject?.(binding.source.projectId).rootHint : automationDirectoryHint(binding);
+    ? resolveProject?.(binding.source.projectId).primaryFolder : automationDirectoryHint(binding);
   if (!rootHint) throw new Error('Automation Project hint is unavailable or has no saved directory');
   const cwd = await realpath(rootHint);
   if (binding.source.kind === 'project' && cwd !== rootHint) throw new Error('Saved Project directory was redirected; edit its root hint before scheduling');

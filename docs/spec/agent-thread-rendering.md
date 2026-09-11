@@ -56,20 +56,40 @@ appear in navigation, or enter the renderer Thread map. The renderer has no
 Agent tree, child navigation stack, delegated transcript, or descendant-running
 indicator.
 
-The Thread chooser groups assigned user Chats under their Project name and keeps
-unassigned Chats under No Project. Its Projects action opens the catalog manager:
-create/edit a name and optional directory hint, create a Chat explicitly inside a
-Project, or confirm deletion with the preservation/dependency consequences shown.
-The row menu moves a persistent user Chat and its descendant lineage to a Project
-or removes grouping. A grouped selected Chat has a compact membership control near
-the composer; an ungrouped Chat has no extra status row and requires no directory
-selection. These controls never change task directories or permissions.
+The Thread chooser retains Project grouping and shows each user conversation's
+saved location beside existing source, startup-availability, activity, and time
+metadata. A folder-only chat shows its basename; colliding basenames include the
+shortest distinguishing parent suffix. Project membership shows the Project name,
+plus the folder when different from its primary. A Project chat with no saved
+folder always reads `Project · Application default`, even if the resolved default
+happens to equal the primary. Unknown membership is never labeled No Project.
+Full accepted paths are accessible, and unavailable folders retain their identity.
+The composer preserves the folder label beside a separate unavailable indicator;
+long Project names yield space to the location and its status.
 
-The renderer refreshes metadata after explicit mutations, Agent Project completion,
-Thread creation, and window focus. Request failure remains visible in the manager;
-loading or failed reads cannot submit stale membership choices. Revision conflicts
-surface as errors so a changed Project is never silently overwritten. The manager
-uses existing dialog, field, button, focus, and token primitives in both themes.
+The composer's Add (`+`) menu offers attachments, Choose project, and Set work
+folder. With neither Project nor saved folder there is no persistent location
+chip or extra row. A selected location appears immediately beside Add and uses the
+same labels as history. Its details expose canonical paths, primary and secondary
+sources, application-default resolution, and clear/reselect repair actions.
+Attachment limits disable only the attachment action. Existing paste/drop, draft,
+tray and removal owners are unchanged; attachment use never changes location.
+
+The Project picker supports search, New Project and No Project. It previews the
+resulting work folder and preserves it on existing-chat moves unless Use project
+primary folder is explicitly checked. That choice uses one atomic Host operation.
+Project forms use the native directory picker, editable first-folder name
+suggestion, and add/remove/make-primary controls. Removing the primary requires an
+explicit replacement unless every folder was removed. New Chat in Project copies
+the primary. Deletion explains retained chats, folders and task evidence plus
+Automation dependencies. Folder changes remain available during a Turn and never
+redirect admitted tasks or change permissions.
+
+The renderer refreshes after mutations, global `project/catalog/changed`
+notifications (including Agent writes), Thread creation and window focus. Reads
+retain known values while loading or failed; unavailable metadata and conflicts
+remain visible and cannot submit stale choices. Native menus/dialogs restore
+keyboard focus and use existing neutral token primitives in both themes.
 
 The selected root's own foreground Turn state is visible in its transcript and
 composer. Background Bash work, including delegation CLI invocations, appears
@@ -376,7 +396,17 @@ Stop with Steer; an idle Thread shows Send. Stop and Send are never presented as
 competing primary actions.
 
 The composer reads the selected root Thread's canonical execution selection and
-the provider catalog. Its established model/reasoning chip, anchored menu,
+the provider catalog. Its button formats recognized names compactly: Claude
+Sonnet/Opus/Haiku omit the redundant vendor/Claude prefix, OpenAI GPT/o and Google
+Gemini omit only the provider prefix; all family/version/variant/size/date suffixes
+and unknown/custom identities remain. Same-connection label collisions retain the
+original name or ID. Full model, connection and reasoning identity remain in the
+menu, tooltip and accessible description. Provider reasoning labels resolve first,
+then standard labels shorten to localized Min/Low/Med/High/XH/Max; Off has no badge.
+Unknown native labels remain verbatim and no unsupported effort choice is added.
+Long Project names truncate before the Application default qualifier; the toolbar
+keeps model/effort and Send/Stop usable at narrow widths without another row.
+ Its established model/reasoning chip, anchored menu,
 flyout submenus, hover behavior, keyboard navigation, focus restoration, and
 viewport clamping are retained. A selection submits one atomic
 `thread/configuration/set` request. The chip is disabled during an active Turn,

@@ -1,4 +1,5 @@
 import {
+  decodeProjectCliInput,
   canonicalDelegateCommand,
   delegateBytesDigest,
   DELEGATE_CAPABILITY_FD,
@@ -69,7 +70,8 @@ export async function runDelegateCli(
       const rawInput = command.name === 'close' ? '' : await io.readStdin();
       const input = command.name === 'close'
         ? null
-        : parseInput(rawInput, command.name === 'run' ? 'run' : 'message');
+        : command.name === 'project' ? decodeProjectCliInput(JSON.parse(rawInput))
+          : parseInput(rawInput, command.name === 'run' ? 'run' : 'message');
       const result = await executor.execute(command, input, options.signal, rawInput);
       await writeSuccess(io, command.output, result);
       return DELEGATE_EXIT_CODES.success;
@@ -130,10 +132,12 @@ class CapabilityBoundExecutor implements DelegateStateExecutor {
 function readCapabilityFd(fd: number): Buffer | null {
   const chunks: Buffer[] = [];
   let total = 0;
+  let readable = false;
   try {
     while (true) {
       const chunk = Buffer.allocUnsafe(Math.min(8 * 1024, DELEGATE_MAX_CAPABILITY_BYTES + 1 - total));
       const count = readSync(fd, chunk, 0, chunk.byteLength, null);
+      readable = true;
       if (count === 0) break;
       total += count;
       if (total > DELEGATE_MAX_CAPABILITY_BYTES) {
@@ -145,7 +149,9 @@ function readCapabilityFd(fd: number): Buffer | null {
     if (error instanceof DelegateBrokerError) throw error;
     return null;
   } finally {
-    try { closeSync(fd); } catch { /* An absent capability descriptor is an ordinary refusal. */ }
+    // A direct invocation may have a runtime-owned descriptor (for example Bun's
+    // kqueue) in this slot. A failed read does not give us ownership to close it.
+    if (readable) try { closeSync(fd); } catch { /* Process teardown may already have closed it. */ }
   }
   return total === 0 ? null : Buffer.concat(chunks, total);
 }

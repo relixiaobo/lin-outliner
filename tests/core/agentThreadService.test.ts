@@ -8883,3 +8883,137 @@ describe('bounded user input lifecycle', () => {
     await expect(next.result).rejects.toThrow('interrupted');
   });
 });
+
+describe('Project CLI and live conversation location', () => {
+  test.each(['source', 'bundled'])('executes invocation-bound folder and Project operations through the %s CLI', async (kind) => {
+    const bundled = kind === 'bundled';
+    const { DelegateRuntimeHost, schedulingPolicyDigest } = await import('../../src/main/agent/delegation');
+    const { ProjectCliService, projectCliScheduling, PROJECT_CLI_CONFIGURATION_REVISION } = await import('../../src/main/agent/projects/ProjectCliService');
+    const { resolveDelegateCliRuntime } = await import('../../src/main/delegateRuntime');
+    const fixture = await createFixture(undefined, { defaultExecutionDirectory: await realpath(tmpdir()) });
+    const a = join(await realpath(fixture.root), 'a'), b = join(await realpath(fixture.root), 'b');
+    await mkdir(a); await mkdir(b);
+    await writeFile(join(a, 'identity.txt'), 'directory A'); await writeFile(join(b, 'identity.txt'), 'directory B');
+    const thread = (await fixture.service.startThread({ source: 'app', threadSource: 'user', modelProvider: 'openai', configurationSource: { kind: 'user' } })).thread;
+    await fixture.service.startRendererTurn({ threadId: thread.id, input: [{ type: 'text', text: 'Use this folder for the conversation.' }] });
+    await fixture.executor.waitUntilWaiting();
+    const context = fixture.executor.contexts[0]!;
+    let runtime!: ToolRuntime;
+    let confirmations = 0;
+    let disabled = false;
+    const cli = new ProjectCliService(fixture.service.projects, (execution) => runtime.authorizeProjectInvocation(execution), async () => { confirmations++; return true; });
+    const sourceCli = resolveDelegateCliRuntime({ isPackaged: false, moduleDir: join(process.cwd(), 'src/main'), resourcesPath: '/unused', processExecPath: process.execPath });
+    const bundle = join(fixture.root, 'delegate.mjs');
+    if (bundled) execFileSync('bun', ['build', sourceCli.cliEntry, '--outfile', bundle, '--target', 'node', '--format', 'esm']);
+    const broker = new DelegateRuntimeHost({
+      cli: bundled ? { ...sourceCli, cliEntry: bundle, cliRuntime: process.execPath, packaged: true } : sourceCli,
+      socketPath: join(fixture.root, 'project.sock'), currentConfigurationRevision: () => PROJECT_CLI_CONFIGURATION_REVISION,
+      resolveAdmission: async (input) => {
+        const source = fixture.service.projectInvocationContext(input.source.rootThreadId, input.source.sourceTurnId, input.source.sourceItemId);
+        return { rootUserIntentRevision: source.rootUserIntentRevision, session: { kind: 'project' }, policy: {
+          configurationRevision: PROJECT_CLI_CONFIGURATION_REVISION, capabilityCeilingDigest: 'a'.repeat(64),
+          schedulingPolicyDigest: schedulingPolicyDigest(projectCliScheduling().scheduling),
+          runnerId: 'project-host', runnerVersion: null, modelProvider: 'openai', modelId: 'fixture', effort: 'medium',
+          profile: 'general', access: 'workspace-write', timeoutMs: 120_000,
+        } };
+      }, execute: (execution) => cli.execute(execution),
+    });
+    await broker.start();
+    runtime = new ToolRuntime(fixture.service, {
+      capabilityConfig: { blocks: [] }, disabledTools: () => disabled ? ['bash'] : [],
+      capabilityTools: () => createLocalTools({
+        workspace: { root: fixture.service.defaultExecutionDirectory(), scratchRoot: join(fixture.root, 'scratch'), readFileState: new Map(), threadId: thread.id,
+          resolveWorkFolder: () => fixture.service.projects.store.workFolder(thread.id) },
+        toolTaskService: fixture.service.toolTaskService(), turnId: context.turn.id,
+        delegateCommandRuntime: broker.commandRuntime(() => projectCliScheduling()),
+      }),
+    });
+    try {
+      const tools = await runtime.createTools(context);
+      async function execute(name: string, args: Record<string, unknown>) {
+        const id = context.recorder.createItemId();
+        const item = { id, type: 'dynamicToolCall', provenance: context.recorder.localProvenance(id), namespace: null, tool: name, arguments: args,
+          modelCall: replayableModelCall(name, args), status: 'inProgress', outputRef: null, contentItems: null, success: null, durationMs: null } as const;
+        await context.recorder.started(item);
+        const result = await executeTool(tools, name, id, args) as any;
+        await context.recorder.completed({ ...item, status: 'completed', success: result.details.ok, durationMs: 1 });
+        return result;
+      }
+      async function command(input: unknown) {
+        const result = await execute('bash', { command: 'delegate project --input - --output json', stdin: JSON.stringify(input), cwd: a });
+        expect(result.details).toMatchObject({ ok: true });
+        const response = JSON.parse(result.details.data.stdout);
+        expect(response.ok).toBe(true);
+        return response.data;
+      }
+      const initial = await command({ action: 'inspect' });
+      expect(initial.workFolders[0]).toMatchObject({ threadId: thread.id, path: null, revision: 0 });
+      const otherThread = (await fixture.service.startThread({ source: 'app', threadSource: 'user', modelProvider: 'openai', configurationSource: { kind: 'user' } })).thread;
+      await fixture.service.projects.manage({ operation: 'setWorkFolder', threadId: otherThread.id, path: b, expectedRevision: 0 });
+      const crossConversation = await execute('bash', { command: 'delegate project --input - --output json', cwd: a,
+        stdin: JSON.stringify({ action: 'manage', operationId: 'other-folder', request: {
+          operation: 'setWorkFolder', threadId: otherThread.id, path: a, expectedRevision: 1,
+        } }),
+      });
+      expect(crossConversation.details.ok).toBe(false);
+      expect(JSON.parse(crossConversation.details.data.stdout)).toMatchObject({ ok: false, error: { code: 'unauthorized' } });
+      expect(fixture.service.projects.store.workFolder(otherThread.id)).toMatchObject({ path: b, revision: 1 });
+      expect(await command({ action: 'receipt', operationId: 'other-folder' })).toEqual({ outcome: 'not_committed' });
+      expect(confirmations).toBe(0);
+      await command({ action: 'manage', operationId: 'set-a', request: { operation: 'setWorkFolder', threadId: thread.id, path: a, expectedRevision: 0 } });
+      expect(confirmations).toBe(0);
+      expect((await execute('file_read', { file_path: 'identity.txt' })).details.data.file.content).toContain('directory A');
+      const override = await execute('file_read', { file_path: 'identity.txt', cwd: b });
+      expect(override.executionContext.address.cwd).toBe(b);
+      expect(override.executionContext.address.workFolder).toMatchObject({ path: a, revision: 1 });
+      expect((await execute('file_read', { file_path: 'identity.txt' })).executionContext.address.cwd).toBe(a);
+      const request = { operation: 'create', name: 'CLI Project', folders: [a, b], primaryFolder: b };
+      const created = await command({ action: 'manage', operationId: 'create-once', request });
+      expect(confirmations).toBe(1);
+      expect((await command({ action: 'receipt', operationId: 'create-once' })).result.project.id).toBe(created.project.id);
+      expect((await command({ action: 'manage', operationId: 'create-once', request })).project.id).toBe(created.project.id);
+      expect(confirmations).toBe(1);
+      const updated = await command({ action: 'manage', operationId: 'edit-project', request: {
+        operation: 'update', projectId: created.project.id, expectedRevision: 1, name: 'Renamed CLI Project', folders: [a, b], primaryFolder: a,
+      } });
+      await command({ action: 'manage', operationId: 'bind-project', request: {
+        operation: 'bind', projectId: created.project.id, expectedRevision: updated.project.revision,
+        threadId: thread.id, expectedMembershipRevision: 0,
+      } });
+      expect(fixture.service.projects.store.workFolder(thread.id)).toMatchObject({ path: a, revision: 1 });
+      await command({ action: 'manage', operationId: 'unbind-project', request: {
+        operation: 'bind', projectId: null, expectedRevision: null, threadId: thread.id, expectedMembershipRevision: 1,
+      } });
+      await command({ action: 'manage', operationId: 'delete-project', request: {
+        operation: 'delete', projectId: created.project.id, expectedRevision: updated.project.revision,
+      } });
+      expect(fixture.service.projects.store.list()).toEqual([]);
+      expect(fixture.service.projects.store.workFolder(thread.id)).toMatchObject({ path: a, revision: 1 });
+      await runtime.prepareProviderContext(context);
+      const before = context.recorder.orderedItems().filter((item) => item.type === 'contextEvidence' && item.kind === 'additionalContext').length;
+      const background = await execute('bash', { command: 'pwd; sleep 0.15', run_in_background: true });
+      expect(background.details).toMatchObject({ ok: true });
+      await command({ action: 'manage', operationId: 'set-b', request: { operation: 'setWorkFolder', threadId: thread.id, path: b, expectedRevision: 1 } });
+      const settled = await fixture.service.toolTaskService().waitForTerminal(background.details.data.backgroundTaskId, thread.id, 5_000);
+      expect(settled?.executionContext.address).toMatchObject({ cwd: a, workFolder: { path: a, revision: 1 } });
+      await runtime.prepareProviderContext(context);
+      expect(context.recorder.orderedItems().filter((item) => item.type === 'contextEvidence' && item.kind === 'additionalContext').length).toBe(before + 1);
+      expect((await execute('file_read', { file_path: 'identity.txt' })).executionContext.address.cwd).toBe(b);
+      await rm(b, { recursive: true });
+      expect((await execute('file_read', { file_path: 'identity.txt' })).details.ok).toBe(false);
+      expect((await execute('file_read', { file_path: 'identity.txt', cwd: a })).details.ok).toBe(true);
+      await command({ action: 'manage', operationId: 'clear', request: { operation: 'setWorkFolder', threadId: thread.id, path: null, expectedRevision: 2 } });
+      const defaultDirectory = await execute('bash', { command: 'pwd' });
+      expect(defaultDirectory.details).toMatchObject({ ok: true, data: { stdout: `${fixture.service.defaultExecutionDirectory()}\n` } });
+      expect(defaultDirectory.executionContext.address.workFolder).toMatchObject({ path: null, revision: 3 });
+      disabled = true;
+      const refused = await execute('bash', { command: 'delegate project --input - --output json', stdin: '{"action":"inspect"}', cwd: a });
+      expect(refused.details.ok).toBe(false);
+      const bare = Bun.spawn([process.execPath, bundled ? bundle : sourceCli.cliEntry, 'project', '--input', '-', '--output', 'json'], { stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' });
+      bare.stdin.end('{"action":"inspect"}');
+      expect(await bare.exited).not.toBe(0);
+      expect(await new Response(bare.stdout).text()).toContain('unauthorized');
+      fixture.executor.finish(); await fixture.service.waitForIdle(thread.id);
+    } finally { await broker.stop(); }
+  }, 30_000);
+});

@@ -2307,6 +2307,7 @@ export interface AgentIdentityCatalogResponse {
 }
 
 export const AGENT_CORE_METHODS = [
+  'project/pickFolder',
   'project/inspect',
   'project/manage',
   'thread/list',
@@ -2355,6 +2356,7 @@ export const AGENT_CORE_METHODS = [
 export type AgentCoreMethod = typeof AGENT_CORE_METHODS[number];
 
 export interface AgentCoreRequestByMethod {
+  readonly 'project/pickFolder': Record<string, never>;
   readonly 'project/inspect': import('./project').ProjectInspectRequest;
   readonly 'project/manage': import('./project').ProjectManageRequest;
   readonly 'thread/list': ThreadListRequest;
@@ -2401,6 +2403,7 @@ export interface AgentCoreRequestByMethod {
 }
 
 export interface AgentCoreResponseByMethod {
+  readonly 'project/pickFolder': { readonly path: string | null };
   readonly 'project/inspect': import('./project').ProjectCatalogView;
   readonly 'project/manage': import('./project').ProjectManageResult;
   readonly 'thread/list': ThreadListResponse;
@@ -2454,6 +2457,7 @@ export type ThreadItemDelta =
   | { readonly type: 'dynamicToolOutput'; readonly delta: DynamicToolOutputContent };
 
 export type AgentCoreNotification =
+  | { readonly type: 'project/catalog/changed' }
   | { readonly type: 'thread/started'; readonly threadId: ThreadId; readonly thread: Thread }
   | {
       readonly type: 'thread/name/updated';
@@ -2555,7 +2559,8 @@ export type AgentCoreTransientNotification = Extract<AgentCoreNotification, {
     | 'thread/name/updated'
     | 'turn/providerRetry/changed'
     | 'turn/plan/updated'
-    | 'toolTask/changed';
+    | 'toolTask/changed'
+    | 'project/catalog/changed';
 }>;
 
 export type AgentCoreRecordedNotification = Exclude<AgentCoreNotification, AgentCoreTransientNotification>;

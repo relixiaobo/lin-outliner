@@ -1,7 +1,7 @@
 # Project Labels in Thread History
 
 This catalog-label alternative does not establish a conversation work folder.
-The broader design is [Conversation Work Folders](../conversation-work-folders.md).
+The broader design is [Conversation Work Folders](conversation-work-folders.md).
 
 ## Goal
 

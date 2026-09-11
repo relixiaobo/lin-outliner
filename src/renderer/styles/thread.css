@@ -2077,6 +2077,7 @@
 }
 
 .thread-composer-surface {
+  container: conversation-composer / inline-size;
   --thread-composer-inset: calc(var(--agent-content-x) - var(--space-3));
   position: relative;
   margin: 0;
@@ -2661,8 +2662,8 @@
 }
 
 .thread-composer .icon-button-composerTool:hover:not(:disabled) {
-  background: var(--control-hover);
-  color: var(--surface-inverse);
+  background: transparent;
+  color: var(--text-primary);
 }
 
 .thread-composer .icon-button-composerTool:disabled {

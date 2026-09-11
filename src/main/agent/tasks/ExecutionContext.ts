@@ -22,6 +22,7 @@ export class ExecutionAdmissionError extends Error {
 
 export async function resolveExecutionAddress(input: {
   readonly defaultCwd: string;
+  readonly workFolder?: import('../../../core/agent/project').ConversationWorkFolder;
   readonly cwd?: string;
   readonly targets?: readonly string[];
   readonly followFinalSymlink?: boolean;
@@ -32,6 +33,8 @@ export async function resolveExecutionAddress(input: {
   }
   let cwd: string;
   try {
+    if (input.workFolder?.path && !path.isAbsolute(input.cwd ?? '')
+      && await realpath(input.workFolder.path) !== input.workFolder.path) throw new Error('Saved work folder was redirected');
     cwd = await realpath(path.resolve(input.defaultCwd, input.cwd ?? '.'));
     if (!(await stat(cwd)).isDirectory()) throw new Error('Not a directory');
   } catch {
@@ -50,6 +53,7 @@ export async function resolveExecutionAddress(input: {
     : input.targetKind === 'directory' ? targets : targets.map((target) => path.dirname(target));
   const scopes = await Promise.all([...new Set(directories)].sort().map(resolveExecutionScope));
   return {
+    ...(input.workFolder ? { workFolder: input.workFolder } : {}),
     requestedCwd: input.cwd ?? null,
     cwd,
     targets: [...new Set(targets)].sort(),

@@ -1,5 +1,6 @@
+import { conversationLocationLabel } from '../projects/locationLabel';
 import { Fragment, useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react';
-import type { Project, ProjectMembership } from '../../../core/agent/project';
+import type { Project, ProjectMembership, ProjectCatalogView } from '../../../core/agent/project';
 import { createPortal } from 'react-dom';
 import type { ThreadId } from '../../../core/agent/protocol';
 import type { Thread } from '../projectionTypes';
@@ -11,6 +12,7 @@ import { useMenuKeyboard } from '../../ui/primitives/useMenuKeyboard';
 
 interface ThreadListProps {
   readonly startupThreads?: readonly import('../../../core/startup').StartupThreadAvailability[];
+  readonly projectCatalog?: ProjectCatalogView;
   readonly projects?: readonly Project[];
   readonly memberships?: readonly ProjectMembership[];
   readonly onManageProjects?: () => void;
@@ -49,7 +51,7 @@ const ACTION_MENU_WIDTH = 168;
 
 export function ThreadList({
   startupThreads = [],
-  projects = [], memberships = [], onManageProjects, onAssignProject,
+  projectCatalog, projects = [], memberships = [], onManageProjects, onAssignProject,
   anchorRef,
   backgroundWorkThreadIds,
   createDisabled,
@@ -69,8 +71,13 @@ export function ThreadList({
   const membershipByThread = new Map(memberships.map((entry) => [entry.threadId, entry.projectId]));
   const grouped = new Map(projects.map((project) => [project.id, { id: project.id, name: project.name, threads: [] as Thread[] }]));
   const ungrouped = { id: 'ungrouped', name: t.agent.projects.none, threads: [] as Thread[] };
-  for (const thread of threads) (grouped.get(membershipByThread.get(thread.id) ?? '') ?? ungrouped).threads.push(thread);
-  const groups = [...grouped.values(), ungrouped].filter((group) => group.threads.length > 0);
+  const unknown = { id: 'unknown', name: t.agent.projects.unavailable, threads: [] as Thread[] };
+  for (const thread of threads) {
+    const membership = membershipByThread.get(thread.id);
+    const group = membership === null ? ungrouped : grouped.get(membership ?? '') ?? unknown;
+    group.threads.push(thread);
+  }
+  const groups = [...grouped.values(), ungrouped, unknown].filter((group) => group.threads.length > 0);
   const listRef = useRef<HTMLElement>(null);
   const actionsAnchorRef = useRef<HTMLButtonElement | null>(null);
   const actionsMenuRef = useRef<HTMLDivElement | null>(null);
@@ -184,6 +191,8 @@ export function ThreadList({
           {projects.length ? <h3 className="thread-project-heading">{group.name}</h3> : null}
           {group.threads.map((thread) => {
           const availability = startupThreads.find((entry) => entry.threadId === thread.id);
+          const location = projectCatalog && thread.threadSource === 'user'
+            ? conversationLocationLabel(thread.id, projectCatalog, t.agent.projects) : null;
           const selected = thread.id === selectedThreadId;
           const identity = threadIdentity(thread, t.agent.thread.sources);
           const backgroundWork = backgroundWorkThreadIds.has(thread.id);
@@ -204,7 +213,8 @@ export function ThreadList({
                   ) : null}
                   {thread.name || thread.preview || t.agent.thread.untitled}
                 </span>
-                <small>
+                <small title={location?.detail} aria-label={location?.detail}>
+                  {location?.text ? <>{location.text}{' · '}</> : null}
                   {availability ? <>{availability.threadId === availability.sourceThreadId ? t.startup.quarantined : t.startup.dependentThreads}{' · '}</> : null}
                   {identity ? <>{identity}{' · '}</> : null}
                   {formatRelativeTime(thread.updatedAt)}

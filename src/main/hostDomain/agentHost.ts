@@ -1,3 +1,4 @@
+import { ProjectCliService, PROJECT_CLI_CONFIGURATION_REVISION, projectCliScheduling } from '../agent/projects/ProjectCliService';
 import { ResourceScope } from '../resourceScope';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
@@ -375,16 +376,31 @@ async function composeAgentHost(options: AgentHostOptions, acquisition: Resource
     const settings = (await options.loadRuntimeSettings()).delegation;
     return { settings, revision: delegationSettingsRevision(settings) };
   };
+  const projectCli = new ProjectCliService(threadService.projects,
+    (execution) => toolReference.get().authorizeProjectInvocation(execution),
+    (request, signal) => threadService.reviewProjectChange(threadService.projects.proposal(request), signal));
   const delegationHost = new DelegateRuntimeHost({
     cli: options.delegateCliRuntime,
     socketPath: join(options.userDataDir, 'agent', 'delegate-broker.sock'),
-    currentConfigurationRevision: async () => (await loadDelegationConfiguration()).revision,
+    currentConfigurationRevision: async (command) => command?.name === 'project' ? PROJECT_CLI_CONFIGURATION_REVISION : (await loadDelegationConfiguration()).revision,
     resolveAdmission: async (input) => {
       if (!admissionOpen) throw new Error('Agent execution is unavailable');
       const source = threadService.delegationAdmissionContext(
         input.source.rootThreadId,
         input.source.sourceTurnId,
       );
+      if (input.command.name === 'project') {
+        const context = threadService.projectInvocationContext(input.source.rootThreadId, input.source.sourceTurnId, input.source.sourceItemId);
+        if (!context.configuration.tools.includes('bash')) throw new Error('Project commands require Bash capability');
+        return { rootUserIntentRevision: context.rootUserIntentRevision, session: { kind: 'project' }, policy: {
+          configurationRevision: PROJECT_CLI_CONFIGURATION_REVISION,
+          capabilityCeilingDigest: digestJson([...context.configuration.tools].sort()),
+          runnerId: 'project-host', runnerVersion: null, modelProvider: context.thread.modelProvider,
+          modelId: context.configuration.model, effort: context.configuration.reasoningEffort,
+          profile: 'general', access: 'workspace-write', timeoutMs: 120_000,
+          schedulingPolicyDigest: schedulingPolicyDigest(projectCliScheduling().scheduling),
+        } };
+      }
       const { settings, revision } = await loadDelegationConfiguration();
       const capabilityCeilingDigest = digestJson([...source.configuration.tools].sort());
       if (input.command.name === 'run') {
@@ -480,7 +496,7 @@ async function composeAgentHost(options: AgentHostOptions, acquisition: Resource
             },
       };
     },
-    execute: (execution) => delegationCoordinator.execute(execution),
+    execute: (execution) => execution.admission.command.name === 'project' ? projectCli.execute(execution) : delegationCoordinator.execute(execution),
   });
   const threads: AgentThreadCapability = {
     startupIssues: () => threadService.startupIssues(),
@@ -602,10 +618,10 @@ async function composeAgentHost(options: AgentHostOptions, acquisition: Resource
     },
     delegateCommandRuntime: async (context) => {
       if (context.thread.threadSource !== 'user' || context.thread.parentThreadId !== null) return undefined;
-      const { settings } = await loadDelegationConfiguration();
-      if (!settings.enabled) return undefined;
       return delegationHost.commandRuntime(async ({ command, stdin }) => {
+        if (command.name === 'project') return projectCliScheduling();
         const current = await loadDelegationConfiguration();
+        if (!current.settings.enabled) throw new Error('Agent delegation is disabled');
         const resolved = delegationScheduling(
           command,
           current.settings,
@@ -741,6 +757,7 @@ function delegationScheduling(
   };
   readonly timeoutMs: number;
 } {
+  if (command.name === 'project') return projectCliScheduling();
   const targetSessionId = command.name === 'run'
     ? null
     : command.name === 'close'

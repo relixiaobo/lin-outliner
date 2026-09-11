@@ -1481,12 +1481,20 @@ export const en = {
   // Canonical Thread, Turn, and Item surfaces.
   agent: {
     projects: {
-      title: 'Projects', new: 'New Project', edit: 'Edit Project', name: 'Name', root: 'Directory hint (optional)',
-      empty: 'No Projects yet.', none: 'No Project', directory: 'Directory', unavailable: 'Unavailable Project',
+      keepWorkFolder: 'Keep the current conversation work folder.',
+      operations: { create: 'Create Project', update: 'Edit Project', bind: 'Change conversation Project', delete: 'Delete Project', setWorkFolder: 'Set conversation work folder' },
+      add: 'Add', chooseProject: 'Choose project', search: 'Search projects', sourceFolders: 'Source folders',
+      primary: 'Primary', makePrimary: 'Make primary', addFolder: 'Add folder', removeFolder: 'Remove folder',
+      duplicateFolder: 'This folder is already in the Project.', choosePrimary: 'Choose a replacement primary folder before saving.',
+      organizationOnly: 'Organize conversations; add source folders whenever needed.', usePrimary: 'Use project primary folder',
+      workFolder: 'Work folder', setWorkFolder: 'Set work folder', clearWorkFolder: 'Clear work folder',
+      applicationDefault: 'Application default', locationDetails: 'Project and work folder', reviewTitle: 'Apply Project changes?',
+      title: 'Projects', new: 'New Project', edit: 'Edit Project', name: 'Name', root: 'Source folders',
+      empty: 'No Projects yet.', none: 'No Project', directory: 'Directory', unavailable: 'Unavailable',
       save: 'Save', cancel: 'Cancel', close: 'Close', remove: 'Delete Project', move: 'Move to Project',
       newChat: 'New Chat in Project', back: 'Back', loading: 'Loading Projects…',
-      rootHelp: 'A saved directory is a hint for future Automation runs. Running tasks keep their current directory and permissions.',
-      membershipHelp: 'Group this Chat and its forks and child conversations in a Project.',
+      rootHelp: 'New chats start in the primary folder. Existing chats keep their own work folder.',
+      membershipHelp: 'Move this chat and its related conversations. Work folders stay unchanged unless you choose the primary folder for this chat.',
       deleteHelp: 'Remove this Project and its Chat grouping. Chats, files, and running tasks are kept. Automations that still reference it must be updated first.',
     },
     automations: {
@@ -2047,6 +2055,7 @@ export const en = {
       cost: 'Cost',
     },
     composer: {
+      compactReasoningLevels: { minimal: 'Min', low: 'Low', medium: 'Med', high: 'High', xhigh: 'XH', max: 'Max' },
       editorAriaLabel: 'Message this Thread',
       slashCommandsLabel: 'Thread slash commands',
       compactCommandDescription: 'Replace earlier context with a durable summary',

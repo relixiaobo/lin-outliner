@@ -188,6 +188,8 @@ export interface ThreadServiceOptions {
   readonly executor: TurnExecutor;
   readonly attachmentScratchRoot: string;
   readonly defaultExecutionDirectory?: string;
+  readonly pickWorkFolder?: () => Promise<{ path: string | null }>;
+  readonly reviewProjectChange?: (request: import('./projects/ProjectService').ProjectReview, signal: AbortSignal) => Promise<boolean>;
   /** App-owned root for derived conversation records. Never a workspace path. */
   readonly recordRoot: string;
   readonly nameGenerator?: ThreadNameGenerator;
@@ -307,6 +309,8 @@ export interface PersistentThreadExecutionContext {
 
 export class ThreadService implements ThreadServiceExtensionHost {
   readonly projects: ProjectService;
+  private readonly pickWorkFolder: NonNullable<ThreadServiceOptions['pickWorkFolder']>;
+  readonly reviewProjectChange: NonNullable<ThreadServiceOptions['reviewProjectChange']>;
   defaultExecutionDirectory(): string { return this.hostDefaultDirectory; }
   writeFeatureContext(ownerId: string, payload: import('../../core/agent/protocol').ThreadContextPayload) {
     return this.core.payloads.writeContext(ownerId, payload);
@@ -404,10 +408,13 @@ export class ThreadService implements ThreadServiceExtensionHost {
       options.resolvePersona?.(thread, reportConfigurationReadFailure) ?? null
     );
     this.hostDefaultDirectory = options.defaultExecutionDirectory ?? homedir();
+    this.pickWorkFolder = options.pickWorkFolder ?? (() => Promise.reject(new Error('Native folder picker is unavailable')));
+    this.reviewProjectChange = options.reviewProjectChange ?? (() => Promise.reject(new Error('Native Project confirmation is unavailable')));
     this.beforeInitialTurnAdmission = options.beforeInitialTurnAdmission ?? (() => undefined);
     this.now = options.now ?? Date.now;
     this.projects = new ProjectService(options.stores.metadata.projects,
-      (id) => this.core.metadata.read(id)?.thread ?? null, this.now);
+      (id) => this.core.metadata.read(id)?.thread ?? null, this.now,
+      () => this.hostDefaultDirectory, () => this.core.emitTransientNotification({ type: 'project/catalog/changed' }));
     this.delegationCoordinator = options.delegationCoordinator ?? (() => null);
     this.goalStore = options.stores.goals;
     this.toolTasks = new ToolTaskService(
@@ -672,6 +679,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       },
     });
     this.core.subscribe((notification) => {
+      if (notification.type === 'project/catalog/changed') return;
       const thread = notification.type === 'thread/started' ? notification.thread : this.core.metadata.read(notification.threadId)?.thread;
       if (thread && ['thread/started','turn/started','item/started','item/completed','items/completed','turn/completed','thread/name/updated','thread/status/changed'].includes(notification.type)) {
         this.recordIndex.schedule();
@@ -1013,6 +1021,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   subscribe(listener: NotificationListener): () => void { return this.core.subscribe(listener); }
   subscribeRenderer(listener: NotificationListener): () => void {
     return this.core.subscribe((notification) => {
+      if (notification.type === 'project/catalog/changed') { listener(notification); return; }
       const hidden = notification.type === 'thread/started'
         ? notification.thread.threadSource === 'delegation'
         : this.isDelegationThread(notification.threadId);
@@ -1168,7 +1177,8 @@ export class ThreadService implements ThreadServiceExtensionHost {
     decoded: AgentCoreRequestByMethod[Method],
   ): Promise<AgentCoreResponseByMethod[Method]> {
     switch (method) {
-      case 'project/inspect': return this.projects.inspect(decoded) as AgentCoreResponseByMethod[Method];
+      case 'project/pickFolder': return this.pickWorkFolder() as Promise<AgentCoreResponseByMethod[Method]>;
+      case 'project/inspect': return this.projects.inspect(decoded) as Promise<AgentCoreResponseByMethod[Method]>;
       case 'project/manage': return this.projects.manage(decoded) as Promise<AgentCoreResponseByMethod[Method]>;
       case 'thread/list':
         return this.listThreads(decoded as AgentCoreRequestByMethod['thread/list']) as AgentCoreResponseByMethod[Method];
@@ -1459,6 +1469,13 @@ export class ThreadService implements ThreadServiceExtensionHost {
     return { task, output: await this.toolTasks.output(request.taskId, request.threadId) };
   }
   toolTaskService(): ToolTaskService { return this.toolTasks; }
+
+  projectInvocationContext(threadId: ThreadId, turnId: TurnId, itemId: string) {
+    this.authorizeTaskControl(threadId, { turnId, itemId });
+    const context = this.delegationAdmissionContext(threadId, turnId);
+    if (context.thread.ephemeral || context.thread.threadSource !== 'user') throw new Error('Project commands require a persistent user conversation');
+    return context;
+  }
 
   private authorizeTaskControl(threadId: ThreadId, caller: import('../../core/agent/taskContinuation').TaskItemReference): void {
     const record = this.core.requireThread(threadId);

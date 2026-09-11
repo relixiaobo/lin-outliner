@@ -7,8 +7,9 @@ renderer state, and user-visible language use the same four concepts:
 ## Domain Model
 
 A `Thread` is the durable container for ordered work history and configuration.
-It owns stable UUIDv7 identity, lineage, source, model provider, working
-directory, timestamps, status, and optional loaded Turns. `sessionId` groups a
+It owns stable UUIDv7 identity, lineage, source, model provider, timestamps,
+status, and optional loaded Turns. A persistent user conversation can separately
+save a default work folder; actual execution addresses belong to Tool Tasks. `sessionId` groups a
 root Thread with its descendants; it is only a grouping key.
 
 A `Turn` is one accepted input and its resulting ordered Items. At most one Turn
@@ -310,8 +311,9 @@ developer instructions, and capability ceilings remain host-private. Feature
 and delegation Threads have no renderer-editable configuration. A fork inherits the
 source Thread's effective execution selection.
 
-An ordinary renderer-created root has no persisted execution cwd; the renderer
-does not submit one as Thread state. Every executable Turn resolves an
+An ordinary renderer-created root has no execution cwd in its Thread DTO. Its
+optional conversation work folder is a separate revisioned setting, not execution
+evidence. Every executable Turn resolves an
 ExecutionAddress for each Tool Task, and descendants validate or refresh their
 own context references. Before any Tool Task starts, its immutable address,
 policy, and context snapshot references are durable. Initial discovery uses a
@@ -328,43 +330,75 @@ only after the owning resource reaches its terminal fence.
 
 `Thread.configurationSource` records configuration lookup ownership, not Project
 membership or an execution default. Root creation defaults to `user`; forks and
-delegated Sessions retain the selected source. The desktop Host default is
-`LIN_AGENT_LOCAL_ROOT` when explicitly configured, otherwise
-`<userData>/agent/workspaces`. This directory is shared Host storage, never a
-per-Thread allocation. New Chat needs no directory selection. Task calls resolve
-relative `cwd` against that default without remembering another call's directory.
+delegated Sessions retain the selected source. The desktop Host default is the OS user's home directory, exposed by
+`ProjectService` as the application default. New Chat needs no directory
+selection. Local calls use an explicit `cwd`, otherwise the saved conversation
+folder, otherwise this default; relative overrides use the selected base.
+A missing or redirected saved directory fails dependent calls without fallback;
+an absolute valid override still works. A call never saves its own cwd as a
+conversation preference. The Host samples the setting synchronously before
+address resolution and stores its path/revision in the immutable execution
+address. Later edits affect only subsequent admissions.
 Collection, immutable successor delivery, and freshness validation follow the
 [local task context lifecycle](agent-tool-design.md#local-files-and-commands).
 
 ### Optional Project catalog
 
 `ProjectCatalogStore` shares `ThreadMetadataStore`'s SQLite connection. A Project
-owns a UUIDv7 identity, display name, optional canonical directory hint, revision,
-and timestamps. Membership is separate from `Thread`; neither selecting a Project
-nor changing its root alters Thread configuration, permissions, Tool Task addresses,
-or prior context evidence. `project/inspect` reads this catalog and requested user
-root memberships; `project/manage` creates, edits, binds, or deletes through
-`ProjectService`. Exact codecs reject extra fields and relative saved roots.
+owns a UUIDv7 identity, display name, up to 20 canonical source folders, an explicit
+primary folder, revision, and timestamps. Empty source lists require a null
+primary; nonempty lists require one of their unique folders. Selecting sources
+never grants permissions or scans every source automatically. Exact codecs reject
+unknown fields, relative saved paths, duplicate canonical folders, and an invalid
+primary. An unavailable retained secondary source does not block unrelated edits.
 
-Plain new Chats are ungrouped. An explicit `thread/start.project` selection checks
-the Project revision and writes membership in the Thread insertion transaction.
-Persistent forks and children inherit membership from canonical parent/fork edges
-in that same database transaction, including hidden execution Threads. Ephemeral
-Threads have no durable catalog membership. An explicit root reassignment traverses
-its complete descendant lineage and checks both Project and membership revisions.
-A missing intermediate membership row never truncates that traversal.
+Membership and `ConversationWorkFolder` are separate revisioned settings. The
+latter is a canonical path or null; unset is revision zero until first saved.
+`project/inspect` exposes both settings, source availability, and the canonical
+application default. `project/manage` provides create/update/delete, bind, and
+`setWorkFolder`; `project/pickFolder` uses the native directory picker. The UI and
+invocation-bound Project CLI share `ProjectService`, its directory identity
+revalidation, lifecycle lock, and optimistic revisions.
 
-Project forms are UI-owned and call the Host service directly, with explicit
-confirmation for deletion. The service revalidates directory identity and revision
-inside its lifecycle lock before writing. Models have no Project inspection,
-management or proposal-confirmation entry point. Directory work remains independent
-of Project binding.
+Plain new Chats are ungrouped and unset. An explicit `thread/start.project`
+checks the Project revision and copies its primary folder in the Thread insertion
+transaction. A folderless Project copies null. Forks copy the parent's saved
+folder by value, including explicit null. Persistent forks and children inherit
+membership from canonical lineage; changing the root's folder never updates a
+fork or a delegated Session. Ephemeral Threads have no durable setting.
+
+A root reassignment traverses the complete descendant lineage and checks Project
+and membership revisions. Missing intermediate membership never truncates traversal.
+Existing-chat moves preserve its folder unless the caller explicitly includes
+`workFolder` and its expected revision in the same atomic bind operation. Project
+rename, source/primary edits, unbinding, and deletion never redirect existing chats,
+change configuration/permissions, or rewrite accepted Task evidence.
+
+Agent access uses the built-in `projects` Skill and the foreground
+`delegate project --input - --output json` CLI. The existing private invocation
+broker binds the exact input to the active persistent user Thread/Turn/Item and
+supervised Bash Task. Project access is independent of the delegation experiment.
+The Host checks current tool/capability authority again immediately before commit.
+Project proposals require native confirmation of name, sources/primary, affected
+conversation and resulting folder. An explicit folder-only change needs no extra
+confirmation only for the invoking conversation: the CLI rejects `setWorkFolder`
+when its target differs from the trusted source root Thread, before receipt replay
+or mutation. Cancellation and stale revisions commit nothing. Durable operation
+IDs bind the request digest to an atomic result receipt, permitting lost-response
+inspection and idempotent retry without duplicate creation. Deletion intent retains
+its operation identity for startup completion and truthful pending receipts.
+
+Current-context evidence publishes the selected Project, saved folder/revision,
+availability and application default before the next provider continuation, after
+live changes, on new Turns and after compaction. Historical evidence cannot replace
+the current setting. Project sources stay bounded and inspection-only.
 
 Deletion persists a fence before checking Automation dependencies. New membership
 and live Project resolution reject fenced Projects; a child born during deletion
 remains ungrouped. `ProjectService` reconciles accepted claims before checking active
 or paused definitions and genuinely pending claims. Refusal clears the fence;
-interruption preserves it for startup recovery before the scheduler wakes. On
+explicit cancellation clears it before commit; an unexpected Host failure retains
+it for startup recovery before the scheduler wakes. On
 success, one SQLite transaction detaches membership across canonical lineage and
 removes the catalog row. Explicit membership in another Project survives deletion.
 Chats, user files, active Tool Tasks, receipts, historical run snapshots, and managed

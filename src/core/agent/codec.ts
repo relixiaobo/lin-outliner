@@ -1,7 +1,7 @@
 import { decodeTaskContinuation } from './taskContinuation';
 import { sameUserInput } from './userInput';
 import { decodeProcessIsolationEvidence } from './processIsolation';
-import { decodeProjectSelection, decodeProjectInspectRequest, decodeProjectManageRequest, decodeProjectCatalogView, decodeProjectManageResult } from './project';
+import { decodeProjectFolderPick, decodeProjectSelection, decodeProjectInspectRequest, decodeProjectManageRequest, decodeProjectCatalogView, decodeProjectManageResult } from './project';
 import { decodeExecutionContextFact, decodeTaskExecutionContext } from './executionContext';
 import {
   CONTEXT_EVIDENCE_KINDS,
@@ -813,9 +813,14 @@ export function decodeAgentCoreNotification(value: unknown): AgentCoreNotificati
     'goal/updated',
     'goal/cleared',
     'toolTask/changed',
+    'project/catalog/changed',
   ], 'notification.type');
   let result: AgentCoreNotification;
   switch (type) {
+    case 'project/catalog/changed':
+      exactKeys(record, ['type'], 'notification');
+      result = { type };
+      break;
     case 'thread/started': {
       exactKeys(record, ['type', 'threadId', 'thread'], 'notification');
       const thread = decodeThread(record.thread);
@@ -1082,6 +1087,7 @@ export function decodeAgentCoreRecordedNotification(value: unknown): AgentCoreRe
     case 'turn/providerRetry/changed':
     case 'turn/plan/updated':
     case 'toolTask/changed':
+    case 'project/catalog/changed':
       fail('notification.type', `cannot record transient notification ${notification.type}`);
     default:
       return notification;
@@ -1095,6 +1101,7 @@ export function decodeAgentCoreTransientNotification(value: unknown): AgentCoreT
     case 'turn/providerRetry/changed':
     case 'turn/plan/updated':
     case 'toolTask/changed':
+    case 'project/catalog/changed':
       return notification;
     default:
       fail('notification.type', `expected transient notification, received ${notification.type}`);
@@ -1213,6 +1220,7 @@ export function decodeAgentCoreRequest<M extends AgentCoreMethod>(
 ): AgentCoreRequestByMethod[M] {
   let decoded: AgentCoreRequestByMethod[AgentCoreMethod];
   switch (method) {
+    case 'project/pickFolder': exactKeys(recordValue(value, 'request'), [], 'request'); decoded = deepFreeze({}); break;
     case 'project/inspect': decoded = deepFreeze(decodeProjectInspectRequest(value)); break;
     case 'project/manage': decoded = deepFreeze(decodeProjectManageRequest(value)); break;
     case 'thread/list':
@@ -1353,6 +1361,7 @@ export function decodeAgentCoreResponse<M extends AgentCoreMethod>(
 ): AgentCoreResponseByMethod[M] {
   let decoded: AgentCoreResponseByMethod[AgentCoreMethod];
   switch (method) {
+    case 'project/pickFolder': decoded = deepFreeze(decodeProjectFolderPick(value)); break;
     case 'project/inspect': decoded = deepFreeze(decodeProjectCatalogView(value)); break;
     case 'project/manage': decoded = deepFreeze(decodeProjectManageResult(value)); break;
     case 'thread/list':

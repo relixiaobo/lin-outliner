@@ -126,6 +126,8 @@ export interface WindowApplicationHostOptions {
 }
 
 export interface WindowApplicationHost {
+  pickProjectFolder(): Promise<{ path: string | null }>;
+  reviewProjectChange(request: import('../agent/projects/ProjectService').ProjectReview, signal: AbortSignal): Promise<boolean>;
   reviewMemoryReset: import('../hostDomain/memoryOperations').ReviewMemoryReset;
   openMemoryNode(nodeId: string, authorize: () => Promise<void>): Promise<'opened' | 'unavailable' | 'unknown'>;
   reviewSkillOperation: import('../hostDomain/skillLifecycle').ReviewSkillOperation;
@@ -879,6 +881,40 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
   });
 
   const host: WindowApplicationHost = {
+    pickProjectFolder: async () => {
+      const parent = liveWindow(mainWindow);
+      if (released || !parent) throw new Error('The folder picker is unavailable');
+      const result = await dialog.showOpenDialog(parent, {
+        title: getMessages(effectiveLocale()).agent.projects.setWorkFolder,
+        properties: ['openDirectory'],
+      });
+      return { path: result.canceled ? null : result.filePaths[0] ?? null };
+    },
+    reviewProjectChange: async ({ request, project, threadName, currentWorkFolder }, signal) => {
+      signal.throwIfAborted();
+      const parent = liveWindow(mainWindow);
+      if (released || !parent) throw new Error('The Project review window is unavailable');
+      const strings = getMessages(effectiveLocale());
+      const folders = 'folders' in request ? request.folders : project?.folders ?? [];
+      const primary = 'primaryFolder' in request ? request.primaryFolder : project?.primaryFolder;
+      const result = await dialog.showMessageBox(parent, {
+        type: 'question', message: strings.agent.projects.reviewTitle,
+        detail: [
+          strings.agent.projects.operations[request.operation],
+          'name' in request ? request.name : project?.name ?? strings.agent.projects.none,
+          threadName,
+          ...folders.map((path) => `${path}${path === primary ? ` · ${strings.agent.projects.primary}` : ''}`),
+          ...('workFolder' in request && request.workFolder ? [`${strings.agent.projects.workFolder}: ${request.workFolder.path ?? strings.agent.projects.applicationDefault}`] : []),
+          request.operation === 'bind' && !request.workFolder ? strings.agent.projects.keepWorkFolder : null,
+          request.operation === 'bind' && !request.workFolder ? currentWorkFolder ?? strings.agent.projects.applicationDefault : null,
+          request.operation === 'delete' ? strings.agent.projects.deleteHelp : null,
+        ].filter(Boolean).join('\n'),
+        buttons: [strings.dialog.cancel, strings.dialog.confirm], defaultId: 0, cancelId: 0,
+        noLink: true, signal,
+      });
+      signal.throwIfAborted();
+      return !released && !parent.isDestroyed() && result.response === 1;
+    },
     reviewMemoryReset: async (review, caller) => {
       caller.signal?.throwIfAborted();
       const parent = caller.origin.kind === 'window' ? BrowserWindow.fromId(caller.origin.windowId) : liveWindow(mainWindow);

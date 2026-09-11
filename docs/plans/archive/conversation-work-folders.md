@@ -24,7 +24,7 @@ A label-only change or a prompt promising to remember a folder does not meet it.
 A new Workspace entity; Project-based permissions; automatic binding on file
 visits; implicit configuration/profile changes; new Git/worktree management;
 reordering the entire history surface; or redesigning scheduled work. The
-archived [Agent Project Capability Parity](archive/agent-project-cli-parity.md)
+archived [Agent Project Capability Parity](agent-project-cli-parity.md)
 alternative records the narrower restoration approach. All requirements for this
 broader feature are defined here; archived alternatives are provenance only.
 
@@ -104,6 +104,8 @@ visible to the Agent and UI; context compaction or a restart cannot substitute a
 remembered textual promise for the saved value. The Agent can inspect the current
 value and must report conflict or failure instead of claiming a successful change.
 Explicit authorized setting changes require no additional product confirmation.
+This Agent operation is scoped to the invoking conversation; the Host rejects a
+different target using the trusted source root Thread before replay or mutation.
 No new dedicated model tool is introduced.
 
 **FR-3:** "New chat in Project" initializes the work folder from that
@@ -364,7 +366,7 @@ In particular, reconcile the stale Agent Core opening that says Thread owns a
 working directory with its later current contract; do not preserve both claims.
 
 Consume current startup fault isolation and the
-[published record contract](../spec/agent-core.md#published-conversation-records)
+[published record contract](../../spec/agent-core.md#published-conversation-records)
 for Thread source resolution, runtime context and lifecycle. This design shares
 those owners; refresh live claims before changing them.
 The scheduled-work design keeps its assignment location independent of a
@@ -376,11 +378,10 @@ change is part of this draft.
 
 ## Open questions
 
-**OQ-1:** Ratify DEC-1, the multi-folder Project in FR-5, and the creation/move
-distinction in FR-3 as the product contract before code. The alternative
-catalog-only history design is retained
-in [the archive](archive/thread-history-project-labels.md); it does not solve
-durable work-folder selection.
+None. DEC-1, the multi-folder Project in FR-5, and the creation/move distinction
+in FR-3 define the product contract. The alternative catalog-only history design
+is retained in [the archive](thread-history-project-labels.md); it does
+not solve durable work-folder selection.
 
 ## Acceptance and verification
 

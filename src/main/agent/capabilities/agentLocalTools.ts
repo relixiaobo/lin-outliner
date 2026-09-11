@@ -145,6 +145,7 @@ export interface AgentLocalWorkspaceContext {
   // The call working directory: cwd, default file-tool search root, and relative-path base.
   root: string;
   executionContext?: TaskExecutionContext;
+  resolveWorkFolder?: () => import('../../../core/agent/project').ConversationWorkFolder;
   capability?: 'full-access' | 'read-only';
   parentTaskId?: string;
   onTaskAdmitted?: (task: ToolTaskRecord) => Promise<void>;
@@ -777,7 +778,7 @@ export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>
         ...tool.parameters,
         properties: {
           ...tool.parameters.properties,
-          cwd: { type: 'string', minLength: 1, description: 'Directory for this call only. Relative paths resolve from the Host default directory; this does not change later calls.' },
+          cwd: { type: 'string', minLength: 1, description: 'Directory for this call only. Relative paths resolve from the saved conversation work folder or application default; this does not change later calls.' },
         },
       },
       execute: async (itemId, raw, signal, onUpdate, onExecutionStart) => {
@@ -796,13 +797,18 @@ export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>
           if (tool.name !== 'bash' && fileField === 'file_path' && !target) {
             throw new LocalToolFailure('invalid_args', 'file_path is required.');
           }
-          const callRoot = path.resolve(workspace.root, expandHome(params.cwd as string ?? '.'));
+          // Sampling the revision is the admission order point. Later setting
+          // changes cannot redirect this operation while discovery is awaiting IO.
+          const workFolder = workspace.resolveWorkFolder?.();
+          const defaultCwd = workFolder?.path ?? workspace.root;
+          const callRoot = path.resolve(defaultCwd, expandHome(params.cwd as string ?? '.'));
           candidatePath = target ? path.resolve(callRoot, target) : callRoot;
           if (['file_edit', 'file_write'].includes(tool.name)) {
             assertWorkspaceWritePath(workspace, candidatePath);
           }
           const addressInput = {
-            defaultCwd: workspace.root,
+            defaultCwd,
+            ...(workFolder ? { workFolder } : {}),
             targetKind: fileField === 'path' ? 'directory' as const : 'entry' as const,
             ...(params.cwd === undefined ? {} : { cwd: expandHome(params.cwd as string) }),
             ...(tool.name === 'bash' ? {} : { targets: target
@@ -1727,7 +1733,7 @@ function createBashTool(
         const delegateCommand = workspace.delegateCommandRuntime
           ? parsePrivilegedDelegateCommand(params.command)
           : null;
-        if (delegateCommand && !params.run_in_background) {
+        if (delegateCommand && delegateCommand.name !== 'project' && !params.run_in_background) {
           throw new LocalToolFailure(
             'invalid_args',
             'Delegate commands require run_in_background: true.',
@@ -1736,6 +1742,10 @@ function createBashTool(
         if (params.completion_agreement?.kind === 'service'
           && (delegateCommand || !toolTaskService || !workspace.threadId || !turnId)) {
           throw new LocalToolFailure('invalid_args', 'Service agreements require an owned background Bash process; delegated jobs retain their finite result obligation.');
+        }
+        if (delegateCommand?.name === 'project') {
+          if (params.run_in_background) throw new LocalToolFailure('invalid_args', 'Project commands require foreground Bash execution.');
+          validateDelegateCommandInput(delegateCommand, params.stdin);
         }
         if (params.run_in_background) {
           if (delegateCommand) validateDelegateCommandInput(delegateCommand, params.stdin);
@@ -1778,6 +1788,7 @@ function createBashTool(
               toolCallId,
               signal,
               artifactSink,
+              delegateCommand,
             )
           : await runForegroundCommand(workspace, params, signal, toolCallId, artifactSink);
         const { persistedTextReplacements, ...result } = execution;
@@ -2725,7 +2736,7 @@ async function startSupervisedBackgroundCommand(
     completionAgreement: params.completion_agreement,
     sourceTurnId: turnId,
     sourceItemId: toolCallId,
-    producer: delegateRuntime ? 'delegate' : 'bash',
+    producer: delegateCommand?.name !== 'project' && delegateRuntime ? 'delegate' : 'bash',
     description: params.description ?? 'Background command',
     command: params.command,
     cwd: workspace.root,
@@ -2794,6 +2805,7 @@ async function runSupervisedForegroundCommand(
   toolCallId: string,
   signal?: AbortSignal,
   artifactSink?: ToolArtifactSink,
+  delegateCommand: DelegateStateCommand | null = null,
 ): Promise<ForegroundBashResult> {
   const shellEnvironment = await resolveWorkspaceShellProcessEnvironment(workspace, {
     toolCallId,
@@ -2803,6 +2815,9 @@ async function runSupervisedForegroundCommand(
   const declaredOutputSnapshot = await snapshotDeclaredOutputRoots(declaredOutputRoots);
   const timeoutMs = params.timeout ?? BASH_DEFAULT_TIMEOUT_MS;
   const env = buildWorkspaceShellProcessEnv(shellEnvironment);
+  const delegateRuntime = delegateCommand ? workspace.delegateCommandRuntime : undefined;
+  const delegateScheduling = delegateRuntime && delegateCommand
+    ? await delegateRuntime.resolveScheduling({ command: delegateCommand, stdin: params.stdin }) : undefined;
   const task = await service.start({
     ownerThreadId: workspace.threadId!,
     sourceTurnId: turnId,
@@ -2818,6 +2833,13 @@ async function runSupervisedForegroundCommand(
     timeoutMs,
     env,
     sandbox: workspaceShellSandbox(workspace),
+    ...(delegateRuntime && delegateCommand ? {
+      scheduling: delegateScheduling!.scheduling, schedulerLimits: delegateScheduling!.schedulerLimits,
+      prepareProcess: (context: ToolTaskProcessPreparationContext) => delegateRuntime.prepare({
+        ...context, command: delegateCommand, ownerThreadId: workspace.threadId!, sourceTurnId: turnId,
+        sourceItemId: toolCallId, env, scheduling: delegateScheduling!.scheduling,
+      }),
+    } : {}),
     backgroundEnabled: false,
     // Cancellation can leave teardown settling after the foreground wait, at
     // which point the task is promoted so the Turn can return without hiding it.

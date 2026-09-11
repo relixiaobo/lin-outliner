@@ -1,3 +1,5 @@
+import { decodeConversationWorkFolder, type ConversationWorkFolder } from './project';
+
 export interface ExecutionScope {
   readonly key: string;
   readonly directory: string;
@@ -6,6 +8,7 @@ export interface ExecutionScope {
 }
 
 export interface ExecutionAddress {
+  readonly workFolder?: ConversationWorkFolder;
   readonly requestedCwd: string | null;
   readonly cwd: string;
   readonly targets: readonly string[];
@@ -70,7 +73,8 @@ export function decodeTaskExecutionContext(value: unknown): TaskExecutionContext
   for (const key of ['addressRef', 'policyRef', 'snapshotRef']) {
     if (!/^[a-f0-9]{64}$/u.test(text(context[key]))) throw new Error(`Invalid execution context ${key}`);
   }
-  const address = object(context.address, ['requestedCwd', 'cwd', 'targets', 'targetMode', 'coverage', 'scopes']);
+  const address = object(context.address, ['requestedCwd', 'cwd', 'targets', 'targetMode', 'coverage', 'scopes'], ['workFolder']);
+  if (address.workFolder !== undefined) decodeConversationWorkFolder(address.workFolder);
   if (address.requestedCwd !== null) text(address.requestedCwd);
   absolutePath(address.cwd);
   array(address.targets).forEach(absolutePath);

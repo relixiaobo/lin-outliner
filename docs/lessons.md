@@ -2961,3 +2961,13 @@ navigation.** In #673, one added fixture line made six unchanged failures appear
 new because the classifier keyed them by `file:line`. All six failed 5/5 on both
 the branch and exact base. Before attributing a regression, compare the raw
 samples by test identity; correcting attribution does not make failing tests pass.
+
+
+## Invocation identity does not authorize a target
+
+**Authorize the target before replay or mutation when skipping confirmation.** A
+broker can bind exact input to a live caller without authorizing another resource
+ID embedded in that input. PR #674 initially allowed confirmation-free folder
+changes to any persistent user conversation. Restrict that path to the trusted
+invoking root, and verify foreign set/clear rejection, unchanged target state,
+absent receipts and successful idempotent changes to the caller's own setting.

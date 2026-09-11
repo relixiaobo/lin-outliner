@@ -1394,6 +1394,23 @@ export const zhHans: PartialMessages = {
   },
 
   agent: {
+    projects: {
+      title: '项目', new: '新建项目', edit: '编辑项目', name: '名称', root: '来源文件夹',
+      empty: '还没有项目。', none: '不在项目中工作', directory: '文件夹', unavailable: '不可用',
+      save: '保存', cancel: '取消', close: '关闭', remove: '删除项目', move: '移动到项目',
+      newChat: '在项目中新建对话', back: '返回', loading: '正在读取项目与位置…',
+      keepWorkFolder: '保留此对话当前的工作文件夹。',
+      operations: { create: '新建项目', update: '编辑项目', bind: '更改对话所属项目', delete: '删除项目', setWorkFolder: '设置对话的工作文件夹' },
+      add: '添加', chooseProject: '选择项目', search: '搜索项目', sourceFolders: '来源文件夹',
+      primary: '主文件夹', makePrimary: '设为主文件夹', addFolder: '添加文件夹', removeFolder: '移除文件夹',
+      duplicateFolder: '项目已包含此文件夹。', choosePrimary: '保存前请选择新的主文件夹。',
+      organizationOnly: '用于整理对话，可随时添加来源文件夹。', usePrimary: '使用项目的主文件夹',
+      workFolder: '工作文件夹', setWorkFolder: '设置工作文件夹', clearWorkFolder: '清除工作文件夹',
+      applicationDefault: '应用默认位置', locationDetails: '项目与工作文件夹', reviewTitle: '应用项目更改？',
+      rootHelp: '新对话从主文件夹开始，已有对话保留各自的工作文件夹。',
+      membershipHelp: '移动此对话及其相关对话。除非选择使用主文件夹，此对话的工作文件夹保持不变。',
+      deleteHelp: '删除项目分组，保留对话、文件和运行中的任务。请先更新仍引用此项目的自动化。',
+    },
     automations: {
       title: '自动化',
       open: '打开自动化',
@@ -1937,6 +1954,7 @@ export const zhHans: PartialMessages = {
       cost: '费用',
     },
     composer: {
+      compactReasoningLevels: { minimal: '极低', low: '低', medium: '中', high: '高', xhigh: '极高', max: '最高' },
       editorAriaLabel: '向此线程发送消息',
       slashCommandsLabel: '线程斜杠命令',
       compactCommandDescription: '用持久摘要替换较早的上下文',

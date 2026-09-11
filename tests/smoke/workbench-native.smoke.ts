@@ -4,10 +4,10 @@ import { closeSmokeApp, launchSmokeApp } from './electronApp';
 test('the built Host manages Projects and ordinary Goals with fresh isolated storage', async () => {
   const smoke = await launchSmokeApp();
   try {
-    await expect.poll(() => smoke.window.evaluate(() => window.lin!.startup.get())).toEqual({ status: 'ready' });
+    await expect.poll(() => smoke.window.evaluate(() => window.lin!.startup.get())).toMatchObject({ status: 'ready' });
     const result = await smoke.window.evaluate(async (rootHint) => {
       const api = window.lin!;
-      const project = (await api.agentCoreRequest('project/manage', { operation: 'create', name: 'Native workflow', rootHint })).project!;
+      const project = (await api.agentCoreRequest('project/manage', { operation: 'create', name: 'Native workflow', folders: [rootHint], primaryFolder: rootHint })).project!;
       const { thread } = await api.agentCoreRequest('thread/start', { name: 'Native workflow Chat', modelProvider: 'openai',
         project: { projectId: project.id, expectedRevision: project.revision } });
       const bound = await api.agentCoreRequest('project/inspect', { threadIds: [thread.id] });

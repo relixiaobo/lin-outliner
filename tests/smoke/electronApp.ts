@@ -50,8 +50,12 @@ function baseEnv(): Record<string, string> {
 
 export async function launchSmokeApp(options: LaunchOptions = {}): Promise<SmokeApp> {
   const userDataDir = options.userDataDir ?? mkdtempSync(join(tmpdir(), 'lin-smoke-'));
+  // Exercise the same flows against an actual application bundle when packaging
+  // is part of the change's acceptance criteria. Storage stays isolated below.
+  const packagedExecutable = process.env.TENON_SMOKE_EXECUTABLE;
   const app = await electron.launch({
-    args: [MAIN_ENTRY],
+    ...(packagedExecutable ? { executablePath: packagedExecutable } : {}),
+    args: packagedExecutable ? [] : [MAIN_ENTRY],
     cwd: REPO_ROOT,
     env: {
       ...baseEnv(),

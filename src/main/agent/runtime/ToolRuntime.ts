@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { canonicalDelegateCommand } from '../../../delegate/contract';
 import { decodeTaskControlInput } from '../../../core/agent/taskContinuation';
 import { decodeRequestUserInputResult } from '../../../core/agent/codec';
 import type { TSchema } from 'typebox';
@@ -67,6 +69,7 @@ export interface ToolRuntimeOptions {
 }
 
 export class ToolRuntime {
+  private readonly publishedLocations = new WeakMap<TurnExecutionContext['turn'], string>();
   private readonly reportedUnavailableToolSchemas = new Set<string>();
   private readonly fileContextStates = new WeakMap<TurnExecutionContext['turn'], Set<AgentLocalWorkspaceContext['readFileState']>>();
 
@@ -112,6 +115,8 @@ export class ToolRuntime {
     const workspace = {
       ...(configuredWorkspace ?? { root: this.service.defaultExecutionDirectory(), scratchRoot: this.service.defaultExecutionDirectory(), readFileState: new Map() }),
       threadId: context.thread.id,
+      ...(context.thread.threadSource === 'user' && !context.thread.parentThreadId && !context.thread.ephemeral
+        ? { resolveWorkFolder: () => this.service.projects.store.workFolder(context.thread.id) } : {}),
       capability: delegationPolicy?.access === 'read-only' ? 'read-only' as const : 'full-access' as const,
       ...(automationBoundary ? { writeBoundary: automationBoundary } : {}),
       ...(validateAutomationIsolation ? { validateIsolation: validateAutomationIsolation } : {}),
@@ -249,11 +254,29 @@ export class ToolRuntime {
   }
 
   invalidateFileContext(context: TurnExecutionContext): void {
+    this.publishedLocations.delete(context.turn);
     // Clear the actual tool closures, not a fresh workspace returned by the Host factory.
     for (const state of this.fileContextStates.get(context.turn) ?? []) state.clear();
   }
 
   async prepareProviderContext(context: TurnExecutionContext): Promise<void> {
+    if (context.thread.threadSource === 'user' && !context.thread.parentThreadId && !context.thread.ephemeral) {
+      const view = await this.service.projects.currentContext(context.thread.id).catch(() => null);
+      const text = view ? JSON.stringify({ conversation: context.thread.id, membership: view.memberships[0],
+        savedWorkFolder: view.workFolders[0], applicationDefault: view.applicationDefault,
+        project: view.projects[0] ?? null, unavailableFolders: view.unavailableFolders }) : 'Conversation location is unavailable; inspect it before relying on a default.';
+      if (this.publishedLocations.get(context.turn) !== text) {
+        const bounded = text.length <= 16_000 ? text : JSON.stringify({
+          conversation: context.thread.id, membership: view?.memberships[0], savedWorkFolder: view?.workFolders[0],
+          applicationDefault: view?.applicationDefault, projectSources: 'Inspect the Project CLI for the complete source-folder list.',
+        });
+        await context.persistContextEvidence({ schemaVersion: 1, kind: 'additionalContext', threadState: null,
+          turnEntries: [{ key: 'conversation-location', source: 'host:conversation-settings', authority: 'application', purpose: 'observation',
+            text: `Current saved conversation location (not a task execution receipt): ${bounded}` }] }, 'Conversation work folder and Project references');
+        this.publishedLocations.set(context.turn, text);
+      }
+    }
+
     if (!context.configuration.tools.includes('skill') || (await this.options.disabledTools?.() ?? []).includes('skill')) return;
     const runtime = await this.skillRuntime(context);
     const checkpoint = runtime?.catalogRefreshCheckpoint() ?? null;
@@ -373,6 +396,25 @@ export class ToolRuntime {
         );
       }, normalizeTaskStopToolInput),
     ];
+  }
+
+  async authorizeProjectInvocation(execution: import('../delegation/DelegateCapabilityBroker').DelegateCapabilityExecution): Promise<void> {
+    const { admission, signal } = execution;
+    signal.throwIfAborted();
+    const source = this.service.projectInvocationContext(admission.source.rootThreadId, admission.source.sourceTurnId, admission.source.sourceItemId);
+    const task = this.service.toolTaskService().store.read(admission.toolTaskId);
+    if (!task || task.ownerThreadId !== source.thread.id || task.sourceTurnId !== admission.source.sourceTurnId
+      || task.commandDigest !== digestText(canonicalDelegateCommand(admission.command)) || task.cwd !== admission.cwd
+      || task.sourceItemId !== admission.source.sourceItemId || task.producer !== 'bash' || task.nonce !== admission.toolTaskNonce
+      || task.stopRequestedAt !== null || !['queued', 'running'].includes(task.state)
+      || !source.configuration.tools.includes('bash') || (await this.options.disabledTools?.() ?? []).includes('bash')) {
+      throw new Error('Project command authority is no longer available');
+    }
+    const decision = evaluateAgentToolCapability({ toolName: 'bash',
+      args: { command: canonicalDelegateCommand(admission.command), stdin: admission.stdin, cwd: admission.cwd },
+      policy: { workspaceRoot: admission.cwd, capabilityConfig: await this.capabilityConfig() } });
+    if (decision.behavior === 'unavailable') throw new Error(decision.reason);
+    signal.throwIfAborted();
   }
 
   private async authorizeDeferredTool(context: TurnExecutionContext, name: string, args: unknown, signal?: AbortSignal): Promise<void> {
@@ -763,3 +805,5 @@ function boundedDiagnostic(value: string, maximum: number): string {
   const compact = value.replace(/\s+/g, ' ').trim();
   return compact.length <= maximum ? compact : `${compact.slice(0, maximum - 3)}...`;
 }
+
+function digestText(value: string): string { return createHash('sha256').update(value).digest('hex'); }

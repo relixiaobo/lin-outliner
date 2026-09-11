@@ -70,7 +70,7 @@ operation receipts and event disposition; retain or invalidate those references
 through that owner.
 A late timer, answer or process event cannot revive removed execution. Renderer
 answer drafts follow their Thread-local lifetime; they are not a new durable
-recovery source. [Conversation work folders](conversation-work-folders.md) retain
+recovery source. [Conversation work folders](archive/conversation-work-folders.md) retain
 independent Project metadata and already admitted Task addresses. The board
 selects integration order; whichever consumer lands later covers the earlier
 feature's final closure without creating another owner.
