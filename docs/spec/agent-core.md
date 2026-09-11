@@ -62,7 +62,11 @@ its active Tool Item. Handoff/watch receipts and terminal dispositions remain in
 the existing Task store. Acknowledgement binds an event to its handling Turn/Item;
 automatic continuation commits through the existing canonical Turn/batch owner
 only when a recorded responsibility remains. Silent service exits allocate no
-Turn. See [Task contracts](agent-tool-design.md) for admission and recovery rules.
+Turn. A service handoff consumes exact owned post-launch successful Item
+references; checks may execute in a different independently admitted cwd. A saved
+conversation-folder edit changes future defaults, never an existing service or
+check's recorded address. Evidence references do not grant additional authority.
+See [Task contracts](agent-tool-design.md) for admission and recovery rules.
 During the active Turn only, a transient raw-call overlay lets
 the next provider boundary observe the exact just-executed arguments. It is not durable;
 later Turns, restart, fork, and compaction use only the frozen envelope. An admitted
@@ -214,7 +218,13 @@ The four retention classes are `external` for user/workspace-owned originals,
 `durable` for Tenon-owned user uploads, `tiered` for reclaimable generated originals,
 and `observationOnly` when no separate original exists. The observation is normalized
 at ingress to at most 2,000 px per edge and 4.5 MiB, then content-addressed before the
-image enters canonical history. Provider projection always reads that observation.
+image enters canonical history. Provider projection always reads that observation. Attachment, file-read and
+tool/generated image admission share one serialized bounded pixel decoder and
+encoder. The filename (including resource `.blob` storage) and OS file previews
+never choose model-visible content. Geometry describes the decoded canonical
+pixel orientation and final observation, preserving aspect ratio without
+upscaling. Existing observations remain immutable; an explicit new read can
+create a new observation from an available original.
 Missing original bytes fall back to the observation; missing observation bytes produce
 an unavailable-image identity and do not invalidate the surrounding Item, Turn, fork,
 or inherited context. A fork links the same canonical references and exact ContentStore

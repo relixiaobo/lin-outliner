@@ -493,9 +493,25 @@ cannot control another owner. Every action has `task_id` and `operation_id`:
 
 Bash returns `evidence` references for follow-up checks. Launch progress and
 `task_status` are not readiness checks. The Host validates reference identity,
-ordering, success, and execution lineage; it does not certify arbitrary log
-semantics. The development Skill requires an appropriate endpoint, Runtime, or
-actual application check before handoff.
+ordering, successful completion and owning-Thread provenance. The exact Task ID
+and Item references associate the check with the service; cwd equality is not
+an eligibility rule and grants no authority. Independently admitted checks may
+run in another directory or after a saved-folder change without redirecting
+either execution. Foreign/copied, missing, forbidden, unfinished, failed and
+pre-launch evidence rejects; live-target, revision, Stop and receipt replay rules
+remain with the Task owner. Expected rejections use `readiness_unavailable`,
+`readiness_ineligible`, `readiness_unsuccessful` or `readiness_before_launch` with
+bounded recovery instructions through the existing tool error envelope.
+
+The Host does not certify arbitrary command/output semantics. The development
+Skill requires a check of the requested behavior against the exact application's
+isolated Runtime/content roots and advertised endpoint, without auto-starting or
+repairing it. A healthy frontend or sibling Runtime cannot prove that a failed
+application serves its workspace. Preserve the actual hostname/address family;
+an IPv4 refusal from an IPv6-only listener is not a process-crash diagnosis.
+Report partial startup and preserve evidence when application verification fails.
+An authorized reset uses the existing process/managed-content owners and an
+absence check, then requires the same application verification after restart.
 
 `task_status.continuation` exposes revision, handoff, watch, Stop provenance, and
 event facts. Its optional `operation_id` reconciles an exact receipt read-only;
@@ -738,6 +754,12 @@ reference. That original
 is the `tiered` rendition of one immutable image artifact; it is not subject to the
 generic 10 MiB per-image and 20 MiB per-call inline tool-output limits, so detailed 4K
 originals remain intact until storage pressure makes them reclaimable.
+
+All model-image producers decode actual source bytes through the common bounded
+normalizer, including files stored without an image suffix. They preserve
+canonical pixel orientation, aspect ratio and PNG transparency, without
+upscaling or substituting OS thumbnails. Source reads and decoding retain the
+source-byte budget; serialization and cancellation cover every producer.
 
 The same admission creates a model observation at no more than 2,000 px per edge and
 4.5 MiB. The result returns a stable `artifactId`, a rematerializable readable path, the

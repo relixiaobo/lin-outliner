@@ -54,6 +54,13 @@ execution paths remain temporary access
 handles. Fork, rollback, deletion, and cleanup follow that resource lifecycle,
 not a Computer-Pilot-specific registry.
 
+Image observations preserve the captured screenshot pixels after canonical
+resource adoption, including when the stored source uses a `.blob` filename.
+Use the common bounded image normalization boundary defined in
+[Agent image contracts](../spec/agent-core.md);
+do not substitute an OS file icon or add a Computer-Pilot-specific decoder.
+Source/observation geometry must describe the actual image used by the model.
+
 ### Dependencies and collisions
 
 Consume the Host/environment and canonical Agent resource contracts delivered
@@ -68,6 +75,11 @@ Packaged macOS tests cover first acquisition, disabled state, integrity failure,
 PATH/environment contribution only when active, missing CLI, missing TCC consent,
 one successful screenshot/visual read, declared output durability, restart,
 fork/rollback/deletion cleanup, and no capability gain in constrained children.
+The visual fixture contains distinguishable content and checks the actual
+provider-bound observation after resource adoption and reopening. A nonempty
+image, valid dimensions or successful CLI exit alone does not establish visual
+fidelity. CLI/acquisition preparation can proceed independently; final visual
+acceptance consumes the shared pixel normalization rather than duplicating it.
 
 ### Acceptance criteria
 
@@ -75,7 +87,9 @@ fork/rollback/deletion cleanup, and no capability gain in constrained children.
 - **AC-2:** Execution still passes current tool/action capability, effective Thread
   configuration, delegated ceilings and OS permission checks.
 - **AC-3:** Visual output is observable through existing image reading and durable output
-  uses canonical Agent resource references.
+  uses canonical Agent resource references. A marked screenshot remains recognizable
+  after `.blob` storage, reopening and provider projection, with the correct
+  observation-to-source geometry; a generic file icon cannot pass this criterion.
 - **AC-4:** Disable/integrity/missing-runtime states fail explicitly without global PATH
   mutation or startup work.
 - **AC-5:** No Computer-Pilot-specific tool protocol or artifact store is introduced.

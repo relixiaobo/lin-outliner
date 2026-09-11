@@ -5,7 +5,7 @@ import { readPreferencesView, editPreference, ensurePreferencesFile, ensureConfi
 import type { PreferenceEdit, PreferencesView } from '../core/settingsDefinitions';
 import type { ConfigurationDomain } from '../core/settingsWindow';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, powerMonitor, protocol, shell } from 'electron';
-import type { IpcMainInvokeEvent, NativeImage } from 'electron';
+import type { IpcMainInvokeEvent } from 'electron';
 import { SKILL_LIBRARY_CHANGED_CHANNEL, SKILL_REVIEW_DECIDE_CHANNEL, SKILL_REVIEW_GET_CHANNEL } from '../core/agent/skillOperations';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, watch } from 'node:fs';
@@ -30,7 +30,7 @@ import { MODEL_TOOL_CATALOG, canonicalModelToolKey } from '../core/agent/tools';
 import type { ConfigurationLayerTarget } from './agent/AgentConfigurationWriter';
 import { writeAgentConfigurationSchema } from './agent/AgentConfigurationLoader';
 import { createImageArtifactReference, ImageObservationNormalizationError } from './agent/imageArtifacts';
-import { Mutex } from './agent/Mutex';
+import { prepareBoundedAgentImage, prepareBoundedAgentImageBytes, type PreparedBoundedAgentImage } from './agent/normalizeImageObservation';
 import { resolveToolTaskSupervisorRuntime } from './agent/tasks/toolTaskRuntime';
 import { resolveDelegateCliRuntime } from './delegateRuntime';
 import { expandSkillDirectory } from './agent/capabilities/agentSkills';
@@ -209,9 +209,6 @@ import { getMessages } from '../core/i18n';
 import { APP_NAME } from '../core/brand';
 import {
   ATTACHMENT_UPLOAD_CHUNK_BYTES,
-  MAX_IMAGE_ATTACHMENT_SOURCE_BYTES,
-  MAX_PROMPT_IMAGE_BYTES,
-  MAX_PROMPT_IMAGE_DIMENSION,
 } from '../core/agentAttachmentLimits';
 import { isPathInside } from './agent/capabilities/agentAttachmentMaterialization';
 import {
@@ -508,7 +505,6 @@ async function startConfigurationWatcher(): Promise<void> {
   }
 }
 
-const agentImageObservationMutex = new Mutex();
 let agentHost: AgentHost | null = null;
 let initializingAgentHost: AgentHost | null = null;
 let agentAttemptCleanup: Promise<void> | null = null;
@@ -628,11 +624,10 @@ function constructAgentHost(): Promise<AgentHost> {
       validateAgentModelSelection(selection.model, selection.reasoningEffort, provider);
     },
     onRendererConfigurationCommitted: saveLastAgentThreadConfiguration,
-    normalizeOutputImage: async ({ bytes, mimeType, signal }) => {
+    normalizeOutputImage: async ({ bytes, signal }) => {
       try {
         const prepared = await prepareBoundedAgentImageBytes(
           Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
-          mimeType,
           'tool output image',
           signal,
         );
@@ -2115,149 +2110,6 @@ async function prepareAttachmentPromptImage(
   sourcePath: string,
 ): Promise<PreparedBoundedAgentImage> {
   return prepareBoundedAgentImage(sourcePath, attachment.name);
-}
-
-interface PreparedBoundedAgentImage {
-  readonly bytes: Buffer;
-  readonly mimeType: 'image/png' | 'image/jpeg';
-  readonly fileName: string;
-  readonly sourceDimensions: { readonly width: number; readonly height: number };
-  readonly dimensions: { readonly width: number; readonly height: number };
-}
-
-async function prepareBoundedAgentImage(
-  sourcePath: string,
-  displayName: string,
-  signal?: AbortSignal,
-): Promise<PreparedBoundedAgentImage> {
-  return agentImageObservationMutex.run(async () => {
-    signal?.throwIfAborted();
-    return prepareBoundedAgentImageUnlocked(sourcePath, displayName);
-  });
-}
-
-async function prepareBoundedAgentImageBytes(
-  sourceBytes: Buffer,
-  sourceMimeType: string,
-  displayName: string,
-  signal?: AbortSignal,
-): Promise<PreparedBoundedAgentImage> {
-  return agentImageObservationMutex.run(async () => {
-    signal?.throwIfAborted();
-    if (sourceBytes.byteLength === 0) {
-      throw new ImageObservationNormalizationError(`Image is empty: ${displayName}`);
-    }
-    if (sourceBytes.byteLength > MAX_IMAGE_ATTACHMENT_SOURCE_BYTES) {
-      throw new ImageObservationNormalizationError(
-        `Image exceeds the ${formatFileSize(MAX_IMAGE_ATTACHMENT_SOURCE_BYTES)} image decode budget: ${displayName}`,
-      );
-    }
-    let image = nativeImage.createFromBuffer(sourceBytes);
-    if (image.isEmpty()) {
-      throw new ImageObservationNormalizationError(`Image could not be decoded: ${displayName}`);
-    }
-    const sourceDimensions = image.getSize();
-    const boundedSource = sourceBytes.byteLength <= MAX_PROMPT_IMAGE_BYTES
-      && sourceDimensions.width <= MAX_PROMPT_IMAGE_DIMENSION
-      && sourceDimensions.height <= MAX_PROMPT_IMAGE_DIMENSION;
-    const normalizedSourceMimeType = sourceMimeType.trim().toLowerCase();
-    if (boundedSource && (normalizedSourceMimeType === 'image/png' || normalizedSourceMimeType === 'image/jpeg')) {
-      return {
-        bytes: sourceBytes,
-        mimeType: normalizedSourceMimeType,
-        fileName: normalizedSourceMimeType === 'image/png' ? 'prompt.png' : 'prompt.jpg',
-        sourceDimensions,
-        dimensions: sourceDimensions,
-      };
-    }
-    const scale = Math.min(
-      1,
-      MAX_PROMPT_IMAGE_DIMENSION / sourceDimensions.width,
-      MAX_PROMPT_IMAGE_DIMENSION / sourceDimensions.height,
-    );
-    if (scale < 1) {
-      image = image.resize({
-        width: Math.max(1, Math.floor(sourceDimensions.width * scale)),
-        height: Math.max(1, Math.floor(sourceDimensions.height * scale)),
-        quality: 'best',
-      });
-    }
-    signal?.throwIfAborted();
-    return encodeBoundedAgentImage(image, sourceDimensions, displayName);
-  });
-}
-
-async function prepareBoundedAgentImageUnlocked(
-  sourcePath: string,
-  displayName: string,
-): Promise<PreparedBoundedAgentImage> {
-  const sourceStat = await stat(sourcePath);
-  if (!sourceStat.isFile() || sourceStat.size <= 0) {
-    throw new Error(`Image is not a readable regular file: ${displayName}`);
-  }
-  if (sourceStat.size > MAX_IMAGE_ATTACHMENT_SOURCE_BYTES) {
-    throw new Error(
-      `Image exceeds the ${formatFileSize(MAX_IMAGE_ATTACHMENT_SOURCE_BYTES)} image decode budget: ${displayName}`,
-    );
-  }
-  const sourceImage = nativeImage.createFromPath(sourcePath);
-  if (sourceImage.isEmpty()) throw new Error(`Image could not be decoded: ${displayName}`);
-  const sourceDimensions = sourceImage.getSize();
-  let image = await nativeImage.createThumbnailFromPath(sourcePath, {
-    width: MAX_PROMPT_IMAGE_DIMENSION,
-    height: MAX_PROMPT_IMAGE_DIMENSION,
-  });
-  if (image.isEmpty()) throw new Error(`Image could not be decoded: ${displayName}`);
-
-  return encodeBoundedAgentImage(image, sourceDimensions, displayName);
-}
-
-function encodeBoundedAgentImage(
-  initialImage: NativeImage,
-  sourceDimensions: { readonly width: number; readonly height: number },
-  displayName: string,
-): PreparedBoundedAgentImage {
-  let image = initialImage;
-  const png = image.toPNG();
-  if (png.byteLength <= MAX_PROMPT_IMAGE_BYTES) {
-    return {
-      bytes: png,
-      mimeType: 'image/png',
-      fileName: 'prompt.png',
-      sourceDimensions,
-      dimensions: image.getSize(),
-    };
-  }
-
-  for (;;) {
-    for (const quality of [80, 70, 55, 40]) {
-      const jpeg = image.toJPEG(quality);
-      if (jpeg.byteLength <= MAX_PROMPT_IMAGE_BYTES) {
-        return {
-          bytes: jpeg,
-          mimeType: 'image/jpeg',
-          fileName: 'prompt.jpg',
-          sourceDimensions,
-          dimensions: image.getSize(),
-        };
-      }
-    }
-    const size = image.getSize();
-    const width = Math.max(1, Math.floor(size.width * 0.75));
-    const height = Math.max(1, Math.floor(size.height * 0.75));
-    if (width === size.width && height === size.height) break;
-    image = image.resize({ width, height, quality: 'best' });
-  }
-  throw new ImageObservationNormalizationError(
-    `Image could not fit the model-input image budget: ${displayName}`,
-  );
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KiB`;
-  if (bytes < 1024 * 1024 * 1024) return `${Math.round(bytes / (1024 * 1024))} MiB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GiB`;
 }
 
 function inferMimeType(filePath: string): string {
