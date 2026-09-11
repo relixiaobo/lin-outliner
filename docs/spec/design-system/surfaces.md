@@ -311,7 +311,11 @@ corners at the rail radius, and text inset to the shared agent content column. I
 toolbar is visually unified with the textarea. Add (`+`) is a neutral unboxed
 icon entry for attachments and a searchable Project flyout with recent choices first, the full scrolling
 catalog, and a fixed creation footer. Project creation uses an icon/name field and
-a bordered, fully clickable empty source-folder area.
+a bordered, fully clickable empty source-folder area. Search and menu rows share
+a 16px icon slot, 4px label gap and 28px height; bare inputs do not add a second
+horizontal inset. Primary-folder state uses a readable label. Edit Project opens
+the same form with saved values and a separate deletion confirmation. All chat
+Project operations live here; the Thread chooser only displays Project grouping.
 A selected Project adds one compact chip directly beside it: click its name to
 change selection. Its leading folder icon switches in place to a remove button on
 hover or keyboard focus, with neutral pill feedback and no geometry change.
@@ -321,11 +325,19 @@ vertical alignment before and during hover. Project and model pills retain
 hit area, while text controls hug content plus padding under their truncation
 ceilings. Narrow model controls retain both horizontal padding and the dropdown
 caret, truncating the name inside the content area. The spacer absorbs spare
-toolbar width, never a hover background. Full paths remain in details;
+toolbar width, never a hover background. Full paths remain in the Project editor;
 no selection adds no status row. Project names truncate before the application-
 default qualifier. Flexible space precedes the compact model/effort button and
 Send/Stop. Full model and effort identity remains accessible from keyboard and
 menus, and narrow layouts preserve these controls without hover reflow.
+Project folder rows are single-line and share icon, path, primary-action and
+remove columns. Long paths elide parent segments before the final folder name;
+hover titles preserve the full path. Make primary appears on row hover or
+keyboard focus while its column stays reserved, so neither text nor neighbors
+move. The selected Primary label stays visible. Editing feedback appears above
+the action row, and closing restores focus to the Project chip or Add after
+deleting the selected Project.
+
 The attachment carousel stays within that inset, hides its redundant visual scrollbar,
 and preserves touchpad scrolling, edge buttons, and keyboard navigation. Card hover keeps
 the existing 1 px boundary and changes only its neutral colour; its radius-aligned Remove

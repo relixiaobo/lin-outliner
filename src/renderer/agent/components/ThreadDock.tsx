@@ -1,4 +1,3 @@
-import { rememberProject } from '../projects/recentProjects';
 import { lazy, memo, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
 import type { RendererUserViewHints, ThreadUserContent } from '../../../core/agent/protocol';
@@ -76,8 +75,7 @@ export const ThreadDock = memo(function ThreadDock({
   const open = railState === 'open';
   const snapshot = useThreadStore(open);
   const [listOpen, setListOpen] = useState(false);
-  const [projectInitialMode, setProjectInitialMode] = useState<'new' | undefined>();
-  const [projectTarget, setProjectTarget] = useState<Thread | 'catalog' | null>(null);
+  const [projectTarget, setProjectTarget] = useState<{ thread: Thread; mode: 'new' | Project } | null>(null);
   const [surface, setSurface] = useState<'thread' | 'automations'>('thread');
   /**
    * The pushed Agent detail stack, root-most first. Empty is the conversation
@@ -98,6 +96,7 @@ export const ThreadDock = memo(function ThreadDock({
   const [slashCommands, setSlashCommands] = useState<AgentSlashCommandView[]>([]);
   const renameTitleId = useId();
   const renameInputRef = useRef<HTMLInputElement | null>(null);
+  const dockRef = useRef<HTMLDivElement>(null);
   const threadListAnchorRef = useRef<HTMLButtonElement | null>(null);
   const creatingRef = useRef(false);
   const autoCreateAttemptedRef = useRef(false);
@@ -362,7 +361,7 @@ export const ThreadDock = memo(function ThreadDock({
       data-rail-state={railState}
       inert={open ? undefined : true}
     >
-      <div className="thread-dock">
+      <div className="thread-dock" ref={dockRef}>
         <header className="thread-dock-header">
           {surface === 'thread' ? (
             // The dock's title is the conversation the user started, and its
@@ -453,7 +452,7 @@ export const ThreadDock = memo(function ThreadDock({
             <div className="thread-dock-conversation">
             <ThreadView
               projectContext={{ view: projects.view, loading: projects.loading, error: projects.error,
-                onChooseProject: (mode) => { setProjectInitialMode(mode); setProjectTarget(thread); } }}
+                onChooseProject: (mode) => setProjectTarget({ thread, mode }) }}
               active={open}
               composerEnabled={thread.parentThreadId === null && thread.threadSource === 'user'}
               composerFocusExpectedActiveElement={composerFocusRequest.expectedActiveElement}
@@ -523,8 +522,6 @@ export const ThreadDock = memo(function ThreadDock({
             projects={projects.view.projects}
             memberships={projects.view.memberships}
             projectCatalog={projects.view}
-            onManageProjects={() => { setListOpen(false); setProjectTarget('catalog'); }}
-            onAssignProject={setProjectTarget}
             anchorRef={threadListAnchorRef}
             createDisabled={creating || providerBlocksCreation}
             createTitle={providerBlocksCreation
@@ -553,16 +550,12 @@ export const ThreadDock = memo(function ThreadDock({
         ) : null}
       </div>
       {projectTarget ? <Suspense fallback={null}><ProjectDialog
-        initialMode={projectTarget === 'catalog' ? undefined : projectInitialMode}
+        initialMode={projectTarget.mode}
         view={projects.view} unavailable={projects.loading || !!projects.error}
-        catalogError={projects.error} createDisabled={creating || providerBlocksCreation}
-        createTitle={providerBlocksCreation ? t.agent.thread.providerRequired : t.agent.thread.new}
-        thread={projectTarget === 'catalog' ? null : projectTarget}
-        onClose={() => { setProjectTarget(null); setProjectInitialMode(undefined); }} onNewChat={async (project) => {
-          const created = await createThread('explicit', project);
-          if (created) rememberProject(project.id);
-          return created;
-        }}
+        catalogError={projects.error} thread={projectTarget.thread}
+        onClose={() => setProjectTarget(null)}
+        restoreFocus={(deleted) => (deleted ? null : dockRef.current?.querySelector<HTMLButtonElement>('.thread-location-open'))
+          ?? dockRef.current?.querySelector<HTMLButtonElement>('.icon-button-composerTool') ?? null}
       /></Suspense> : null}
       {renameTarget ? (
         <Dialog

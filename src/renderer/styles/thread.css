@@ -2925,6 +2925,11 @@
   box-shadow: var(--overlay-shadow-level-1);
 }
 
+.thread-list:focus-visible {
+  outline: none;
+  box-shadow: var(--overlay-shadow-level-1), var(--focus-ring-shadow);
+}
+
 .thread-list > header {
   display: flex;
   min-height: 34px;

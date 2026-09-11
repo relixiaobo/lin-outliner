@@ -41,6 +41,12 @@ for (const theme of ['light', 'dark'] as const) {
     await form.getByRole('textbox', { name: 'Name', exact: true }).fill('Tenon');
     await nextFolder(page, '/Users/developer/reference');
     await form.getByRole('button', { name: 'Add folder', exact: true }).click();
+    const folderAlignment = await form.evaluate((dialog) => {
+      const folderIcon = dialog.querySelector('.project-list-row .project-icon-slot')!.getBoundingClientRect();
+      const addIcon = dialog.querySelector('.project-add-folder-action .project-icon-slot')!.getBoundingClientRect();
+      return { folder: folderIcon.left, add: addIcon.left };
+    });
+    expect(folderAlignment.add).toBe(folderAlignment.folder);
     await form.screenshot({ path: testInfo.outputPath(`project-create-folders-${theme}.png`) });
     await form.getByRole('button', { name: 'Create project', exact: true }).click();
     await expect(page.locator('.thread-location-chip')).toHaveText('Tenon');
@@ -108,9 +114,9 @@ for (const theme of ['light', 'dark'] as const) {
     await remove.focus();
     await expect(remove).toHaveCSS('opacity', '1');
     await page.getByRole('button', { name: 'Change project', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Project details', exact: true }).click();
-    const details = page.getByRole('dialog', { name: 'Project details', exact: true });
-    await expect(details.getByText('/Users/developer/reference', { exact: true })).toBeVisible();
+    await page.getByRole('menuitem', { name: 'Edit Project', exact: true }).click();
+    const details = page.getByRole('dialog', { name: 'Edit Project', exact: true });
+    await expect(details.locator('.project-folder-path').filter({ hasText: '/Users/developer/reference' })).toBeVisible();
     await expect(details.getByRole('button', { name: 'Set work folder', exact: true })).toHaveCount(0);
     await details.getByRole('button', { name: 'Close', exact: true }).click();
     flyout = await projectMenu(page);
@@ -118,6 +124,19 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(flyout.getByRole('menuitemradio', { name: 'Tenon', exact: true })).toHaveAttribute('aria-checked', 'true');
     await flyout.getByRole('menuitemradio', { name: 'Tenon', exact: true }).hover();
     await expect(flyout).toBeVisible();
+    const menuAlignment = await flyout.evaluate((menu) => {
+      const search = menu.querySelector('input')!;
+      const inputStyle = getComputedStyle(search);
+      return {
+        textStart: search.getBoundingClientRect().left + parseFloat(inputStyle.paddingLeft),
+        labels: [...menu.querySelectorAll('.project-menu-label')].map((label) => label.getBoundingClientRect().left),
+        icons: [...menu.querySelectorAll('.project-icon-slot')].map((icon) => ({ left: icon.getBoundingClientRect().left, width: icon.getBoundingClientRect().width })),
+        heights: [...menu.querySelectorAll('.project-menu-search, .project-menu-item')].map((row) => row.getBoundingClientRect().height),
+      };
+    });
+    for (const left of menuAlignment.labels) expect(left).toBeCloseTo(menuAlignment.textStart, 1);
+    for (const icon of menuAlignment.icons) { expect(icon.width).toBe(16); expect(icon.left).toBe(menuAlignment.icons[0]!.left); }
+    for (const height of menuAlignment.heights) expect(height).toBe(28);
     await page.screenshot({ path: testInfo.outputPath(`project-flyout-${theme}.png`) });
     const clearProject = flyout.getByRole('menuitem', { name: "Don't work in a project", exact: true });
     const newProject = flyout.getByRole('menuitem', { name: 'New Project', exact: true });
@@ -335,9 +354,118 @@ test('Project chip changes and removes membership directly, retaining selection 
   await page.getByRole('button', { name: 'Remove project from chat', exact: true }).click();
   await expect(page.getByRole('alert')).toHaveText('Removal interrupted');
   await expect(page.locator('.thread-location-chip')).toHaveText('Second · Application default');
-  await page.getByRole('dialog', { name: 'Project details' }).getByRole('button', { name: 'Close', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Remove project from chat' }).getByRole('button', { name: 'Close', exact: true }).click();
   await page.getByRole('button', { name: 'Remove project from chat', exact: true }).click();
   await expect(page.locator('.thread-location-chip')).toHaveCount(0);
   await expect(page.locator('.thread-composer-toolbar').getByRole('button', { name: 'Add', exact: true })).toBeFocused();
   expect((await page.evaluate(() => window.lin.agentCoreRequest('project/inspect', {}))).projects).toHaveLength(2);
 });
+
+for (const theme of ['light', 'dark'] as const) {
+  test(`Project editing and deletion stay in the composer in ${theme}`, async ({ page }, testInfo) => {
+    await page.emulateMedia({ colorScheme: theme });
+    await openMockedApp(page);
+    const project = await page.evaluate(async () => (await window.lin.agentCoreRequest('project/manage', {
+      operation: 'create', name: 'Workspace', folders: ['/work/main', '/work/reference'], primaryFolder: '/work/main',
+    })).project!);
+    await (await projectMenu(page)).getByRole('menuitemradio', { name: 'Workspace', exact: true }).click();
+    await page.getByRole('button', { name: 'Show Threads', exact: true }).click();
+    const threads = page.getByRole('dialog', { name: 'Threads', exact: true });
+    await expect(threads.getByRole('heading', { name: 'Workspace', exact: true })).toBeVisible();
+    await expect(threads.getByRole('button', { name: 'Projects', exact: true })).toHaveCount(0);
+    await threads.getByRole('button', { name: 'Thread actions', exact: true }).first().click();
+    await expect(page.getByRole('menuitem', { name: 'Move to Project', exact: true })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    const change = page.getByRole('button', { name: 'Change project', exact: true });
+    await change.click();
+    const picker = page.getByRole('menu', { name: 'Choose project', exact: true });
+    await expect(picker.getByRole('menuitem', { name: 'Project details', exact: true })).toHaveCount(0);
+    await picker.getByRole('menuitem', { name: 'Edit Project', exact: true }).click();
+    const form = page.getByRole('dialog', { name: 'Edit Project', exact: true });
+    const name = form.getByRole('textbox', { name: 'Name', exact: true });
+    await expect(name).toBeFocused();
+    await expect(name).toHaveValue('Workspace');
+    await expect(form.getByRole('button', { name: 'Primary', exact: true })).toHaveCount(0);
+    const rows = form.locator('.project-list-row');
+    const secondary = rows.filter({ hasText: '/work/reference' });
+    const makePrimary = secondary.getByRole('button', { name: 'Make primary', exact: true });
+    await expect(makePrimary).toHaveCSS('opacity', '0');
+    const beforeHover = await secondary.boundingBox();
+    await secondary.hover();
+    await expect(makePrimary).toHaveCSS('opacity', '1');
+    expect(await secondary.boundingBox()).toEqual(beforeHover);
+    await name.hover();
+    await makePrimary.focus();
+    await expect(makePrimary).toHaveCSS('opacity', '1');
+    await page.keyboard.press('Enter');
+    await rows.filter({ hasText: '/work/reference' }).getByRole('button', { name: 'Remove folder', exact: true }).click();
+    await expect(form.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+    await expect(form.getByText('Choose a replacement primary folder before saving.', { exact: true })).toBeVisible();
+    await rows.filter({ hasText: '/work/main' }).getByRole('button', { name: 'Make primary', exact: true }).click();
+    await nextFolder(page, '/work/main');
+    await form.getByRole('button', { name: 'Add folder', exact: true }).click();
+    await expect(form.getByRole('alert')).toHaveText('This folder is already in the Project.');
+    await form.screenshot({ path: testInfo.outputPath(`project-edit-error-${theme}.png`) });
+    const longFolder = '/work/' + 'long-source-directory-'.repeat(6);
+    await nextFolder(page, longFolder);
+    await form.getByRole('button', { name: 'Add folder', exact: true }).click();
+    await rows.filter({ hasText: longFolder }).getByRole('button', { name: 'Make primary', exact: true }).click();
+    await name.fill('Renamed workspace');
+    const pathGeometry = await rows.filter({ hasText: longFolder }).locator('.project-folder-path').evaluate((el) => ({
+      height: el.getBoundingClientRect().height,
+      title: el.getAttribute('title'),
+      text: el.textContent,
+      rowHeight: el.parentElement!.getBoundingClientRect().height,
+    }));
+    expect(pathGeometry.title).toBe(longFolder);
+    expect(pathGeometry.text).toBe(longFolder);
+    expect(pathGeometry.height).toBeLessThanOrEqual(20);
+    expect(pathGeometry.rowHeight).toBe(28);
+    expect(await form.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+    await form.screenshot({ path: testInfo.outputPath(`project-edit-${theme}.png`) });
+    await form.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect(form).toHaveCount(0);
+    await expect(page.locator('.thread-location-chip')).toHaveText('Renamed workspace');
+    await expect(change).toBeFocused();
+    const saved = (await page.evaluate(() => window.lin.agentCoreRequest('project/inspect', {}))).projects.find((entry) => entry.id === project.id)!;
+    expect(saved.name).toBe('Renamed workspace');
+    expect(saved.folders).toEqual(['/work/main', longFolder]);
+    expect(saved.primaryFolder).toBe(longFolder);
+    expect((await commandCalls(page)).filter((entry) => entry.cmd === 'project/manage' && entry.args.operation === 'bind')).toHaveLength(1);
+    await change.click();
+    await picker.getByRole('menuitem', { name: 'Edit Project', exact: true }).click();
+    await name.fill('Discard this name');
+    await form.getByRole('button', { name: 'Delete Project', exact: true }).click();
+    const deletion = page.getByRole('dialog', { name: 'Delete Project', exact: true });
+    await expect(deletion.getByText('Renamed workspace', { exact: true })).toBeVisible();
+    await deletion.screenshot({ path: testInfo.outputPath(`project-delete-${theme}.png`) });
+    await deletion.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(name).toBeFocused();
+    await expect(name).toHaveValue('Discard this name');
+    await form.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(page.locator('.thread-location-chip')).toHaveText('Renamed workspace');
+    await change.click();
+    await picker.getByRole('menuitem', { name: 'Edit Project', exact: true }).click();
+    await form.getByRole('button', { name: 'Delete Project', exact: true }).click();
+    await page.evaluate(() => {
+      const request = window.lin.agentCoreRequest.bind(window.lin);
+      let fail = true;
+      window.lin.agentCoreRequest = (async (method: string, input: Record<string, unknown>) => {
+        if (method === 'project/manage' && input.operation === 'delete' && fail) {
+          fail = false; throw new Error('An Automation still references this Project.');
+        }
+        return request(method as never, input as never);
+      }) as typeof window.lin.agentCoreRequest;
+    });
+    await deletion.getByRole('button', { name: 'Delete Project', exact: true }).click();
+    await expect(deletion.getByRole('alert')).toHaveText('An Automation still references this Project.');
+    await expect(page.locator('.thread-location-chip')).toHaveText('Renamed workspace');
+    await deletion.screenshot({ path: testInfo.outputPath(`project-delete-error-${theme}.png`) });
+    await deletion.getByRole('button', { name: 'Delete Project', exact: true }).click();
+    await expect(deletion).toHaveCount(0);
+    await expect(page.locator('.thread-location-chip')).toHaveCount(0);
+    await expect(page.locator('.thread-composer-toolbar').getByRole('button', { name: 'Add', exact: true })).toBeFocused();
+    await expect((await projectMenu(page)).getByRole('status')).toHaveText('No Projects yet.');
+  });
+}

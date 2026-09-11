@@ -56,10 +56,12 @@ Remove the retired conversation-folder reader and writer without a migration.
   edits affect subsequent admissions in member conversations; deletion detaches
   membership so subsequent admissions use Application default. Explicit task cwd
   remains; remove folder-only CLI mutations and their persistence.
-- **FR-4:** Show the selected Project in the location chip; details show its
-  primary and secondary paths read-only and offer Project selection. Clicking the
+- **FR-4:** Show the selected Project in the location chip; Edit Project opens its
+  name, source folders and primary folder directly, with deletion confirmation.
+  Saving edits updates the Project without rebinding the conversation. Clicking the
   chip opens the picker directly; a separate remove icon clears membership without
-  deleting the Project. Failures keep the chip and report the error. Loading, missing paths, stale revisions,
+  deleting the Project. The composer owns all chat Project operations; the Thread
+  chooser retains grouping but removes management and assignment actions. Failures keep the chip and report the error. Loading, missing paths, stale revisions,
   and failures cannot report successful selection or fall back silently.
 
 The Project chip stays beside Add in the bottom composer toolbar. Its leading
@@ -84,7 +86,7 @@ searchable catalog directly without a redundant checked empty choice.
 ### Implementation scope and collision check
 
 Expected files: `ConversationControls`, `ProjectDialog`, `ThreadDock`, private
-Project-menu/recent-selection helpers, `styles/projects.css`, the two i18n message
+Project-menu/recent-selection helpers, `ThreadList`, `styles/projects.css`, the two i18n message
 catalogs, renderer tests, `tests/e2e/agent-projects.spec.ts`, and owning Agent specifications. Retire independent folder fields in
 `core/agent/project.ts`, execution-context snapshots, `ProjectCatalogStore`,
 `ProjectService`, `ProjectCliService`, `ToolRuntime`, local tool resolution, native
@@ -109,6 +111,14 @@ cross-directory evidence acceptance cases.
   concurrent changes, and create-success/bind-failure retry without duplicate creation.
 - **AC-5:** Run typecheck, relevant renderer/Core tests, focused Project E2E and
   design guards, docs:check, and diff checks before making the PR ready.
+
+Project folder rows are single-line and share icon, path, primary-action and
+remove columns. Long paths elide parent segments before the final folder name;
+hover titles preserve the full path. Make primary appears on row hover or
+keyboard focus while its column stays reserved, so neither text nor neighbors
+move. The selected Primary label stays visible. Editing feedback appears above
+the action row, and closing restores focus to the Project chip or Add after
+deleting the selected Project.
 
 ## Open questions
 

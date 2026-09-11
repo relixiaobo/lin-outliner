@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { useT } from '../../i18n/I18nProvider';
-import { AddIcon, CheckIcon, CloseIcon, ChevronRightIcon, FolderIcon, SearchIcon, ICON_SIZE } from '../../ui/icons';
+import { AddIcon, AttachmentIcon, PencilIcon, CheckIcon, CloseIcon, ChevronRightIcon, FolderIcon, SearchIcon, ICON_SIZE } from '../../ui/icons';
 import { Input } from '../../ui/primitives/Input';
 import { isImeComposingEvent } from '../../ui/interactions/imeKeyboard';
 import { MenuItem } from '../../ui/primitives/MenuItem';
@@ -13,10 +13,9 @@ import type { ComposerProjectContext } from './ConversationControls';
 import { recentProjects, selectConversationProject } from './recentProjects';
 import type { Project } from '../../../core/agent/project';
 
-export function ComposerProjectMenu({ anchorRef, context, threadId, attachmentDisabled, onAttachment, onClose, pickerOnly = false, onDetails, fallbackAnchorRef }: {
+export function ComposerProjectMenu({ anchorRef, context, threadId, attachmentDisabled, onAttachment, onClose, pickerOnly = false, fallbackAnchorRef }: {
   pickerOnly?: boolean;
   fallbackAnchorRef?: RefObject<HTMLButtonElement | null>;
-  onDetails?: () => void;
   anchorRef: RefObject<HTMLButtonElement | null>;
   context?: ComposerProjectContext;
   threadId: string;
@@ -72,13 +71,13 @@ export function ComposerProjectMenu({ anchorRef, context, threadId, attachmentDi
     catch (error) { setError(error instanceof Error ? error.message : String(error)); }
     finally { busyRef.current = false; setBusy(false); }
   }
-  const itemClass = 'thread-composer-model-item';
+  const itemClass = 'thread-composer-model-item project-menu-item';
   return createPortal(<>
     {!pickerOnly ? <MenuSurface ref={menuRef} role="menu" aria-label={t.add} className="thread-composer-model-popover" style={style} onKeyDown={parentKeyboard.onKeyDown}>
-      <MenuItem role="menuitem" className={itemClass} label={strings.agent.thread.addAttachment} disabled={attachmentDisabled}
+      <MenuItem role="menuitem" className={itemClass} iconClassName="project-icon-slot" icon={<AttachmentIcon size={ICON_SIZE.compact} />} labelClassName="project-menu-label" label={strings.agent.thread.addAttachment} disabled={attachmentDisabled}
         onPointerEnter={() => setFlyout(false)} onFocus={() => setFlyout(false)} onClick={() => { close(); onAttachment(); }} />
       <div role="separator" className="project-menu-separator" />
-      <MenuItem ref={rowRef} role="menuitem" className={itemClass} label={selectedProject?.name ?? t.chooseProject} title={selectedProject?.name} icon={<FolderIcon size={ICON_SIZE.compact} />} aria-haspopup="menu" aria-expanded={flyout}
+      <MenuItem ref={rowRef} role="menuitem" className={itemClass} iconClassName="project-icon-slot" label={selectedProject?.name ?? t.chooseProject} title={selectedProject?.name} icon={<FolderIcon size={ICON_SIZE.compact} />} aria-haspopup="menu" aria-expanded={flyout}
         labelClassName="project-menu-label" meta={<ChevronRightIcon size={ICON_SIZE.compact} />}
         onPointerEnter={() => setFlyout(true)} onClick={() => setFlyout(true)} onKeyDown={(event) => {
           if (event.key === 'ArrowRight') { event.preventDefault(); event.stopPropagation(); setFlyout(true); }
@@ -101,11 +100,11 @@ export function ComposerProjectMenu({ anchorRef, context, threadId, attachmentDi
         }
       }}>
       {projects.length > 0 ? <div className="project-menu-search">
-        <SearchIcon size={ICON_SIZE.compact} />
+        <span className="project-icon-slot"><SearchIcon size={ICON_SIZE.compact} /></span>
         <Input variant="bare" label={t.search} placeholder={t.search} value={search} onChange={(event) => setSearch(event.target.value)} />
       </div> : null}
       <div className="project-menu-list">
-      {filtered.map((project) => <MenuItem key={project.id} role="menuitemradio" aria-checked={selected === project.id} className={itemClass}
+      {filtered.map((project) => <MenuItem key={project.id} role="menuitemradio" aria-checked={selected === project.id} className={itemClass} iconClassName="project-icon-slot"
         icon={<FolderIcon size={ICON_SIZE.compact} />} label={project.name} labelClassName="project-menu-label" title={`${project.name}\n${project.primaryFolder ?? t.applicationDefault}`}
         meta={selected === project.id ? <CheckIcon size={ICON_SIZE.compact} /> : null} disabled={busy || unavailable} onClick={() => void choose(project)} />)}
       {!unavailable && filtered.length === 0 ? <p className="project-menu-status" role="status">{query ? t.noResults : t.empty}</p> : null}
@@ -113,9 +112,9 @@ export function ComposerProjectMenu({ anchorRef, context, threadId, attachmentDi
       {unavailable ? <p className="project-menu-status" role="status">{context?.error ?? t.loading}</p> : null}
       {error ? <p className="project-menu-status" role="alert">{error}</p> : null}
       <div role="separator" className="project-menu-separator" />
-      {onDetails ? <MenuItem role="menuitem" className={itemClass} label={t.locationDetails} onClick={() => { close(); onDetails(); }} /> : null}
-      <MenuItem role="menuitem" className={itemClass} icon={<AddIcon size={ICON_SIZE.compact} />} label={t.new} disabled={busy || unavailable} onClick={() => { close(); context?.onChooseProject('new'); }} />
-      {selected !== null ? <MenuItem role="menuitem" className={itemClass} icon={<CloseIcon size={ICON_SIZE.compact} />} label={t.withoutProject}
+      {selectedProject ? <MenuItem role="menuitem" className={itemClass} iconClassName="project-icon-slot" icon={<PencilIcon size={ICON_SIZE.compact} />} disabled={busy || unavailable} labelClassName="project-menu-label" label={t.edit} onClick={() => { close(); context?.onChooseProject(selectedProject); }} /> : null}
+      <MenuItem role="menuitem" className={itemClass} iconClassName="project-icon-slot" icon={<AddIcon size={ICON_SIZE.compact} />} labelClassName="project-menu-label" label={t.new} disabled={busy || unavailable} onClick={() => { close(); context?.onChooseProject('new'); }} />
+      {selected !== null ? <MenuItem role="menuitem" className={itemClass} iconClassName="project-icon-slot" icon={<CloseIcon size={ICON_SIZE.compact} />} labelClassName="project-menu-label" label={t.withoutProject}
         disabled={busy || unavailable} onClick={() => void choose(null)} /> : null}
     </MenuSurface> : null}
   </>, document.body);

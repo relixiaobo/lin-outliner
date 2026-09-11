@@ -60,7 +60,7 @@ The Thread chooser retains Project grouping alongside existing source, startup
 availability, activity and time metadata. A member conversation shows its Project
 name; a folderless Project also shows Application default. Unknown membership is
 never labeled No Project. The composer shows the same compact chip beside Add,
-with full primary and secondary paths in read-only details and a separate
+with full primary and secondary paths in the Project editor and a separate
 unavailable indicator. No Project shows no persistent chip or extra row.
 
 The composer's Add (`+`) menu opens above and leading-aligned to its trigger. It
@@ -94,6 +94,9 @@ selection retry without another create. Cancellation changes no membership. The 
 an icon/name field, and a large bordered Add folders button in its empty state.
 After adding folders it shows primary selection/removal and an Add folder action;
 Create project submits, and Cancel from direct creation closes the dialog.
+Search and menu actions share a 16px icon slot, a 4px label gap and 28px row
+height. Bare inputs inherit their surrounding inset without extra horizontal
+padding. Primary is a readable status label, not a disabled action.
 
 The Project chip stays beside Add in the bottom composer toolbar. Its leading
 folder icon switches in place to the remove button on hover or keyboard focus;
@@ -108,9 +111,24 @@ truncates inside the available content area.
 
 The selected Project chip opens the same picker directly, without the Add menu.
 Its separate remove button clears only chat membership, preserving the Project
-catalog. Failed removal keeps the selection and displays its error in Project
-details. The picker also exposes read-only Project details. Closing the picker
+catalog. Failed removal keeps the selection and displays a focused error dialog
+with retry and close actions. When selected, the picker exposes Edit Project,
+opening the existing name, source folders and primary folder directly. Saving
+updates the Project without rebinding the conversation; Cancel discards changes.
+The editor includes Delete Project with a confirmation that explains retained
+chats, files and running tasks. Canceling deletion returns to the unsaved editor.
+The composer is the sole chat Project operation entry: the Thread chooser
+retains grouping and membership metadata but has no Project management or
+assignment action. Closing the picker
 restores focus to the chip; successful removal restores focus to Add.
+
+Project folder rows are single-line and share icon, path, primary-action and
+remove columns. Long paths elide parent segments before the final folder name;
+hover titles preserve the full path. Make primary appears on row hover or
+keyboard focus while its column stays reserved, so neither text nor neighbors
+move. The selected Primary label stays visible. Editing feedback appears above
+the action row, and closing restores focus to the Project chip or Add after
+deleting the selected Project.
 
 Project is the sole user-facing default-directory choice. Selection adopts its
 current primary for subsequent task admissions, including in existing chats;

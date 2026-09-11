@@ -1,6 +1,6 @@
 import { useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { ProjectCatalogView } from '../../../core/agent/project';
+import type { Project, ProjectCatalogView } from '../../../core/agent/project';
 import { useT } from '../../i18n/I18nProvider';
 import { AddIcon, CloseIcon, FolderIcon, WarningIcon, ICON_SIZE } from '../../ui/icons';
 import { ComposerProjectMenu } from './ComposerProjectMenu';
@@ -15,7 +15,7 @@ export interface ComposerProjectContext {
   readonly view: ProjectCatalogView;
   readonly loading: boolean;
   readonly error: string | null;
-  readonly onChooseProject: (mode?: 'new') => void;
+  readonly onChooseProject: (mode: 'new' | Project) => void;
 }
 
 export function ConversationControls({ threadId, context, attachmentDisabled, onAttachment }: {
@@ -34,20 +34,16 @@ export function ConversationControls({ threadId, context, attachmentDisabled, on
   const [picker, setPicker] = useState(false);
   const titleId = useId();
   const [menu, setMenu] = useState(false);
-  const [details, setDetails] = useState(false);
   const membership = context?.view.memberships.find((entry) => entry.threadId === threadId);
   const project = context?.view.projects.find((entry) => entry.id === membership?.projectId);
   const label = context ? conversationLocationLabel(threadId, context.view, t) : null;
   const folder = project?.primaryFolder ?? null;
-  const locationKnown = membership && (!membership.projectId || project);
-  const unknown = context?.error ? t.unavailable : t.loading;
-  const close = () => { setDetails(false); (projectAnchor.current ?? anchor.current)?.focus(); };
-  const openDetails = () => setDetails(true);
+  const close = () => { setActionError(null); (projectAnchor.current ?? anchor.current)?.focus(); };
   async function removeProject() {
     if (!context || removingRef.current) return;
     removingRef.current = true; setRemoving(true); setActionError(null); setPicker(false);
     try { await selectConversationProject(threadId, null, context.view); anchor.current?.focus(); }
-    catch (error) { setActionError(error instanceof Error ? error.message : String(error)); setDetails(true); }
+    catch (error) { setActionError(error instanceof Error ? error.message : String(error)); }
     finally { removingRef.current = false; setRemoving(false); }
   }
   return <>
@@ -71,24 +67,14 @@ export function ConversationControls({ threadId, context, attachmentDisabled, on
     {menu ? <ComposerProjectMenu anchorRef={anchor} context={context} threadId={threadId}
       attachmentDisabled={attachmentDisabled} onAttachment={onAttachment} onClose={() => setMenu(false)} /> : null}
     {picker ? <ComposerProjectMenu pickerOnly anchorRef={projectAnchor} fallbackAnchorRef={anchor} context={context} threadId={threadId}
-      attachmentDisabled={attachmentDisabled} onAttachment={onAttachment} onClose={() => setPicker(false)} onDetails={openDetails} /> : null}
-    {details ? createPortal(<Dialog labelledBy={titleId} backdropClassName="confirm-dialog-backdrop"
+      attachmentDisabled={attachmentDisabled} onAttachment={onAttachment} onClose={() => setPicker(false)} /> : null}
+    {actionError ? createPortal(<Dialog labelledBy={titleId} backdropClassName="confirm-dialog-backdrop"
       surfaceClassName="confirm-dialog project-dialog" onEscapeKeyDown={close} onBackdropMouseDown={close}>
-      <h2 id={titleId} className="confirm-dialog-title">{t.locationDetails}</h2>
-      <p>{!membership ? unknown : project?.name ?? (membership.projectId ? t.unavailable : t.none)}</p>
-      <p className="project-path">{locationKnown ? folder ?? t.applicationDefault : membership ? t.unavailable : unknown}</p>
-      {locationKnown && folder === null ? <p className="project-path">{context?.view.applicationDefault.path ?? t.unavailable}</p> : null}
-      {folder && context?.view.unavailableFolders.includes(folder)
-        || folder === null && context && !context.view.applicationDefault.available ? <p role="status">{t.unavailable}</p> : null}
-      {project ? <><h3>{t.sourceFolders}</h3><ul className="project-list">{project.folders.map((path) => <li className="project-path" key={path}>
-        {path}{path === project.primaryFolder ? ` · ${t.primary}` : ''}{context?.view.unavailableFolders.includes(path) ? ` · ${t.unavailable}` : ''}
-      </li>)}</ul></> : null}
-      {context?.loading ? <p role="status">{t.loading}</p> : null}
-      {actionError ? <p className="automation-error" role="alert">{actionError}</p> : null}
-      {context?.error ? <p className="automation-error" role="alert">{context.error}</p> : null}
+      <h2 id={titleId} className="confirm-dialog-title">{t.removeFromChat}</h2>
+      <p className="automation-error" role="alert">{actionError}</p>
       <div className="confirm-dialog-actions project-location-actions">
         <Button variant="ghost" onClick={close}>{t.close}</Button>
-        <Button variant="ghost" disabled={!context || context.loading || !!context.error} onClick={() => { close(); setPicker(true); }}>{t.chooseProject}</Button>
+        <Button variant="primary" disabled={removing || !context || context.loading || !!context.error} onClick={() => void removeProject()}>{t.removeFromChat}</Button>
       </div>
     </Dialog>, document.body) : null}
   </>;
