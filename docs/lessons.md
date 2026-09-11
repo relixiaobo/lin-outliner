@@ -2971,3 +2971,13 @@ ID embedded in that input. PR #674 initially allowed confirmation-free folder
 changes to any persistent user conversation. Restrict that path to the trusted
 invoking root, and verify foreign set/clear rejection, unchanged target state,
 absent receipts and successful idempotent changes to the caller's own setting.
+
+
+## Descriptor reuse needs lifecycle evidence
+
+**Trace descriptor ownership before weakening a file-close boundary.** A cleanup
+`EBADF` can originate in an unrelated collected pipe wrapper after the OS reuses
+its descriptor. Isolate spawn/open/GC behavior and keep a live-file write, sync
+and close regression. #678 uses standard supervisor stdin to avoid Bun's extra
+pipe ownership failure while preserving literal command input and private fd 3;
+Rollout close errors remain visible.

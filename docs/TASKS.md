@@ -13,19 +13,20 @@ starting or integrating work; the audit below is a dated snapshot, not a lock.
 
 ## In Flight
 
-Status refresh: 2026-09-11, main `9b4ccd65`. The published record, question,
+Status refresh: 2026-09-11, main `25634c41`. The published record, question,
 Task-continuation and Project/folder features are integrated in #669/#672/#673/#674;
-their plans are archived, leaving 10 active designs on main. The only open claim
-is [PR #675](https://github.com/relixiaobo/lin-outliner/pull/675), a design-only
-change at `38e82f57`, not an implementation claim or an integrated plan. No open
-runtime implementation PR was visible at this refresh; that does not establish
-whether an unclaimed dev branch has begun work.
+their plans are archived, leaving 10 active designs on main. Open claims are
+[PR #675](https://github.com/relixiaobo/lin-outliner/pull/675) (design-only),
+[PR #676](https://github.com/relixiaobo/lin-outliner/pull/676) (Draft image repair),
+and [PR #677](https://github.com/relixiaobo/lin-outliner/pull/677) (Draft readiness
+repair). These claims do not establish integration or acceptance.
 
-#674's cross-conversation folder authorization finding is resolved. Its accepted
-merge retains a source CLI fixture-cleanup failure (`EBADF`) as a separate tail;
-at this status query, four final-head E2E samples were queued and one was running.
-Do not describe these pending samples or the source CLI case as passing, or infer
-a production defect solely from the cleanup trace.
+#674's authorization finding and source CLI cleanup tail are resolved. #678
+moves Host-to-supervisor private control to standard stdin while preserving the
+command's separate user input and fd 3 capability. Gate verification passed all
+50 ToolTask tests and both source/bundled Project CLI cases with normal cleanup,
+plus typecheck and docs:check. Five #678 E2E samples remained pending at merge;
+no full-suite result or repair of the separate Outline Runtime timeout is claimed.
 
 The #675 correctness premises remain on main: `prepareBoundedAgentImageUnlocked`
 still uses `createThumbnailFromPath`, and `validateTaskReadiness` still rejects
@@ -280,13 +281,6 @@ into a blanket dependency for every PR.
 
 ### Reliability and maintenance tails
 
-- **Source CLI integration cleanup (#674, P2):** the focused source CLI case
-  fails with `EBADF` in `RolloutStore.closeOpenFile` during fixture cleanup on two
-  gate runs; bundled CLI passes and the preceding PR head passes both cases.
-  Diagnose the exact close/cleanup owner as a separate bounded reliability change;
-  coordinate any overlapping Thread/Rollout edits. Do not treat the case as green
-  or fold an unproven cause into #675's image/readiness repairs.
-
 - **delegation-graduation-evidence** (P3, `draft`) — preserve FR-9/AC-17 from
   the [archived runtime design](plans/archive/agent-delegation-runtime.md): freeze
   a representative task corpus and compare sequential/delegated wall time, total
@@ -376,6 +370,7 @@ into a blanket dependency for every PR.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **source-cli-cleanup** (`done`, #678, 2026-09-11) - supervisor standard stdin avoids closing reused Host descriptors; exact user stdin and private fd 3 remain separate.
 - **conversation-work-folders** (`done`, #674, 2026-09-11) - multi-folder Projects, independent conversation defaults and scoped CLI/Skill operations are shipped; [plan archived](plans/archive/conversation-work-folders.md).
 - **background-task-continuation-policy** (`done`, #673, 2026-09-11) - verified service handoff, explicit watches and exact-event Stop/acknowledgement govern continuation; [plan archived](plans/archive/background-task-continuation-policy.md).
 - **user-input-request-recovery** (`done`, #672, 2026-09-11) - ordered question recovery, bounded exactly-once settlement and independent session-local answer/message drafts are shipped; [plan archived](plans/archive/user-input-request-recovery.md).
