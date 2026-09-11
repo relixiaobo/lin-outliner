@@ -79,7 +79,7 @@ export class AutomationRendererStore {
     const baselineMutationVersion = this.mutationVersion;
     this.patch({ loading: true, error: null });
     try {
-      const automations = await this.client.automationRequest('list', {});
+      const automations = await this.client.automationRequest('list', { includeDeleted: true });
       if (generation !== this.reloadGeneration) return;
       const unread = await Promise.all(automations.data.map(async (automation) => ({
         automationId: automation.id,
@@ -174,7 +174,7 @@ export class AutomationRendererStore {
   }
 
   async startNow(automation: Automation): Promise<readonly AutomationRun[]> {
-    const response = await this.client.automationRequest('startNow', { id: automation.id, requestId: crypto.randomUUID() });
+    const response = await this.client.automationRequest('startNow', { id: automation.id, requestId: crypto.randomUUID(), expectedRevision: automation.revision });
     for (const run of response.runs) this.upsertRun(run);
     return response.runs;
   }
@@ -198,6 +198,7 @@ export class AutomationRendererStore {
   }
 
   private applyNotification(notification: AutomationNotification): void {
+    if (notification.type === 'automation/open') { this.select(notification.automationId); return; }
     if (notification.type === 'automation/changed') {
       if (notification.automation) this.upsertAutomation(notification.automation);
       else this.removeAutomation(notification.automationId);
@@ -367,7 +368,7 @@ function sortByUpdated(items: readonly Automation[]): Automation[] {
 }
 
 function sortBySchedule(items: readonly AutomationRun[]): AutomationRun[] {
-  return [...items].sort((left, right) => right.scheduledFor - left.scheduledFor || right.id.localeCompare(left.id));
+  return [...items].sort((left, right) => right.createdSequence - left.createdSequence || right.id.localeCompare(left.id));
 }
 
 function isUnread(run: AutomationRun): boolean {

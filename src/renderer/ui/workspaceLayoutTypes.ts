@@ -37,7 +37,7 @@ export interface FilePreviewNavigationOptions {
   presentation?: FilePreviewPresentation;
 }
 
-export type PanelView = OutlinerPanelView | FilePreviewPanelView | ThreadTrajectoryPanelView;
+export type PanelView = OutlinerPanelView | FilePreviewPanelView | ThreadTrajectoryPanelView | { kind: 'scheduled-tasks' };
 
 export interface WorkspaceContentPanelState extends WorkspacePanelBase {
   type: 'workspace';

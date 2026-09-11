@@ -724,7 +724,7 @@ export class DelegationCoordinator {
 
   private requireOwnedSession(execution: DelegateCapabilityExecution): DelegationSessionBinding {
     const binding = execution.admission.session;
-    if (binding.kind === 'run' || binding.kind === 'project') throw unauthorized('Existing Session command requires a Session binding.');
+    if (binding.kind === 'run' || binding.kind === 'project' || binding.kind === 'schedule') throw unauthorized('Existing Session command requires a Session binding.');
     const session = this.options.store.readSession(binding.sessionId as ThreadId);
     if (!session || session.ownerThreadId !== execution.admission.source.rootThreadId) {
       throw unauthorized('Delegate Session is not owned by the current root Thread.');

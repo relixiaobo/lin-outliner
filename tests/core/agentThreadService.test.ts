@@ -8979,7 +8979,7 @@ describe('Project CLI and live conversation location', () => {
     let runtime!: ToolRuntime;
     let confirmations = 0;
     let disabled = false;
-    const cli = new ProjectCliService(fixture.service.projects, (execution) => runtime.authorizeProjectInvocation(execution), async () => { confirmations++; return true; });
+    const cli = new ProjectCliService(fixture.service.projects, (execution) => runtime.authorizeHostCliInvocation(execution), async () => { confirmations++; return true; });
     const sourceCli = resolveDelegateCliRuntime({ isPackaged: false, moduleDir: join(process.cwd(), 'src/main'), resourcesPath: '/unused', processExecPath: process.execPath });
     const bundle = join(fixture.root, 'delegate.mjs');
     if (bundled) execFileSync('bun', ['build', sourceCli.cliEntry, '--outfile', bundle, '--target', 'node', '--format', 'esm']);

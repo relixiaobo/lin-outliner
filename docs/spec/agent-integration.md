@@ -45,7 +45,7 @@ Agent Core. It is a contract checklist, not project status.
 - Preserve history-only fork semantics.
 - Represent internal delegation as one root-owned Session bound to a hidden
   canonical Thread; keep process and delivery truth in the generic Tool Task.
-- Route scheduled work through Automation claims and canonical feature Turn
+- Route Scheduled tasks UI and CLI through the Host scheduling owner and canonical feature Turn
   provenance; do not confuse scheduled product work with the generic local
   admission leases that bound processes Tool Tasks start.
 

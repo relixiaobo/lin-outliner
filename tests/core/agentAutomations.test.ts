@@ -325,8 +325,8 @@ describe('Automation durable scheduling', () => {
 
     const omissions = store.listRuns({ automationId: automation.id })
       .filter((run) => run.state === 'omitted');
-    expect(omissions).toHaveLength(3);
-    expect(omissions.filter((run) => run.omission?.reason === 'updated')).toHaveLength(1);
+    expect(omissions).toHaveLength(2);
+    expect(omissions.filter((run) => run.omission?.reason === 'updated')).toHaveLength(0);
     expect(new Set(omissions.map((run) => run.automationRevision))).toEqual(new Set([1, 2]));
   });
 
@@ -379,7 +379,9 @@ describe('Automation durable scheduling', () => {
     const store = automationStore();
     const now = Date.parse('2026-07-24T08:00:00Z');
     const automation = store.create(definition('20260724T090000'), now);
-    const pending = store.claimNow(automation, null, now + 1);
+    const pending = store.claimDueBatch({ automation, binding: null,
+      expectedEvaluatedThrough: now - 1, evaluatedThrough: now + 1,
+      occurrences: [now + 1], truncated: false, now: now + 1 }).claimed!;
     const paused = store.setStatus(automation.id, 'paused', automation.revision, now + 2);
     expect(paused.status).toBe('paused');
     expect(store.readRun(pending.id)).toMatchObject({
@@ -466,7 +468,7 @@ describe('Automation durable scheduling', () => {
       name: 'Renamed',
     }, due + 1);
     expect(renamed.status).toBe('completed');
-    expect(() => store.setStatus(renamed.id, 'active', renamed.revision, due + 2)).toThrow('changing its schedule');
+    expect(store.setStatus(renamed.id, 'active', renamed.revision, due + 2).status).toBe('completed');
 
     const rescheduled = store.update({
       id: renamed.id,
@@ -616,7 +618,7 @@ describe('Automation service serialization', () => {
     }
   });
 
-  test('publishes pending omissions and prevents overlapping Start now runs', async () => {
+  test('pause preserves manual preparation and repeated Start now returns its run', async () => {
     const store = automationStore();
     const now = Date.parse('2026-07-24T09:00:00Z');
     const automation = store.create(definition('20260724T100000'), now);
@@ -628,14 +630,11 @@ describe('Automation service serialization', () => {
 
     const first = await service.request('startNow', { id: automation.id, requestId: uuidV7() });
     expect(first.runs[0]?.state).toBe('pending');
-    await expect(service.request('startNow', { id: automation.id, requestId: uuidV7() })).rejects.toThrow('active occurrence');
+    expect((await service.request('startNow', { id: automation.id, requestId: uuidV7() })).runs[0]?.id).toBe(first.runs[0]?.id);
 
     await service.request('pause', { id: automation.id, expectedRevision: automation.revision });
-    expect(states).toEqual(['pending', 'omitted']);
-    expect(store.readRun(first.runs[0]!.id)).toMatchObject({
-      state: 'omitted',
-      omission: { reason: 'paused' },
-    });
+    expect(states.every((state) => state === 'pending')).toBe(true);
+    expect(store.readRun(first.runs[0]!.id)).toMatchObject({ state: 'pending', omission: null });
   });
 
   test('serializes worktree pin changes with scheduler cleanup', async () => {
@@ -700,7 +699,7 @@ describe('Automation service serialization', () => {
       .rejects.toThrow('no retained worktree');
   });
 
-  test('rejects Start now while paused and validates configuration before persistence', async () => {
+  test('validates manual execution on a paused task before admitting work', async () => {
     const store = automationStore();
     const now = Date.parse('2026-07-24T09:00:00Z');
     const automation = store.create({ ...definition('20260724T100000'), status: 'paused' }, now);
@@ -710,7 +709,7 @@ describe('Automation service serialization', () => {
       },
     });
 
-    await expect(service.request('startNow', { id: automation.id, requestId: uuidV7() })).rejects.toThrow('Only an active Automation');
+    await expect(service.request('startNow', { id: automation.id, requestId: uuidV7() })).rejects.toThrow('Skills: missing-skill');
     await expect(service.create(definition('20260724T110000'))).rejects.toThrow('Skills: missing-skill');
     expect(store.list()).toHaveLength(1);
   });
@@ -1426,7 +1425,7 @@ describe('Automation worktrees', () => {
     const worktrees = new AutomationWorktree(root);
     const prepared = await prepareWorktree(worktrees, store, claimed);
     store.setWorktree(claimed.id, prepared.worktree!);
-    store.setStatus(automation.id, 'paused', automation.revision, Date.parse('2026-07-24T09:02:00Z'));
+    store.delete(automation.id, automation.revision, Date.parse('2026-07-24T09:02:00Z'));
     expect(store.readRun(claimed.id)?.state).toBe('omitted');
 
     const dispatcher = new AutomationDispatcher({
@@ -1525,7 +1524,7 @@ describe('Automation Project hints', () => {
     const completed = store.completeIfExhausted(automation.id, automation.revision, now)!;
     expect(completed.status).toBe('completed');
     available = false;
-    await expect(service.request('resume', { id: completed.id, expectedRevision: completed.revision })).rejects.toThrow('changing its schedule');
+    expect((await service.request('resume', { id: completed.id, expectedRevision: completed.revision })).automation.status).toBe('completed');
     const update = { id: completed.id, expectedRevision: completed.revision, schedule: definition('20260725T100000').schedule };
     await expect(service.update(update)).rejects.toThrow('Project is missing');
     expect(store.read(completed.id)?.revision).toBe(completed.revision);
@@ -1679,6 +1678,7 @@ interface ThreadHostProbe {
   writeFeatureContext(owner: string, payload: ThreadContextPayload): Promise<ThreadContextPayloadReference>;
   readFeatureContext(owner: string, ref: ThreadContextPayloadReference): Promise<ThreadContextPayload | null>;
   threadRecordPath(threadId: string): Promise<string | null>;
+  pruneFeatureContexts(owner: string, refs: readonly ThreadContextPayloadReference[]): Promise<void>;
 }
 
 function threadHost(
@@ -1703,6 +1703,9 @@ function threadHost(
       const id = createHash('sha256').update(bytes).digest('hex');
       featureContexts.set(`${owner}:${id}`, payload);
       return { id, kind: payload.kind, byteLength: Buffer.byteLength(bytes) };
+    },
+    async pruneFeatureContexts(owner, refs) {
+      for (const key of featureContexts.keys()) if (key.startsWith(`${owner}:`) && !refs.some((ref) => key === `${owner}:${ref.id}`)) featureContexts.delete(key);
     },
     async readFeatureContext(owner, ref) { return featureContexts.get(`${owner}:${ref.id}`) ?? null; },
     persistentThreadExecutionContext(threadId) {

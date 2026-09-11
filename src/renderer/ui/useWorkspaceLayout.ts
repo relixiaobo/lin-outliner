@@ -112,6 +112,7 @@ function viewOutlineRootId(view: PanelView): NodeId | null {
 }
 
 function panelViewKey(view: PanelView): string {
+  if (view.kind === 'scheduled-tasks') return 'scheduled-tasks';
   if (view.kind === 'outliner') return `outliner:${view.rootId}`;
   if (view.kind === 'thread-trajectory') {
     return `thread-trajectory:${view.threadId}:${view.selectedRecordId ?? ''}:${view.turnId ?? ''}`;
@@ -180,6 +181,7 @@ function sanitizeSize(value: unknown): number {
 
 function sanitizePanelView(value: unknown, nodeIds: NodeLookup): PanelView | null {
   if (!isRecord(value) || typeof value.kind !== 'string') return null;
+  if (value.kind === 'scheduled-tasks') return { kind: 'scheduled-tasks' };
   const scrollTop = normalizeScrollTop(value.scrollTop);
   if (value.kind === 'outliner') {
     return typeof value.rootId === 'string' && nodeIds.has(value.rootId)
@@ -762,6 +764,14 @@ export function useWorkspaceLayout({
     focusNode(nodeId);
   }, [canFitPanelCount, focusNode, panels, preparePanelCount, rootId]);
 
+  const openScheduledTasks = useCallback(() => {
+    const targetPanel = panels.find((panel) => panel.id === activePanelId) ?? panels[0];
+    if (!targetPanel) return;
+    setPanels((current) => current.map((panel) => panel.id === targetPanel.id
+      ? navigateWorkspacePanel(panel, { kind: 'scheduled-tasks' }) : panel));
+    clearPreviewNavigationState();
+  }, [panels, activePanelId, clearPreviewNavigationState]);
+
   const openThreadTrajectoryPanel = useCallback((
     threadId: string,
     focus?: { readonly selectedRecordId?: string; readonly turnId?: string },
@@ -836,7 +846,7 @@ export function useWorkspaceLayout({
     const nextScrollTop = normalizeScrollTop(scrollTop);
     setPanels((prev) => prev.map((panel) => {
       if (panel.id !== panelId || !isWorkspacePanel(panel)) return panel;
-      if (panel.view.kind === 'thread-trajectory') return panel;
+      if (panel.view.kind === 'thread-trajectory' || panel.view.kind === 'scheduled-tasks') return panel;
       if (panel.view.scrollTop === nextScrollTop) return panel;
       return { ...panel, view: withScrollTop(panel.view, nextScrollTop) };
     }));
@@ -860,6 +870,7 @@ export function useWorkspaceLayout({
     openPanel,
     openPreview,
     openThreadTrajectoryPanel,
+    openScheduledTasks,
     panels,
     repairInvalidPanelViews,
     resizePanelPair,

@@ -120,6 +120,10 @@ describe('Agent Core clean replacement', () => {
     expect(scheduledAgentModules).toEqual([
       'src/main/agent/automations/AutomationSchedule.ts',
       'src/main/agent/automations/AutomationScheduler.ts',
+      // Scheduling CLI, materials and source resolution extend the existing owner.
+      'src/main/agent/automations/ScheduleCliService.ts',
+      'src/main/agent/automations/ScheduledMaterials.ts',
+      'src/main/agent/automations/ScheduledRunOwnership.ts',
     ]);
   });
 });

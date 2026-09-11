@@ -1,6 +1,8 @@
+import { decodeScheduledMaterials, type ScheduledMaterial } from './scheduledMaterial';
+import { decodeScheduledRunResult, type ScheduledRunResult } from './scheduledResult';
 import { REASONING_EFFORTS, type ReasoningEffort } from './configuration';
 import type { ThreadId, TurnId } from './protocol';
-import { decodeThreadContextPayloadReference } from './codec';
+import { decodeThreadContextPayloadReference, decodeAgentCoreResponse } from './codec';
 import { decodeProject, type Project } from './project';
 
 export const AUTOMATION_DESTINATIONS = ['standalone', 'existingThread'] as const;
@@ -54,7 +56,11 @@ export interface AutomationConfiguration {
   readonly reasoningEffort: ReasoningEffort | null;
 }
 
+export interface AutomationOrigin { readonly threadId: string; readonly turnId: string; readonly itemId: string }
+
 export interface Automation {
+  readonly origin: AutomationOrigin | null;
+  readonly materials: readonly ScheduledMaterial[];
   readonly id: string;
   readonly name: string;
   readonly prompt: string;
@@ -65,11 +71,13 @@ export interface Automation {
   readonly status: AutomationStatus;
   readonly revision: number;
   readonly nextOccurrenceAt: number | null;
+  readonly archivedAt: number | null;
   readonly createdAt: number;
   readonly updatedAt: number;
 }
 
 export interface AutomationRunConfigurationSnapshot {
+  readonly materials: readonly ScheduledMaterial[];
   /** Present exactly for a Project-source claim; captured before it is persisted. */
   readonly projectSnapshot?: Project;
   readonly automationName: string;
@@ -84,7 +92,7 @@ export interface AutomationRunOmission {
   readonly from: number;
   readonly through: number;
   readonly count: number;
-  readonly reason: 'catchUp' | 'overlap' | 'paused' | 'deleted' | 'updated';
+  readonly reason: 'catchUp' | 'overlap' | 'paused' | 'deleted' | 'updated' | 'skipped';
 }
 
 export interface AutomationWorktreeMetadata {
@@ -102,6 +110,7 @@ export interface AutomationRun {
   readonly automationId: string;
   readonly automationRevision: number;
   readonly eventSequence: number;
+  readonly createdSequence: number;
   readonly scheduledFor: number;
   readonly contextHintId: string;
   readonly occurrenceKey: string;
@@ -120,6 +129,8 @@ export interface AutomationRun {
 }
 
 export interface AutomationCreateInput {
+  readonly materials?: readonly ScheduledMaterial[];
+  readonly requestId?: string;
   readonly name: string;
   readonly prompt: string;
   readonly schedule: AutomationSchedule;
@@ -130,6 +141,8 @@ export interface AutomationCreateInput {
 }
 
 export interface AutomationUpdateInput {
+  readonly materials?: readonly ScheduledMaterial[];
+  readonly requestId?: string;
   readonly id: string;
   readonly expectedRevision: number;
   readonly name?: string;
@@ -149,10 +162,12 @@ export interface AutomationListInput {
 export interface AutomationRunListInput {
   readonly automationId?: string;
   readonly unreadOnly?: boolean;
+  readonly before?: string;
   readonly limit?: number;
 }
 
 export type AutomationNotification =
+  | { readonly type: 'automation/open'; readonly automationId: string }
   | { readonly type: 'automation/changed'; readonly automation: Automation | null; readonly automationId: string }
   | { readonly type: 'automationRun/changed'; readonly run: AutomationRun }
   | {
@@ -170,10 +185,23 @@ export interface AutomationRequestByMethod {
   readonly read: { readonly id: string };
   readonly create: AutomationCreateInput;
   readonly update: AutomationUpdateInput;
-  readonly pause: { readonly id: string; readonly expectedRevision?: number };
-  readonly resume: { readonly id: string; readonly expectedRevision?: number };
-  readonly delete: { readonly id: string; readonly expectedRevision?: number };
-  readonly startNow: { readonly id: string; readonly requestId: string };
+  readonly pause: { readonly id: string; readonly expectedRevision?: number; readonly requestId?: string };
+  readonly resume: { readonly id: string; readonly expectedRevision?: number; readonly requestId?: string };
+  readonly delete: { readonly id: string; readonly expectedRevision?: number; readonly requestId?: string };
+  readonly startNow: { readonly id: string; readonly requestId: string; readonly expectedRevision?: number };
+  readonly timing: { readonly id: string };
+  readonly result: { readonly id: string };
+  readonly processes: { readonly id: string };
+  readonly processRead: { readonly id: string; readonly taskId: string };
+  readonly summary: { readonly id: string };
+  readonly preview: AutomationSchedule;
+  readonly runStop: { readonly id: string; readonly requestId: string; readonly taskId?: string };
+  readonly acknowledge: { readonly id: string; readonly issueKey: string; readonly requestId: string };
+  readonly archive: { readonly id: string; readonly expectedRevision: number; readonly requestId: string };
+  readonly restore: { readonly id: string; readonly expectedRevision: number; readonly requestId: string };
+
+  readonly resolveMissed: { readonly id: string; readonly expectedRevision: number; readonly requestId: string;
+    readonly contextHintId: string; readonly scheduledFor: number; readonly resolution: 'fulfilled' | 'skipped' };
   readonly runs: AutomationRunListInput;
   readonly runRead: { readonly id: string };
   readonly runMarkRead: { readonly id: string };
@@ -190,6 +218,17 @@ export type AutomationResponseByMethod = {
   readonly resume: { readonly automation: Automation };
   readonly delete: { readonly deleted: true; readonly id: string };
   readonly startNow: { readonly runs: readonly AutomationRun[] };
+  readonly result: ScheduledRunResult;
+  readonly processes: { readonly data: readonly import('./protocol').ToolTaskProjection[] };
+  readonly processRead: import('./protocol').ToolTaskReadResponse;
+  readonly preview: { readonly nextOccurrenceAt: number | null; readonly referenceInstant: number; readonly defaultWorkLocation: string };
+  readonly summary: { readonly attentionCount: number; readonly latest: ScheduledRunResult | null; readonly current: ScheduledRunResult | null };
+  readonly runStop: ScheduledRunResult;
+  readonly acknowledge: ScheduledRunResult;
+  readonly archive: { readonly automation: Automation };
+  readonly restore: { readonly automation: Automation };
+  readonly timing: { readonly missed: readonly { readonly contextHintId: string; readonly scheduledFor: number }[] };
+  readonly resolveMissed: { readonly run: AutomationRun | null };
   readonly runs: { readonly data: readonly AutomationRun[] };
   readonly runRead: { readonly run: AutomationRun | null };
   readonly runMarkRead: { readonly run: AutomationRun };
@@ -205,7 +244,7 @@ export type AutomationResponseByMethod = {
 export type AutomationMethod = keyof AutomationResponseByMethod;
 export const AUTOMATION_METHODS = [
   'list', 'read', 'create', 'update', 'pause', 'resume', 'delete',
-  'startNow', 'runs', 'runRead', 'runMarkRead', 'runsMarkRead', 'runPin',
+  'processes', 'processRead', 'preview', 'summary', 'runStop', 'result', 'acknowledge', 'archive', 'restore', 'timing', 'resolveMissed', 'startNow', 'runs', 'runRead', 'runMarkRead', 'runsMarkRead', 'runPin',
 ] as const satisfies readonly AutomationMethod[];
 
 export function decodeAutomationRequest<Method extends AutomationMethod>(
@@ -213,6 +252,7 @@ export function decodeAutomationRequest<Method extends AutomationMethod>(
   value: unknown,
 ): AutomationRequestByMethod[Method] {
   switch (method) {
+    case 'preview': return decodeAutomationSchedule(value) as AutomationRequestByMethod[Method];
     case 'list':
       return decodeAutomationListInput(value) as AutomationRequestByMethod[Method];
     case 'create':
@@ -221,6 +261,10 @@ export function decodeAutomationRequest<Method extends AutomationMethod>(
       return decodeAutomationUpdateInput(value) as AutomationRequestByMethod[Method];
     case 'runs':
       return decodeAutomationRunListInput(value) as AutomationRequestByMethod[Method];
+    case 'processes':
+    case 'summary':
+    case 'result':
+    case 'timing':
     case 'read':
     case 'runRead':
     case 'runMarkRead':
@@ -244,10 +288,46 @@ export function decodeAutomationRequest<Method extends AutomationMethod>(
         pinned: booleanValue(record.pinned, 'automation runPin.pinned'),
       }) as AutomationRequestByMethod[Method];
     }
+    case 'processRead': {
+      const record = objectValue(value, method);
+      exactKeys(record, ['id', 'taskId'], method);
+      return { id: uuid(record.id, 'id'), taskId: boundedString(record.taskId, 'taskId', 256) } as AutomationRequestByMethod[Method];
+    }
+    case 'runStop': {
+      const record = objectValue(value, method);
+      exactKeys(record, ['id', 'requestId', 'taskId'], method);
+      return { id: uuid(record.id, 'id'), requestId: boundedString(record.requestId, 'requestId', 256),
+        ...(record.taskId === undefined ? {} : { taskId: boundedString(record.taskId, 'taskId', 256) }) } as AutomationRequestByMethod[Method];
+    }
+    case 'archive':
+    case 'restore': {
+      const record = objectValue(value, method);
+      exactKeys(record, ['id', 'expectedRevision', 'requestId'], method);
+      return { id: uuid(record.id, 'id'), expectedRevision: positiveInteger(record.expectedRevision, 'expectedRevision'),
+        requestId: boundedString(record.requestId, 'requestId', 256) } as AutomationRequestByMethod[Method];
+    }
+    case 'acknowledge': {
+      const record = objectValue(value, method);
+      exactKeys(record, ['id', 'issueKey', 'requestId'], method);
+      return { id: uuid(record.id, 'id'), issueKey: boundedString(record.issueKey, 'issueKey', 64),
+        requestId: boundedString(record.requestId, 'requestId', 256) } as AutomationRequestByMethod[Method];
+    }
+    case 'resolveMissed': {
+      const record = objectValue(value, 'scheduled task missed time');
+      exactKeys(record, ['id', 'expectedRevision', 'requestId', 'contextHintId', 'scheduledFor', 'resolution'], 'scheduled task missed time');
+      return Object.freeze({
+        id: uuid(record.id, 'id'), expectedRevision: positiveInteger(record.expectedRevision, 'expectedRevision'),
+        requestId: boundedString(record.requestId, 'requestId', 256),
+        contextHintId: record.contextHintId === 'default' ? 'default' : uuid(record.contextHintId, 'contextHintId'),
+        scheduledFor: timestamp(record.scheduledFor, 'scheduledFor'),
+        resolution: enumValue(record.resolution, ['fulfilled', 'skipped'] as const, 'resolution'),
+      }) as AutomationRequestByMethod[Method];
+    }
     case 'startNow': {
       const record = objectValue(value, 'automation startNow');
-      exactKeys(record, ['id', 'requestId'], 'automation startNow');
-      return Object.freeze({ id: uuid(record.id, 'automation startNow.id'), requestId: boundedString(record.requestId, 'automation startNow.requestId', 256) }) as AutomationRequestByMethod[Method];
+      exactKeys(record, ['id', 'requestId', 'expectedRevision'], 'automation startNow');
+      return Object.freeze({ id: uuid(record.id, 'automation startNow.id'), requestId: boundedString(record.requestId, 'automation startNow.requestId', 256),
+        ...(record.expectedRevision === undefined ? {} : { expectedRevision: positiveInteger(record.expectedRevision, 'automation startNow.expectedRevision') }) }) as AutomationRequestByMethod[Method];
     }
   }
 }
@@ -259,6 +339,20 @@ export function decodeAutomationResponse<Method extends AutomationMethod>(
   const path = `automation response ${method}`;
   const record = objectValue(value, path);
   switch (method) {
+    case 'processes': return decodeAgentCoreResponse('thread/tasks/list', value) as AutomationResponseByMethod[Method];
+    case 'processRead': return decodeAgentCoreResponse('task/read', value) as AutomationResponseByMethod[Method];
+    case 'preview':
+      exactKeys(record, ['nextOccurrenceAt', 'referenceInstant', 'defaultWorkLocation'], path);
+      return { nextOccurrenceAt: nullableTimestamp(record.nextOccurrenceAt, 'nextOccurrenceAt'),
+        referenceInstant: timestamp(record.referenceInstant, 'referenceInstant'), defaultWorkLocation: nonEmptyString(record.defaultWorkLocation, 'defaultWorkLocation') } as AutomationResponseByMethod[Method];
+    case 'summary':
+      exactKeys(record, ['attentionCount', 'latest', 'current'], path);
+      return { current: record.current === null ? null : decodeScheduledRunResult(record.current), attentionCount: nonNegativeInteger(record.attentionCount, 'attentionCount'),
+        latest: record.latest === null ? null : decodeScheduledRunResult(record.latest) } as AutomationResponseByMethod[Method];
+    case 'result':
+    case 'runStop':
+    case 'acknowledge':
+      return decodeScheduledRunResult(value) as AutomationResponseByMethod[Method];
     case 'list':
       exactKeys(record, ['data'], path);
       return Object.freeze({ data: decodeArray(record.data, `${path}.data`, decodeAutomation) }) as AutomationResponseByMethod[Method];
@@ -267,6 +361,8 @@ export function decodeAutomationResponse<Method extends AutomationMethod>(
       return Object.freeze({
         automation: record.automation === null ? null : decodeAutomation(record.automation, `${path}.automation`),
       }) as AutomationResponseByMethod[Method];
+    case 'archive':
+    case 'restore':
     case 'create':
     case 'update':
     case 'pause':
@@ -292,6 +388,15 @@ export function decodeAutomationResponse<Method extends AutomationMethod>(
       return Object.freeze({
         data: decodeArray(record.data, `${path}.data`, decodeAutomationRun),
       }) as AutomationResponseByMethod[Method];
+    case 'timing':
+      exactKeys(record, ['missed'], path);
+      return { missed: decodeArray(record.missed, `${path}.missed`, (entry) => {
+        const missed = objectValue(entry, path);
+        exactKeys(missed, ['contextHintId', 'scheduledFor'], path);
+        return { contextHintId: missed.contextHintId === 'default' ? 'default' : uuid(missed.contextHintId, 'contextHintId'),
+          scheduledFor: timestamp(missed.scheduledFor, 'scheduledFor') };
+      }) } as AutomationResponseByMethod[Method];
+    case 'resolveMissed':
     case 'runRead':
       exactKeys(record, ['run'], path);
       return Object.freeze({
@@ -317,6 +422,10 @@ export function decodeAutomationResponse<Method extends AutomationMethod>(
 export function decodeAutomationNotification(value: unknown): AutomationNotification {
   const path = 'automation notification';
   const record = objectValue(value, path);
+  if (record.type === 'automation/open') {
+    exactKeys(record, ['type', 'automationId'], path);
+    return { type: 'automation/open', automationId: uuid(record.automationId, 'automationId') };
+  }
   if (record.type === 'automation/changed') {
     exactKeys(record, ['type', 'automation', 'automationId'], path);
     const automationId = uuid(record.automationId, `${path}.automationId`);
@@ -350,18 +459,26 @@ export function decodeAutomationNotification(value: unknown): AutomationNotifica
 export function decodeAutomation(value: unknown, path = 'automation'): Automation {
   const record = objectValue(value, path);
   exactKeys(record, [
-    'id', 'name', 'prompt', 'schedule', 'destination', 'contextHints', 'configuration',
-    'status', 'revision', 'nextOccurrenceAt', 'createdAt', 'updatedAt',
+    'id', 'name', 'prompt', 'schedule', 'destination', 'contextHints', 'configuration', 'materials', 'origin',
+    'status', 'revision', 'nextOccurrenceAt', 'archivedAt', 'createdAt', 'updatedAt',
   ], path);
   const destination = decodeAutomationDestination(record.destination, `${path}.destination`);
   const contextHints = decodeContextHints(record.contextHints, `${path}.contextHints`);
   assertDestinationBindings(destination, contextHints, path);
   const createdAt = timestamp(record.createdAt, `${path}.createdAt`);
   const updatedAt = timestamp(record.updatedAt, `${path}.updatedAt`);
+  let origin: AutomationOrigin | null = null;
+  if (record.origin !== null) {
+    const source = objectValue(record.origin, 'origin');
+    exactKeys(source, ['threadId', 'turnId', 'itemId'], 'origin');
+    origin = { threadId: uuid(source.threadId, 'origin.threadId'), turnId: uuid(source.turnId, 'origin.turnId'), itemId: boundedString(source.itemId, 'origin.itemId', 256) };
+  }
   return Object.freeze({
+    origin,
     id: uuid(record.id, `${path}.id`),
     name: boundedString(record.name, `${path}.name`, AUTOMATION_NAME_MAX_LENGTH),
     prompt: boundedString(record.prompt, `${path}.prompt`, AUTOMATION_PROMPT_MAX_LENGTH),
+    materials: decodeScheduledMaterials(record.materials),
     schedule: decodeAutomationSchedule(record.schedule, `${path}.schedule`),
     destination,
     contextHints,
@@ -369,6 +486,7 @@ export function decodeAutomation(value: unknown, path = 'automation'): Automatio
     status: enumValue(record.status, AUTOMATION_STATUSES, `${path}.status`),
     revision: positiveInteger(record.revision, `${path}.revision`),
     nextOccurrenceAt: nullableTimestamp(record.nextOccurrenceAt, `${path}.nextOccurrenceAt`),
+    archivedAt: nullableTimestamp(record.archivedAt, `${path}.archivedAt`),
     createdAt,
     updatedAt,
   });
@@ -377,7 +495,7 @@ export function decodeAutomation(value: unknown, path = 'automation'): Automatio
 export function decodeAutomationRun(value: unknown, path = 'automationRun'): AutomationRun {
   const record = objectValue(value, path);
   exactKeys(record, [
-    'id', 'automationId', 'automationRevision', 'eventSequence', 'scheduledFor', 'contextHintId',
+    'id', 'automationId', 'automationRevision', 'eventSequence', 'createdSequence', 'scheduledFor', 'contextHintId',
     'snapshot', 'state', 'threadId', 'turnId', 'worktree', 'omission', 'error',
     'readAt', 'pinned', 'createdAt', 'updatedAt', 'occurrenceKey', 'dispatchSnapshotRef',
   ], path);
@@ -431,6 +549,7 @@ export function decodeAutomationRun(value: unknown, path = 'automationRun'): Aut
     automationId: uuid(record.automationId, `${path}.automationId`),
     automationRevision: positiveInteger(record.automationRevision, `${path}.automationRevision`),
     eventSequence: positiveInteger(record.eventSequence, `${path}.eventSequence`),
+    createdSequence: positiveInteger(record.createdSequence, `${path}.createdSequence`),
     scheduledFor: timestamp(record.scheduledFor, `${path}.scheduledFor`),
     contextHintId,
     occurrenceKey: boundedString(record.occurrenceKey, `${path}.occurrenceKey`, 256),
@@ -459,7 +578,7 @@ export const EMPTY_AUTOMATION_CONFIGURATION: AutomationConfiguration = Object.fr
 export function decodeAutomationCreateInput(value: unknown): AutomationCreateInput {
   const record = objectValue(value, 'automation create');
   exactKeys(record, [
-    'name', 'prompt', 'schedule', 'destination', 'contextHints', 'configuration', 'status',
+    'name', 'prompt', 'schedule', 'destination', 'contextHints', 'configuration', 'status', 'requestId', 'materials',
   ], 'automation create');
   const status = record.status === undefined
     ? undefined
@@ -470,6 +589,8 @@ export function decodeAutomationCreateInput(value: unknown): AutomationCreateInp
     : decodeContextHintInputs(record.contextHints, 'automation create.contextHints');
   assertDestinationBindings(destination, contextHints ?? [], 'automation create');
   return Object.freeze({
+    ...(record.materials === undefined ? {} : { materials: decodeScheduledMaterials(record.materials) }),
+    ...(record.requestId === undefined ? {} : { requestId: boundedString(record.requestId, 'requestId', 256) }),
     name: boundedString(record.name, 'automation create.name', AUTOMATION_NAME_MAX_LENGTH),
     prompt: boundedString(record.prompt, 'automation create.prompt', AUTOMATION_PROMPT_MAX_LENGTH),
     schedule: decodeAutomationSchedule(record.schedule, 'automation create.schedule'),
@@ -485,9 +606,11 @@ export function decodeAutomationCreateInput(value: unknown): AutomationCreateInp
 export function decodeAutomationUpdateInput(value: unknown): AutomationUpdateInput {
   const record = objectValue(value, 'automation update');
   exactKeys(record, [
-    'id', 'expectedRevision', 'name', 'prompt', 'schedule', 'destination', 'contextHints', 'configuration', 'status',
+    'id', 'expectedRevision', 'name', 'prompt', 'schedule', 'destination', 'contextHints', 'configuration', 'status', 'requestId', 'materials',
   ], 'automation update');
   const result: AutomationUpdateInput = {
+    ...(record.materials === undefined ? {} : { materials: decodeScheduledMaterials(record.materials) }),
+    ...(record.requestId === undefined ? {} : { requestId: boundedString(record.requestId, 'requestId', 256) }),
     id: uuid(record.id, 'automation update.id'),
     expectedRevision: positiveInteger(record.expectedRevision, 'automation update.expectedRevision'),
     ...(record.name === undefined
@@ -512,65 +635,8 @@ export function decodeAutomationUpdateInput(value: unknown): AutomationUpdateInp
       ? {}
       : { status: enumValue(record.status, ['active', 'paused'] as const, 'automation update.status') }),
   };
-  if (Object.keys(result).length === 2) throw new Error('automation update must change at least one field');
+  if (Object.keys(result).filter((key) => key !== 'requestId').length === 2) throw new Error('automation update must change at least one field');
   return Object.freeze(result);
-}
-
-/**
- * Model-facing `automation_update` input. The provider schema states the same
- * per-mode field sets, but a Turn's arguments are model output: the write
- * boundary decodes them here, beside the decoders the renderer path uses, so
- * one rejection message and one set of bounds serve both callers.
- */
-export type AutomationToolCommand =
-  | { readonly mode: 'create'; readonly create: AutomationCreateInput }
-  | { readonly mode: 'update'; readonly update: AutomationUpdateInput }
-  | { readonly mode: 'view'; readonly id: string | null }
-  | { readonly mode: 'delete'; readonly id: string; readonly expectedRevision: number };
-
-const AUTOMATION_PATCH_FIELDS = [
-  'name', 'prompt', 'schedule', 'destination', 'contextHints', 'configuration', 'status',
-] as const;
-
-export function decodeAutomationToolInput(value: unknown): AutomationToolCommand {
-  const path = 'automation_update';
-  const record = objectValue(value, path);
-  const mode = enumValue(record.mode, ['create', 'update', 'view', 'delete'] as const, `${path}.mode`);
-  switch (mode) {
-    case 'create':
-      exactKeys(record, ['mode', 'definition'], path);
-      return Object.freeze({ mode, create: decodeAutomationCreateInput(record.definition) });
-    case 'update': {
-      exactKeys(record, ['mode', 'automation_id', 'expected_revision', 'patch'], path);
-      // A patch carries changes, never identity: it may not name the Automation
-      // it addresses or the revision it is checked against, and the addressed id
-      // is applied after it, so neither layer can be talked into updating one
-      // Automation under another's optimistic-concurrency check.
-      const patch = objectValue(record.patch, `${path}.patch`);
-      exactKeys(patch, AUTOMATION_PATCH_FIELDS, `${path}.patch`);
-      return Object.freeze({
-        mode,
-        update: decodeAutomationUpdateInput({
-          ...patch,
-          id: uuid(record.automation_id, `${path}.automation_id`),
-          expectedRevision: positiveInteger(record.expected_revision, `${path}.expected_revision`),
-        }),
-      });
-    }
-    case 'view':
-      exactKeys(record, ['mode', 'automation_id'], path);
-      return Object.freeze({
-        mode,
-        id: record.automation_id === undefined ? null : uuid(record.automation_id, `${path}.automation_id`),
-      });
-    case 'delete':
-      exactKeys(record, ['mode', 'automation_id', 'expected_revision'], path);
-      return Object.freeze({
-        mode,
-        id: uuid(record.automation_id, `${path}.automation_id`),
-        expectedRevision: positiveInteger(record.expected_revision, `${path}.expected_revision`),
-      });
-  }
 }
 
 export function decodeAutomationSchedule(value: unknown, path = 'schedule'): AutomationSchedule {
@@ -614,8 +680,9 @@ export function decodeAutomationListInput(value: unknown): AutomationListInput {
 export function decodeAutomationRunListInput(value: unknown): AutomationRunListInput {
   if (value === undefined) return Object.freeze({});
   const record = objectValue(value, 'automation run list');
-  exactKeys(record, ['automationId', 'unreadOnly', 'limit'], 'automation run list');
+  exactKeys(record, ['automationId', 'unreadOnly', 'limit', 'before'], 'automation run list');
   return Object.freeze({
+    ...(record.before === undefined ? {} : { before: uuid(record.before, 'before') }),
     ...(record.automationId === undefined
       ? {}
       : { automationId: uuid(record.automationId, 'automation run list.automationId') }),
@@ -671,7 +738,7 @@ function decodeContextHintInputs(value: unknown, path: string): readonly Automat
 function decodeRunSnapshot(value: unknown, path: string): AutomationRunConfigurationSnapshot {
   const record = objectValue(value, path);
   exactKeys(record, [
-    'automationName', 'prompt', 'schedule', 'destination', 'contextHint', 'configuration', 'projectSnapshot',
+    'automationName', 'prompt', 'schedule', 'destination', 'contextHint', 'configuration', 'projectSnapshot', 'materials',
   ], path);
   const destination = decodeAutomationDestination(record.destination, `${path}.destination`);
   const contextHint = record.contextHint === null
@@ -686,6 +753,7 @@ function decodeRunSnapshot(value: unknown, path: string): AutomationRunConfigura
     ...(projectSnapshot ? { projectSnapshot } : {}),
     automationName: boundedString(record.automationName, `${path}.automationName`, AUTOMATION_NAME_MAX_LENGTH),
     prompt: boundedString(record.prompt, `${path}.prompt`, AUTOMATION_PROMPT_MAX_LENGTH),
+    materials: decodeScheduledMaterials(record.materials),
     schedule: decodeAutomationSchedule(record.schedule, `${path}.schedule`),
     destination,
     contextHint,
@@ -727,7 +795,7 @@ function decodeOmission(value: unknown, path: string): AutomationRunOmission {
     from,
     through,
     count: positiveInteger(record.count, `${path}.count`),
-    reason: enumValue(record.reason, ['catchUp', 'overlap', 'paused', 'deleted', 'updated'] as const, `${path}.reason`),
+    reason: enumValue(record.reason, ['catchUp', 'overlap', 'paused', 'deleted', 'updated', 'skipped'] as const, `${path}.reason`),
   });
 }
 
@@ -749,10 +817,11 @@ function decodeIdRequest(value: unknown, path: string): { readonly id: string } 
 function decodeRevisionedIdRequest(
   value: unknown,
   path: string,
-): { readonly id: string; readonly expectedRevision?: number } {
+): { readonly id: string; readonly expectedRevision?: number; readonly requestId?: string } {
   const record = objectValue(value, path);
-  exactKeys(record, ['id', 'expectedRevision'], path);
+  exactKeys(record, ['id', 'expectedRevision', 'requestId'], path);
   return Object.freeze({
+    ...(record.requestId === undefined ? {} : { requestId: boundedString(record.requestId, 'requestId', 256) }),
     id: uuid(record.id, `${path}.id`),
     ...(record.expectedRevision === undefined
       ? {}

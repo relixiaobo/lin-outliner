@@ -928,6 +928,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       const mockGoals = new Map<string, unknown>();
       const mockToolTasks = new Map<string, Record<string, unknown>>();
     type MockAutomation = {
+      archivedAt: number | null;
+      materials: Array<{ kind: string; reference: string; required: boolean }>;
       id: string;
       name: string;
       prompt: string;
@@ -946,6 +948,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       updatedAt: number;
     };
     type MockAutomationRun = {
+      createdSequence: number;
       id: string;
       automationId: string;
       automationRevision: number;
@@ -3834,6 +3837,27 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       },
       automationRequest: async <T,>(method: string, input: Record<string, unknown> = {}): Promise<T> => {
         calls.push({ cmd: `automation/${method}`, args: clone(input) });
+        if (method === 'preview') return clone({ nextOccurrenceAt: Date.now() + 3_600_000, referenceInstant: Date.now(), defaultWorkLocation: '/mock/workspace' }) as T;
+        if (method === 'timing') return { missed: [] } as T;
+        if (method === 'processes') return { data: [] } as T;
+        if (method === 'summary' || method === 'result') {
+          const run = method === 'result' ? mockAutomationRuns.find((run) => run.id === input.id)
+            : mockAutomationRuns.filter((run) => run.automationId === input.id).at(-1);
+          const result = run ? { run, state: 'completed', answer: 'The scheduled review was delivered.',
+            parts: [{ text: 'The scheduled review was delivered.', itemId: 'mock-answer', turnId: run.turnId, finalCitations: [] }], answerTruncated: false,
+            resultTurnId: run.turnId, startedAt: run.createdAt, finishedAt: run.createdAt + 20,
+            recordPath: '/mock/record.md', issue: null, issueKey: null, acknowledged: false } : null;
+          return clone(method === 'summary' ? { attentionCount: 0, latest: result, current: null } : result) as T;
+        }
+        if (method === 'archive' || method === 'restore') {
+          const task = mockAutomations.find((task) => task.id === input.id);
+          if (!task || task.revision !== input.expectedRevision) throw new Error('Task revision conflict');
+          task.archivedAt = method === 'archive' ? ++now : null;
+          if (method === 'restore') task.status = 'paused';
+          task.revision++; task.updatedAt = ++now;
+          emitAutomationNotification({ type: 'automation/changed', automationId: task.id, automation: task });
+          return clone({ automation: task }) as T;
+        }
         if (method === 'list') return clone({ data: mockAutomations }) as T;
         if (method === 'runs') {
           let runs = mockAutomationRuns.filter((run) => (
@@ -3844,6 +3868,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               run.readAt === null && (run.state === 'dispatched' || run.state === 'failed')
             ));
           }
+          runs.sort((a, b) => b.createdAt - a.createdAt || b.id.localeCompare(a.id));
+          if (typeof input.before === 'string') { const index = runs.findIndex((run) => run.id === input.before); if (index >= 0) runs = runs.slice(index + 1); }
           const limit = typeof input.limit === 'number' ? input.limit : 100;
           return clone({ data: runs.slice(0, limit) }) as T;
         }
@@ -3858,6 +3884,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             id: nextCanonicalId(),
             name: String(input.name),
             prompt: String(input.prompt),
+            archivedAt: null, materials: clone(input.materials ?? []) as MockAutomation['materials'],
             schedule,
             destination: clone(input.destination) as MockAutomation['destination'],
             contextHints: clone(input.contextHints ?? []) as MockAutomation['contextHints'],
@@ -3899,6 +3926,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         if (method === 'pause' || method === 'resume') {
           const automation = mockAutomations.find((item) => item.id === input.id);
           if (!automation) throw new Error(`Automation not found: ${String(input.id)}`);
+          if (input.expectedRevision !== automation.revision) throw new Error('Task revision conflict');
           automation.status = method === 'pause' ? 'paused' : 'active';
           automation.revision += 1;
           automation.updatedAt = ++now;
@@ -3976,6 +4004,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             automationId: automation.id,
             automationRevision: automation.revision,
             eventSequence: ++automationRunEventSequence,
+            createdSequence: automationRunEventSequence,
             scheduledFor: timestamp,
             contextHintId: 'no-project',
             snapshot: {

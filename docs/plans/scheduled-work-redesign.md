@@ -99,7 +99,7 @@ in the same complete feature. It adds no replacement model tool.
 - **TRD-1:** A task has one primary work location. Several explicit reference
   materials are supported. Separate locations requiring separate executions use
   separate tasks rather than a hidden fan-out multiplier.
-- **TRD-2:** Each run receives a task brief and bounded continuity. A permanently
+- **TRD-2:** Each invocation receives a task brief and bounded continuity. A permanently
   growing conversation is not the task's memory or configuration authority.
 - **EVD-1:** The user requested a clean-slate product and interaction design and
   specifically required consideration of recent related iterations.
@@ -163,7 +163,7 @@ Missing material never expands the work location or substitutes another source.
 The brief is an instruction scope, not a new filesystem permission boundary.
 Normal configured capabilities and actual execution policies remain authoritative.
 
-Each run receives the captured brief, configured instructions/capabilities, a
+Each invocation receives the captured brief, configured instructions/capabilities, a
 bounded pointer to the latest eligible delivered result of the same task, and
 unresolved issue pointers. Selection is deterministic by accepted-run order; it
 does not require a new model pass to decide relevance. Changed brief/material/work

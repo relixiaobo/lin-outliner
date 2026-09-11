@@ -46,6 +46,7 @@ export interface DelegateCapabilityPolicyBinding {
 
 export type DelegateCapabilitySessionBinding =
   | { readonly kind: 'project' }
+  | { readonly kind: 'schedule' }
   | { readonly kind: 'run'; readonly preallocatedSessionId: string }
   | {
     readonly kind: 'send';

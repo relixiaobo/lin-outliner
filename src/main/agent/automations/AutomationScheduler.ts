@@ -1,6 +1,6 @@
 import type { Automation, AutomationRun } from '../../../core/agent/automation';
 import { Mutex } from '../Mutex';
-import { automationOccurrencesBetween, nextAutomationOccurrence } from './AutomationSchedule';
+import { automationOccurrencesBetween, isOneOffAutomationSchedule, nextAutomationOccurrence } from './AutomationSchedule';
 import { AutomationDispatcher, contextHintForRun } from './AutomationDispatcher';
 import { AutomationStore } from './AutomationStore';
 
@@ -13,6 +13,7 @@ export interface AutomationSchedulerOptions {
   readonly onAutomationChanged?: (automation: Automation) => void | Promise<void>;
   readonly onRunChanged?: (run: AutomationRun) => void | Promise<void>;
   readonly now?: () => number;
+  readonly monotonicNow?: () => number;
   readonly setTimer?: (callback: () => void, delay: number) => number | NodeJS.Timeout;
   readonly clearTimer?: (timer: number | NodeJS.Timeout) => void;
   readonly onError?: (error: unknown) => void;
@@ -24,6 +25,7 @@ export class AutomationScheduler {
   private timer: number | NodeJS.Timeout | null = null;
   private running = false;
   private stopped = false;
+  private lastClock: { wall: number; monotonic: number } | null = null;
 
   constructor(private readonly options: AutomationSchedulerOptions) {
     this.now = options.now ?? Date.now;
@@ -34,7 +36,7 @@ export class AutomationScheduler {
     this.stopped = false;
     this.running = true;
     try {
-      await this.wake();
+      await this.wake('unavailable');
     } catch (error) {
       this.stopped = true;
       this.running = false;
@@ -50,17 +52,22 @@ export class AutomationScheduler {
     await this.mutex.run(async () => undefined);
   }
 
-  wake(): Promise<void> {
+  wake(reason: 'normal' | 'unavailable' = 'normal'): Promise<void> {
     if (this.stopped) return Promise.resolve();
     return this.runExclusive(async () => {
       if (this.stopped) return;
       this.clearWakeTimer();
       let needsImmediateContinuation = false;
       try {
-        await this.options.dispatcher.reconcile();
         const now = this.now();
+        const monotonic = (this.options.monotonicNow ?? (() => performance.now()))();
+        const jumpedForward = this.lastClock !== null
+          && (now - this.lastClock.wall) - (monotonic - this.lastClock.monotonic) > 5_000;
+        const unavailableThrough = reason === 'unavailable' || jumpedForward ? now : null;
+        this.lastClock = { wall: now, monotonic };
+        await this.options.dispatcher.reconcile();
         for (const automation of this.options.store.list({ statuses: ['active'] }, now)) {
-          const outcome = await this.evaluateAutomation(automation, now);
+          const outcome = await this.evaluateAutomation(automation, now, unavailableThrough);
           needsImmediateContinuation ||= outcome.truncated;
         }
         await this.options.dispatcher.cleanupRetainedWorktrees();
@@ -74,14 +81,34 @@ export class AutomationScheduler {
     return this.mutex.run(async () => operation());
   }
 
+  admitContinuation(automationRunId: string, operation: () => Promise<boolean>): Promise<boolean> {
+    return this.runExclusive(async () => {
+      if (this.stopped) return false;
+      const owner = this.options.store.readRun(automationRunId);
+      if (!owner || owner.state !== 'dispatched') return false;
+      if (this.options.store.allRunsForAutomation(owner.automationId)
+        .some((run) => run.id !== owner.id && this.options.dispatcher.isRunActive(run))) return false;
+      return operation();
+    });
+  }
+
   private async evaluateAutomation(
     automation: Automation,
     through: number,
+    unavailableThrough: number | null,
   ): Promise<{ readonly truncated: boolean }> {
     let truncated = false;
     for (const cursor of this.options.store.bindingCursors(automation)) {
       const binding = contextHintForRun(automation, cursor.contextHintKey);
-      const unsettled = this.options.store.latestUnsettledRun(automation.id, cursor.contextHintKey);
+      const next = nextAutomationOccurrence(automation.schedule, cursor.evaluatedThrough);
+      if (unavailableThrough !== null && next !== null && next < unavailableThrough
+        && isOneOffAutomationSchedule(automation.schedule) && !cursor.overlapDeferred) {
+        this.options.store.recordMissedOccurrence(automation, binding, next, cursor.evaluatedThrough);
+        await this.options.onAutomationChanged?.(automation);
+        continue;
+      }
+      const unsettled = this.options.store.allRunsForAutomation(automation.id)
+        .find((run) => this.options.dispatcher.isRunActive(run));
       if (unsettled && this.options.dispatcher.isRunActive(unsettled)) {
         const next = nextAutomationOccurrence(automation.schedule, cursor.evaluatedThrough);
         if (next !== null && next <= through) {

@@ -4,6 +4,12 @@ A Skill is a local `SKILL.md` instruction bundle selected by Thread
 configuration. Skills add reusable procedural guidance; they do not create a new
 execution entity or capability authority.
 
+The resource-backed `scheduling` Skill teaches the packaged `schedule` CLI,
+literal Bash stdin, revision-aware edits, durable request receipts and exact
+result handoff. It is loaded on demand and owns no timer or assignment file.
+Its resource is staged by the same built-in packaging workflow; Host authority
+remains independent of Skill discovery. See [Scheduled tasks](agent-automations.md).
+
 ## Sources And Identity
 
 Skills are instruction packages discovered from four ordered sources:

@@ -1,3 +1,4 @@
+import { checkScheduledMaterials, scheduledMaterialInstructions } from './ScheduledMaterials';
 import { realpath } from 'node:fs/promises';
 import { automationDirectoryHint } from '../../../core/agent/automation';
 import type { AutomationDispatchContextPayload } from '../../../core/agent/protocol';
@@ -27,6 +28,7 @@ export interface ResolvedAutomationConfiguration {
 
 export interface AutomationDispatcherOptions {
   readonly canDispatch?: () => boolean;
+  readonly holdsForegroundSlot?: (run: AutomationRun) => boolean;
   readonly store: AutomationStore;
   readonly threads: ThreadService;
   readonly worktrees: AutomationWorktree;
@@ -97,8 +99,22 @@ export class AutomationDispatcher {
     let featureThreadCreated = false;
     let acceptedTurn = false;
     try {
-      let prepared = current;
+      let prepared = this.options.store.refreshPendingBrief(current.id, this.now());
+      if (current.worktree && JSON.stringify(current.snapshot.contextHint) !== JSON.stringify(prepared.snapshot.contextHint)) {
+        await this.options.worktrees.snapshotAndRemove(current.worktree, async (metadata) => {
+          this.options.store.setWorktree(current.id, metadata, this.now());
+        });
+        prepared = this.options.store.setWorktree(current.id, null, this.now());
+      }
+      if (current.dispatchSnapshotRef && !prepared.dispatchSnapshotRef) {
+        // Reconciliation above proved this preparation has no accepted Turn.
+        await this.options.threads.pruneFeatureContexts(prepared.id, []);
+        if (prepared.snapshot.destination.kind === 'standalone' && prepared.threadId) {
+          await this.options.threads.deleteThread(prepared.threadId);
+        }
+      }
       const snapshot = prepared.snapshot;
+      const materialWarnings = await checkScheduledMaterials(snapshot.materials, (id) => this.options.threads.scheduledNoteAvailable(id));
       let dispatchContext: AutomationDispatchContextPayload;
       if (prepared.dispatchSnapshotRef) {
         const stored = await this.options.threads.readFeatureContext(prepared.id, prepared.dispatchSnapshotRef);
@@ -188,7 +204,8 @@ export class AutomationDispatcher {
       }
       const turn = await this.options.threads.tryStartTurnIfIdle({
         threadId: thread.id,
-        input: [{ type: 'text', text: snapshot.prompt }],
+        input: [{ type: 'text', text: snapshot.prompt + scheduledMaterialInstructions(snapshot.materials)
+          + (materialWarnings.length ? `\nOptional material availability at admission: ${JSON.stringify(materialWarnings)}` : '') }],
         clientUserMessageId: prepared.id,
         initialContext: { storageOwner: prepared.id, refs: [prepared.dispatchSnapshotRef!] },
         author: { kind: 'feature', feature: 'automation', ref: prepared.id },
@@ -220,6 +237,7 @@ export class AutomationDispatcher {
   isRunActive(run: AutomationRun): boolean {
     if (run.state === 'pending') return true;
     if (run.state !== 'dispatched' || !run.threadId || !run.turnId) return false;
+    if (this.options.holdsForegroundSlot?.(run)) return true;
     const turn = this.options.threads.readTurnForHost(run.threadId, run.turnId);
     return Boolean(
       turn

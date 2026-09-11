@@ -3687,7 +3687,7 @@ export function decodeThreadResourceReference(
   });
 }
 
-function decodeAgentFinalCitationBinding(value: unknown, field: string) {
+export function decodeAgentFinalCitationBinding(value: unknown, field: string) {
   const record = recordValue(value, field);
   exactKeys(record, [
     'markerOrdinal',

@@ -115,7 +115,7 @@ Pane (outline panel):
 
 A document or outline view inside the canvas — the single canvas primitive.
 Panes are tiled in a single row. They may be resizable, but they do not overlap.
-A pane hosts an outliner, file-preview, or Trajectory view. All tile
+A pane hosts an outliner, file-preview, Trajectory, or Scheduled tasks view. All tile
 identically and share the same per-pane navigation history.
 
 Agent dock:
@@ -219,7 +219,9 @@ type PreviewTarget =
 
 type PanelView =
   | { kind: 'outliner'; rootId: NodeId; scrollTop?: number }
-  | { kind: 'file-preview'; target: PreviewTarget; nodeId?: NodeId; presentation?: 'reader'; scrollTop?: number };
+  | { kind: 'file-preview'; target: PreviewTarget; nodeId?: NodeId; presentation?: 'reader'; scrollTop?: number }
+  | { kind: 'thread-trajectory'; threadId: string; turnId?: string; selectedRecordId?: string }
+  | { kind: 'scheduled-tasks' };
 
 interface WorkspaceContentPanelState extends WorkspacePanelBase {
   type: 'workspace';
@@ -1305,3 +1307,13 @@ User asks agent to rewrite selected node
 - Do not introduce arbitrary pane z-order; there is no overlapping-windows need.
 - Keep agent state and sidebar state outside the layout.
 - Route all overlays through the shared overlay host.
+
+### Scheduled tasks workspace
+
+The persistent sidebar entry opens a `scheduled-tasks` panel view through normal
+per-pane navigation. The shared breadcrumb owns Back, close and pane dragging;
+viewing an exact run opens its canonical Thread/Turn Trajectory and Back returns
+to the task workspace. The task list and result detail use list/detail navigation
+below 720 logical pane pixels. The Agent dock remains an independent peer for
+result discussion. Configuration uses a modal sheet with shared focus/dirty-close
+behavior. The domain contract is [Scheduled tasks](agent-automations.md).

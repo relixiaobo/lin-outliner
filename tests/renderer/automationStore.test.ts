@@ -11,7 +11,6 @@ import {
   isAutomationScheduleDraftValid,
   scheduleModeFromRrule,
 } from '../../src/renderer/agent/automations/AutomationScheduleDraft';
-import { clampAutomationDrawerHeight } from '../../src/renderer/agent/automations/AutomationDrawerResize';
 import {
   AutomationRendererStore,
   type AutomationStoreClient,
@@ -368,11 +367,7 @@ describe('renderer Automation store', () => {
     }
   });
 
-  test('clamps the Automation drawer to its available height', () => {
-    expect(clampAutomationDrawerHeight(200, 800)).toBe(360);
-    expect(clampAutomationDrawerHeight(900, 800)).toBe(800);
-    expect(clampAutomationDrawerHeight(300, 280)).toBe(280);
-  });
+
 });
 
 function createInput(): AutomationCreateInput {
@@ -387,6 +382,7 @@ function createInput(): AutomationCreateInput {
 
 function automation(id: string, updatedAt: number): Automation {
   return {
+    origin: null, materials: [], archivedAt: null,
     id,
     name: `Automation ${updatedAt}`,
     prompt: 'Review the project.',
@@ -411,10 +407,14 @@ function run(owner: Automation, id: string, scheduledFor: number): AutomationRun
     id,
     automationId: owner.id,
     automationRevision: owner.revision,
+    createdSequence: scheduledFor,
     eventSequence: scheduledFor,
     scheduledFor,
-    contextHintId: 'no-project',
+    contextHintId: 'default',
+    occurrenceKey: `manual:${id}`,
+    dispatchSnapshotRef: null,
     snapshot: {
+      materials: owner.materials,
       automationName: owner.name,
       prompt: owner.prompt,
       schedule: owner.schedule,

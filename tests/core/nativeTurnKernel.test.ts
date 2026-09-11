@@ -32,7 +32,6 @@ import { Database } from 'bun:sqlite';
 import { ToolTaskService } from '../../src/main/agent/tasks/ToolTaskService';
 import { ToolTaskStore } from '../../src/main/agent/tasks/ToolTaskStore';
 import type { SqliteDatabase } from '../../src/main/agent/persistence/sqlite';
-import { createAutomationTool } from '../../src/main/agent/automations/AutomationTool';
 import type { AutomationService } from '../../src/main/agent/automations/AutomationService';
 import { AgentToolFailure } from '../../src/main/agent/AgentToolFailure';
 import type { ThreadService } from '../../src/main/agent/ThreadService';
@@ -690,15 +689,6 @@ describe('native turn kernel parity', () => {
       capabilityTools: () => [],
       capabilityConfig: { blocks: [] },
     }).createTools(context);
-    const automationTool = createAutomationTool({
-      update: async () => {
-        throw new AgentToolFailure(
-          'automation_revision_conflict',
-          'Automation revision conflict: expected current revision 2',
-          'View the Automation and retry with its current revision.',
-        );
-      },
-    } as unknown as AutomationService);
     const fixtures = [{
       tool: controlTools.find((candidate) => candidate.name === 'task_stop')!,
       arguments: { task_id: 'missing-task' },
@@ -709,16 +699,6 @@ describe('native turn kernel parity', () => {
       arguments: { objective: 'Existing objective' },
       code: 'goal_already_exists',
       instructions: 'Call get_goal and continue the existing Goal.',
-    }, {
-      tool: automationTool,
-      arguments: {
-        mode: 'update',
-        automation_id: '01930000-0000-7000-8000-000000000001',
-        expected_revision: 1,
-        patch: { name: 'Renamed' },
-      },
-      code: 'automation_revision_conflict',
-      instructions: 'View the Automation and retry with its current revision.',
     }];
 
     for (const fixture of fixtures) {

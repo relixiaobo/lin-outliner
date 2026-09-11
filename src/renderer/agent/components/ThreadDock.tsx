@@ -9,10 +9,8 @@ import { useT } from '../../i18n/I18nProvider';
 import { threadStore, useThreadStore } from '../store/threadStore';
 import { ToolTaskStrip } from './ToolTaskStrip';
 import {
-  BackIcon,
   ChevronDownIcon,
   ICON_SIZE,
-  ScheduledIcon,
   SettingsIcon,
   WarningIcon,
 } from '../../ui/icons';
@@ -37,10 +35,6 @@ import { shouldRestoreComposerAfterThreadCreation } from '../composerRefocus';
 import { matchesShortcutEvent } from '../../ui/interactions/shortcutRegistry';
 import { useShortcutHint } from '../../ui/interactions/useShortcutHint';
 
-const AutomationsView = lazy(async () => {
-  const module = await import('../automations/AutomationsView');
-  return { default: module.AutomationsView };
-});
 const ProjectDialog = lazy(async () => ({ default: (await import('../projects/ProjectDialog')).ProjectDialog }));
 
 export type ThreadRailState = 'collapsed' | 'open';
@@ -76,7 +70,6 @@ export const ThreadDock = memo(function ThreadDock({
   const snapshot = useThreadStore(open);
   const [listOpen, setListOpen] = useState(false);
   const [projectTarget, setProjectTarget] = useState<{ thread: Thread; mode: 'new' | Project } | null>(null);
-  const [surface, setSurface] = useState<'thread' | 'automations'>('thread');
   /**
    * The pushed Agent detail stack, root-most first. Empty is the conversation
    * itself; each entry is one level deeper, and Back pops exactly one.
@@ -363,7 +356,7 @@ export const ThreadDock = memo(function ThreadDock({
     >
       <div className="thread-dock" ref={dockRef}>
         <header className="thread-dock-header">
-          {surface === 'thread' ? (
+          {(
             // The dock's title is the conversation the user started, and its
             // chevron opens the list of them.
             <div className="thread-dock-breadcrumb">
@@ -382,38 +375,14 @@ export const ThreadDock = memo(function ThreadDock({
  />
               </button>
             </div>
-          ) : null}
-          {surface === 'automations' ? (
-            <button
-              aria-label={t.agent.automations.backToThreads}
-              className="thread-dock-title-button"
-              onClick={() => setSurface('thread')}
-              type="button"
-            >
-              <BackIcon className="thread-dock-title-leading" size={ICON_SIZE.menu} />
-              <span className="thread-dock-title">{t.agent.automations.title}</span>
-            </button>
-          ) : null}
-          {surface === 'thread' && thread ? (
+          )}
+          {thread ? (
             <ToolTaskStrip
               onClearDetails={(threadId) => threadStore.clearToolTaskDetails(threadId)}
               onRead={(threadId, taskId) => threadStore.readToolTask(threadId, taskId)}
               onStop={(threadId, taskId) => threadStore.stopToolTask(threadId, taskId)}
               ownerThreadId={thread.id}
               tasks={toolTasks}
-            />
-          ) : null}
-          {surface === 'thread' ? (
-            <IconButton
-              className="thread-dock-surface-action"
-              icon={ScheduledIcon}
-              label={t.agent.automations.open}
-              onClick={() => {
-                setListOpen(false);
-                setSurface('automations');
-              }}
-
-              variant="chrome"
             />
           ) : null}
         </header>
@@ -428,8 +397,8 @@ export const ThreadDock = memo(function ThreadDock({
             <span>{providerError ?? snapshot.error}</span>
           </div>
         ) : null}
-        {surface === 'thread' && snapshot.loading ? <p className="thread-empty-copy">{t.agent.thread.loading}</p> : null}
-        {surface === 'thread' && !snapshot.loading && !thread && providerSettingsLoaded && providerBlocksCreation ? (
+        {snapshot.loading ? <p className="thread-empty-copy">{t.agent.thread.loading}</p> : null}
+        {!snapshot.loading && !thread && providerSettingsLoaded && providerBlocksCreation ? (
           <div className="thread-empty-state">
             <p>{t.agent.thread.providerRequired}</p>
             <button
@@ -443,11 +412,11 @@ export const ThreadDock = memo(function ThreadDock({
             </button>
           </div>
         ) : null}
-        {surface === 'thread' && unavailable ? <div className="thread-dock-error" role="alert">
+        {unavailable ? <div className="thread-dock-error" role="alert">
           <span>{t.startup.quarantined}</span>
           <Button onClick={onOpenStartupIssues}>{t.startup.issues}</Button>
         </div> : null}
-        {surface === 'thread' && thread && !unavailable ? (
+        {thread && !unavailable ? (
           <div className="thread-dock-body">
             <div className="thread-dock-conversation">
             <ThreadView
@@ -504,19 +473,7 @@ export const ThreadDock = memo(function ThreadDock({
             </div>
           </div>
         ) : null}
-        {surface === 'automations' ? (
-          <Suspense fallback={<p className="thread-empty-copy">{t.agent.automations.loading}</p>}>
-            <AutomationsView
-              onOpenThread={async (threadId) => {
-                await openThread(threadId);
-                setSurface('thread');
-              }}
-              providerSettings={providerSettings}
-              threads={snapshot.threads}
-            />
-          </Suspense>
-        ) : null}
-        {surface === 'thread' && listOpen ? (
+        {listOpen ? (
           <ThreadList
             startupThreads={startupThreads}
             projects={projects.view.projects}

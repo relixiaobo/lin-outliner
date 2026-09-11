@@ -206,6 +206,7 @@ export function App() {
     openPanel,
     openPreview,
     openThreadTrajectoryPanel,
+    openScheduledTasks,
     panels,
     repairInvalidPanelViews,
     resizePanelPair,
@@ -217,6 +218,17 @@ export function App() {
     focusNode,
     preparePanelCount,
   });
+  useEffect(() => {
+    const unsubscribe = api.onAutomationNotification((notification) => {
+      if (notification.type !== 'automation/open') return;
+      openScheduledTasks();
+      void import('../agent/automations/automationStore').then(async ({ automationStore }) => {
+        await automationStore.initialize(); automationStore.select(notification.automationId);
+      }).catch((error) => setError(String(error)));
+    });
+    return () => { unsubscribe(); };
+  }, [openScheduledTasks]);
+
   // Global Back/Forward (Cmd+[ / Cmd+]) act on the active workspace pane's view
   // history, including Trajectory and file previews.
   const pageHistoryPanel = activeWorkspacePanel;
@@ -706,6 +718,7 @@ export function App() {
 
       <div className="app-shell">
         <Sidebar
+          onOpenScheduledTasks={openScheduledTasks}
           expandedIds={sidebarExpandedIds}
           index={index}
           isNodePinned={isNodePinned}
@@ -728,6 +741,7 @@ export function App() {
         />
 
         <WorkspaceCanvas
+          onOpenScheduledProcess={(threadId, turnId) => openThreadTrajectoryPanel(threadId, { turnId })}
           activePanelId={activePanelId}
           panels={panels}
           canvasRef={canvasRef}

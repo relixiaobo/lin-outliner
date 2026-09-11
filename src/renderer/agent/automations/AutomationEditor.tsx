@@ -1,4 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { CheckboxControl } from '../../ui/primitives/CheckboxControl';
+import type { ScheduledMaterial } from '../../../core/agent/scheduledMaterial';
+import { api } from '../../api/client';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   Automation,
   AutomationCreateInput,
@@ -7,10 +10,9 @@ import type {
 } from '../../../core/agent/automation';
 import { composeProviderQualifiedModel, parseProviderQualifiedModel } from '../../../core/agentModelId';
 import { REASONING_EFFORTS, type ReasoningEffort } from '../../../core/agent/configuration';
-import type { Thread } from '../projectionTypes';
 import type { AgentProviderSettingsView } from '../../api/types';
 import { useT } from '../../i18n/I18nProvider';
-import { AddIcon, CloseIcon } from '../../ui/icons';
+import { CloseIcon } from '../../ui/icons';
 import { formatProviderName } from '../../ui/agent/providerNames';
 import { buildModelChoices, flattenModelChoices, type ModelChoiceGroup } from '../../ui/agent/modelChoices';
 import { Button } from '../../ui/primitives/Button';
@@ -39,6 +41,8 @@ type ContextHintDraft = {
 
 interface AutomationEditorProps {
   readonly actionError: string | null;
+  readonly notes?: readonly { id: string; title: string }[];
+  readonly onPause?: (expectedRevision: number) => Promise<Automation>;
   readonly automation: Automation | null;
   readonly busy: boolean;
   readonly onCancel: () => void;
@@ -46,8 +50,6 @@ interface AutomationEditorProps {
   readonly onDirtyChange: (dirty: boolean) => void;
   readonly onUpdate: (input: AutomationUpdateInput) => Promise<Automation>;
   readonly providerSettings: AgentProviderSettingsView | null;
-  readonly runHistory?: ReactNode;
-  readonly threads: readonly Thread[];
 }
 
 export function AutomationEditor(props: AutomationEditorProps) {
@@ -59,6 +61,11 @@ export function AutomationEditor(props: AutomationEditorProps) {
   const [state, setState] = useState(initial);
   const [baselineSignature, setBaselineSignature] = useState(() => stateSignature(initial));
   const [error, setError] = useState<string | null>(null);
+  const [preview, setPreview] = useState<{ nextOccurrenceAt: number | null; defaultWorkLocation: string } | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const promptRef = useRef<HTMLTextAreaElement | null>(null);
+  const [noteSearch, setNoteSearch] = useState('');
+  const operationRef = useRef({ signature: '', requestId: crypto.randomUUID() });
   const revisionRef = useRef(props.automation?.revision ?? null);
   const dirty = stateSignature(state) !== baselineSignature;
 
@@ -84,9 +91,6 @@ export function AutomationEditor(props: AutomationEditorProps) {
     revisionRef.current = props.automation.revision;
   }, [automationKey, baselineSignature, dirty, props.automation]);
 
-  const destinationThreads = props.threads.filter((thread) => (
-    !thread.ephemeral && thread.parentThreadId === null && thread.threadSource === 'user'
-  ));
   const choices = useMemo(
     () => buildModelChoices(props.providerSettings, { modelProvider: state.modelProvider, model: state.model }),
     [props.providerSettings, state.model, state.modelProvider],
@@ -107,6 +111,18 @@ export function AutomationEditor(props: AutomationEditorProps) {
   );
   const timezones = useMemo(() => automationTimezones(state.timezone), [state.timezone]);
 
+  useEffect(() => {
+    let stale = false;
+    const timer = setTimeout(() => {
+      try {
+        void api.automationRequest('preview', { rrule: automationScheduleRrule(state.schedule), timezone: state.timezone })
+          .then((value) => { if (!stale) { setPreview(value); setPreviewError(null); } })
+          .catch((reason) => { if (!stale) { setPreview(null); setPreviewError(errorMessage(reason)); } });
+      } catch (reason) { if (!stale) { setPreview(null); setPreviewError(errorMessage(reason)); } }
+    }, 150);
+    return () => { stale = true; clearTimeout(timer); };
+  }, [state.schedule, state.timezone]);
+
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setError(null);
@@ -116,9 +132,7 @@ export function AutomationEditor(props: AutomationEditorProps) {
         || !state.prompt.trim()
         || !isAutomationScheduleDraftValid(state.schedule)
       ) throw new Error(t.required);
-      const destination = state.destination === 'standalone'
-        ? { kind: 'standalone' as const }
-        : { kind: 'existingThread' as const, threadId: required(state.threadId, t.fieldRequired({ field: t.thread })) };
+      const destination = { kind: 'standalone' as const };
       const contextHints = state.contextHints.map((binding) => toAutomationContextHintInput(
         binding,
         binding.projectId ? '' : required(binding.cwd, t.fieldRequired({ field: t.cwd })),
@@ -126,6 +140,7 @@ export function AutomationEditor(props: AutomationEditorProps) {
       const definition: AutomationCreateInput = {
         name: state.name.trim(),
         prompt: state.prompt.trim(),
+        materials: state.materials,
         schedule: {
           rrule: automationScheduleRrule(state.schedule),
           timezone: required(state.timezone, t.fieldRequired({ field: t.timezone })),
@@ -138,15 +153,19 @@ export function AutomationEditor(props: AutomationEditorProps) {
           reasoningEffort: state.reasoningEffort || null,
         },
       };
+      const signature = JSON.stringify([definition, revisionRef.current]);
+      if (operationRef.current.signature !== signature) operationRef.current = { signature, requestId: crypto.randomUUID() };
+      const requestId = operationRef.current.requestId;
       let saved: Automation;
       if (props.automation) {
         saved = await props.onUpdate({
           id: props.automation.id,
           expectedRevision: revisionRef.current ?? props.automation.revision,
           ...definition,
+          requestId,
         });
       } else {
-        saved = await props.onCreate(definition);
+        saved = await props.onCreate({ ...definition, requestId });
       }
       revisionRef.current = saved.revision;
       setBaselineSignature(stateSignature(state));
@@ -173,11 +192,11 @@ export function AutomationEditor(props: AutomationEditorProps) {
             />
           </Field>
           <Field className="automation-prompt-field" label={t.prompt} labelClassName="automation-field-label">
-            <Textarea
+            <Textarea ref={promptRef}
               className="automation-prompt-input"
               disabled={props.busy}
               label={t.prompt}
-              onChange={(event) => setState({ ...state, prompt: event.target.value })}
+              onChange={(event) => { const prompt = event.target.value; setState({ ...state, prompt, name: state.name === state.prompt.split('\n')[0].slice(0, 80) || !state.name ? prompt.split('\n')[0].slice(0, 80) : state.name }); }}
               rows={5}
               value={state.prompt}
             />
@@ -185,49 +204,34 @@ export function AutomationEditor(props: AutomationEditorProps) {
         </section>
 
         <section className="automation-editor-section">
-          <h3>{t.executionDetails}</h3>
-          <div className="automation-settings-group">
-            <Field className="automation-setting-row" label={t.destination} labelClassName="automation-setting-label">
-              <SelectControl
-                className="automation-setting-value"
-                disabled={props.busy}
-                label={t.destination}
-                onChange={(event) => {
-                  const destination = event.target.value as EditorState['destination'];
-                  setState({
-                    ...state,
-                    destination,
-                    contextHints: destination === 'existingThread'
-                      ? state.contextHints.slice(0, 1)
-                      : state.contextHints,
-                  });
-                }}
-                value={state.destination}
-                variant="popup"
-              >
-                <option value="standalone">{t.destinations.standalone}</option>
-                <option value="existingThread">{t.destinations.existingThread}</option>
+          <h3>{t.work.materials}</h3>
+          {state.materials.map((material, index) => <div className="scheduled-material" key={index}>
+            <SelectControl label={t.work.materialKind} value={material.kind} disabled={props.busy}
+              onChange={(event) => setState({ ...state, materials: state.materials.map((entry, at) => at === index ? { ...entry, kind: event.target.value as ScheduledMaterial['kind'], reference: '' } : entry) })}>
+              <option value="file">{t.work.file}</option><option value="url">{t.work.url}</option><option value="note">{t.work.note}</option>
+            </SelectControl>
+            {material.kind === 'note' ? <>
+              <Input disabled={props.busy} label={t.search} placeholder={t.search} value={noteSearch} onChange={(event) => setNoteSearch(event.target.value)} />
+              <SelectControl disabled={props.busy} label={t.work.reference} value={material.reference} onChange={(event) => setState({ ...state, materials: state.materials.map((entry, at) => at === index ? { ...entry, reference: event.target.value } : entry) })}>
+                <option value="">{t.work.reference}</option>
+                {(props.notes ?? []).filter((note) => note.id === material.reference || note.title.toLocaleLowerCase().includes(noteSearch.toLocaleLowerCase())).slice(0, 100)
+                  .map((note) => <option key={note.id} value={note.id}>{note.title}</option>)}
+                {material.reference && !props.notes?.some((note) => note.id === material.reference) ? <option value={material.reference}>{projectLabels.unavailable}</option> : null}
               </SelectControl>
-            </Field>
-            {state.destination === 'existingThread' ? (
-              <Field className="automation-setting-row" label={t.thread} labelClassName="automation-setting-label">
-                <SelectControl
-                  className="automation-setting-value"
-                  disabled={props.busy}
-                  label={t.thread}
-                  onChange={(event) => setState({ ...state, threadId: event.target.value })}
-                  value={state.threadId}
-                  variant="popup"
-                >
-                  <option value="">{t.selectThread}</option>
-                  {destinationThreads.map((thread) => (
-                    <option key={thread.id} value={thread.id}>
-                      {thread.name || thread.preview || thread.id}
-                    </option>
-                  ))}
-                </SelectControl>
-              </Field>
-            ) : null}
+            </> : <Input label={t.work.reference} value={material.reference} disabled={props.busy}
+              onChange={(event) => setState({ ...state, materials: state.materials.map((entry, at) => at === index ? { ...entry, reference: event.target.value } : entry) })} />}
+            <CheckboxControl checked={material.required} disabled={props.busy} onCheckedChange={(required) => setState({ ...state,
+              materials: state.materials.map((entry, at) => at === index ? { ...entry, required } : entry) })}>{t.work.requiredMaterial}</CheckboxControl>
+            <Button size="sm" variant="ghost" onClick={() => setState({ ...state, materials: state.materials.filter((_, at) => at !== index) })}>{t.work.removeMaterial}</Button>
+          </div>)}
+          <Button size="sm" variant="ghost" disabled={props.busy || state.materials.length >= 32}
+            onClick={() => setState({ ...state, materials: [...state.materials, { kind: 'file', reference: '', required: true }] })}>{t.work.addMaterial}</Button>
+        </section>
+
+        <section className="automation-editor-section">
+          <h3>{t.work.location}</h3>
+          {!state.contextHints.length ? <p>{preview?.defaultWorkLocation ?? t.inherited}</p> : null}
+          <div className="automation-settings-group">
             <Field className="automation-setting-row" label={t.project} labelClassName="automation-setting-label">
               <SelectControl
                 className="automation-setting-value"
@@ -254,6 +258,7 @@ export function AutomationEditor(props: AutomationEditorProps) {
                 <option value="worktree">{t.projects.worktree}</option>
               </SelectControl>
             </Field>
+            <details><summary>{t.work.advanced}</summary>
             <Field className="automation-setting-row" label={t.model} labelClassName="automation-setting-label">
               <SelectControl
                 className="automation-setting-value"
@@ -301,6 +306,7 @@ export function AutomationEditor(props: AutomationEditorProps) {
                 {REASONING_EFFORTS.map((effort) => <option key={effort} value={effort}>{effort}</option>)}
               </SelectControl>
             </Field>
+            </details>
           </div>
 
           {state.contextHints.length > 0 ? (
@@ -366,29 +372,16 @@ export function AutomationEditor(props: AutomationEditorProps) {
                   ) : null}
                 </div>
               ))}
-              {state.destination === 'standalone' ? (
-                <Button
-                  disabled={props.busy}
-                  onClick={() => setState({
-                    ...state,
-                    contextHints: [...state.contextHints, {
-                      id: crypto.randomUUID(),
-                      cwd: '',
-                      executionMode: 'local',
-                    }],
-                  })}
-                  size="sm"
-                  variant="ghost"
-                >
-                  <AddIcon size="rowGlyph" />{t.addProject}
-                </Button>
-              ) : null}
+
             </div>
           ) : null}
         </section>
 
         <section className="automation-editor-section">
           <h3>{t.frequency}</h3>
+          <p>{t.work.local}</p>
+          <p>{preview?.nextOccurrenceAt == null ? t.noNext : new Intl.DateTimeFormat(undefined, { dateStyle: 'full', timeStyle: 'short', timeZone: state.timezone }).format(preview.nextOccurrenceAt)} · {state.timezone}</p>
+          {previewError ? <p role="alert">{previewError}</p> : null}
           <AutomationScheduleEditor
             disabled={props.busy}
             onChange={(schedule) => setState({ ...state, schedule })}
@@ -399,17 +392,25 @@ export function AutomationEditor(props: AutomationEditorProps) {
           />
         </section>
 
-        {props.automation ? (
-          <section className="automation-editor-section automation-runs-section">
-            {props.runHistory}
-          </section>
-        ) : null}
+
+
+        {props.automation && dirty && !props.busy && revisionRef.current !== props.automation.revision ? <details className="scheduled-revision-conflict">
+          <summary>{t.work.changed}</summary>
+          <strong>{props.automation.name}</strong><p>{props.automation.prompt}</p>
+          <Button size="sm" variant="ghost" onClick={() => {
+            const saved = editorState(props.automation);
+            setState(saved); setBaselineSignature(stateSignature(saved)); revisionRef.current = props.automation!.revision;
+            setError(null); props.onDirtyChange(false); promptRef.current?.focus();
+          }}>{t.work.reload}</Button>
+        </details> : null}
 
         {error || props.actionError ? (
           <p className="automation-error" role="alert">{error ?? props.actionError}</p>
         ) : null}
       </div>
       <footer className="automation-editor-actions">
+        {props.automation && props.onPause && props.automation.status === 'active' ? <Button variant="ghost" disabled={props.busy}
+          onClick={() => { void props.onPause!(revisionRef.current ?? props.automation!.revision).then((task) => { revisionRef.current = task.revision; }).catch((reason) => setError(errorMessage(reason))); }}>{t.work.pause}</Button> : null}
         <Button disabled={props.busy} onClick={props.onCancel} variant="ghost">{t.cancel}</Button>
         <Button disabled={props.busy || (Boolean(props.automation) && !dirty)} type="submit" variant="primary">
           {props.automation ? t.save : t.create}
@@ -420,12 +421,11 @@ export function AutomationEditor(props: AutomationEditorProps) {
 }
 
 interface EditorState {
+  readonly materials: readonly ScheduledMaterial[];
   readonly name: string;
   readonly prompt: string;
   readonly schedule: AutomationScheduleDraft;
   readonly timezone: string;
-  readonly destination: 'standalone' | 'existingThread';
-  readonly threadId: string;
   readonly contextHints: readonly ContextHintDraft[];
   readonly modelProvider: string;
   readonly model: string;
@@ -459,13 +459,12 @@ function automationTimezones(current: string): readonly string[] {
 
 function editorState(automation: Automation | null): EditorState {
   return {
+    materials: automation?.materials ?? [],
     name: automation?.name ?? '',
     prompt: automation?.prompt ?? '',
     schedule: createAutomationScheduleDraft(automation?.schedule.rrule),
     timezone: automation?.schedule.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
-    destination: automation?.destination.kind ?? 'standalone',
-    threadId: automation?.destination.kind === 'existingThread' ? automation.destination.threadId : '',
-    contextHints: automation?.contextHints.map((binding) => ({
+    contextHints: automation?.contextHints.slice(0, 1).map((binding) => ({
       id: binding.contextHintId, contextHintId: binding.contextHintId,
       cwd: binding.source.kind === 'directory' ? binding.source.rootHint : '',
       ...(binding.source.kind === 'project' ? { projectId: binding.source.projectId } : {}),

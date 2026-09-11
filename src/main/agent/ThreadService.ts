@@ -1,4 +1,5 @@
 import { AgentToolFailure } from './AgentToolFailure';
+import { threadFeatureSource } from '../../core/agent/protocol';
 import type { Stats } from 'node:fs';
 import { readdir,rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -309,15 +310,41 @@ export interface PersistentThreadExecutionContext {
 }
 
 export class ThreadService implements ThreadServiceExtensionHost {
+  private scheduledCompletionAdmission: (threadId: string, admission: import('../../core/agent/protocol').ToolTaskTurnAdmission,
+    operation: () => Promise<boolean>) => Promise<boolean> = (_threadId, _admission, operation) => operation();
+  bindScheduledCompletionAdmission(admit: typeof this.scheduledCompletionAdmission): void {
+    this.scheduledCompletionAdmission = admit;
+  }
+  activeTurnIdForHost(threadId: string): string | null { return this.activeTurns.get(threadId)?.turnId ?? null; }
+  isScheduledThread(threadId: string): boolean {
+    return this.core.metadata.read(threadId)?.thread.threadSource === threadFeatureSource('automation');
+  }
   readonly projects: ProjectService;
   private readonly pickProjectFolders: NonNullable<ThreadServiceOptions['pickProjectFolders']>;
   readonly reviewProjectChange: NonNullable<ThreadServiceOptions['reviewProjectChange']>;
   defaultExecutionDirectory(): string { return this.hostDefaultDirectory; }
+  scheduledNoteAvailable(id: string): boolean {
+    const projection = this.getDocumentProjection();
+    if (!projection) return false;
+    const nodes = new Map(projection.nodes.map((node) => [node.id, node]));
+    const seen = new Set<string>();
+    let current = nodes.get(id);
+    while (current && !seen.has(current.id)) {
+      if (current.id === projection.trashId) return false;
+      seen.add(current.id);
+      if (current.parentId == null) return true;
+      current = nodes.get(current.parentId);
+    }
+    return false;
+  }
   writeFeatureContext(ownerId: string, payload: import('../../core/agent/protocol').ThreadContextPayload) {
     return this.core.payloads.writeContext(ownerId, payload);
   }
   readFeatureContext(ownerId: string, ref: import('../../core/agent/protocol').ThreadContextPayloadReference) {
     return this.core.payloads.readContext(ownerId, ref);
+  }
+  pruneFeatureContexts(ownerId: string, retained: readonly import('../../core/agent/protocol').ThreadContextPayloadReference[]) {
+    return this.core.payloads.pruneUnreferencedContexts(ownerId, retained, []);
   }
   private readonly core: ThreadCore;
   private readonly executor: TurnExecutor;
@@ -578,7 +605,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       validateReadiness: (task, references) => this.validateTaskReadiness(task, references),
       validateWatchRequest: (threadId, reference, after) => this.validateTaskWatchRequest(threadId, reference, after),
       currentReaderRequest: (threadId, turnId) => this.taskReaderRequest(threadId, turnId),
-      startCompletionTurn: async (input) => Boolean(await this.turnLifecycle.tryStartTurnIfIdle({
+      startCompletionTurn: async (input) => this.scheduledCompletionAdmission(input.threadId, input.admission, async () => Boolean(await this.turnLifecycle.tryStartTurnIfIdle({
         threadId: input.threadId,
         turnId: input.turnId,
         input: [],
@@ -589,7 +616,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         author: { kind: 'host' },
         trigger: { kind: 'feature', feature: 'tool-task-completion', ref: input.admission.batchId },
         toolTaskAdmission: input.admission,
-      }, input.admissionGuard)),
+      }, input.admissionGuard))),
       settleTask: async (task, producerContext, maxArtifactBytes) => {
         if (task.producer === 'delegate') {
           const bytes = await this.toolTasks.readPreparedResult(task.taskId, task.ownerThreadId);
@@ -1127,6 +1154,15 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
   async interruptDelegationTurn(threadId: ThreadId, turnId: TurnId): Promise<void> {
     await this.turnLifecycle.interruptTurn(threadId, turnId);
+  }
+  async interruptScheduledTurn(threadId: ThreadId, turnId: TurnId, automationRunId: string, ownsContinuation?: () => boolean): Promise<void> {
+    this.assertStartupThreadAvailable(threadId);
+    const turn = this.core.readTurn(threadId, turnId);
+    const trigger = turn?.provenance.trigger;
+    if (!turn || (!(trigger?.kind === 'feature' && trigger.feature === 'automation' && trigger.ref === automationRunId) && !ownsContinuation?.())) {
+      throw new Error('The scheduled run does not own this execution');
+    }
+    if (turn.status === 'inProgress') await this.turnLifecycle.interruptTurn(threadId, turnId);
   }
   async closeDelegationThread(threadId: ThreadId): Promise<void> {
     const thread = this.core.metadata.read(threadId)?.thread ?? this.core.ephemeral.get(threadId)?.record.thread;

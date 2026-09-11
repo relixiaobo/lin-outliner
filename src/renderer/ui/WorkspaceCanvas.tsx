@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type Dispatch, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject, type SetStateAction } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState, type Dispatch, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject, type SetStateAction } from 'react';
 import type { NodeId } from '../api/types';
 import type { DocumentIndex, UiState } from '../state/document';
 import { NodePanel } from './NodePanel';
@@ -13,12 +13,15 @@ import { ThreadTrajectoryPanel } from '../agent/components/ThreadTrajectoryPanel
 import { listWithItemMovedToIndex, WORKSPACE_PANEL_REORDER_MIME } from './interactions/dragDrop';
 import type { PanelDragHandle } from './PanelShared';
 
+const ScheduledTasksWorkspace = lazy(() => import('../agent/automations/ScheduledTasksWorkspace').then((module) => ({ default: module.ScheduledTasksWorkspace })));
+
 // How long a cancelled drag keeps .pane-dragging (and with it the transform
 // transition) so the preview can slide back home instead of snapping. Matches
 // --motion-layout-duration (160ms) with a little slack.
 const PANE_DRAG_SETTLE_MS = 200;
 
 interface WorkspaceCanvasProps {
+  onOpenScheduledProcess?: (threadId: string, turnId: string) => void;
   activePanelId: string | null;
   panels: WorkspacePanelState[];
   canvasRef: RefObject<HTMLElement | null>;
@@ -255,7 +258,13 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
             previewOffset={preview?.panes.get(panel.id) ?? null}
             size={panel.size}
           >
-            {panel.view.kind === 'outliner' ? (
+            {panel.view.kind === 'scheduled-tasks' ? (
+              <Suspense fallback={<p>{t.agent.automations.loading}</p>}>
+                <ScheduledTasksWorkspace onOpenNode={(nodeId, options) => props.onNavigatePanelRoot(panel.id, nodeId, options)} index={props.index} panelDragHandle={panelDragHandleFor(panel)} showClose={activePanels.length > 1}
+                  onClose={() => props.onClosePanel(panel.id)} onBack={panel.backStack.length > 0 ? () => props.onNavigatePanelBack(panel.id) : undefined}
+                  onOpenProcess={(threadId, turnId) => props.onOpenScheduledProcess?.(threadId, turnId)} />
+              </Suspense>
+            ) : panel.view.kind === 'outliner' ? (
               <NodePanel
                 panelId={panel.id}
                 panelDragHandle={panelDragHandleFor(panel)}

@@ -824,3 +824,118 @@
 .automation-action-menu button:disabled {
   color: var(--text-quaternary);
 }
+
+.scheduled-workspace {
+  container-type: inline-size;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg-content);
+  color: var(--text-primary);
+}
+
+.scheduled-task-list,
+.scheduled-task-detail {
+  min-width: 0;
+  min-height: 0;
+  padding: var(--space-8);
+  overflow: auto;
+}
+
+.scheduled-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  border-right: var(--space-hairline) solid var(--separator);
+  user-select: none;
+}
+
+.scheduled-task-heading,
+.scheduled-actions,
+.scheduled-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+.scheduled-task-heading { justify-content: space-between; }
+.scheduled-task-heading h2 { font-size: var(--font-ui-md); }
+.scheduled-task-heading h3 { font-size: var(--font-ui-sm); }
+.scheduled-task-heading p,
+.scheduled-task-heading time,
+.scheduled-local-note,
+.scheduled-task-row small { color: var(--text-secondary); font-size: var(--font-ui-sm); }
+.scheduled-task-heading,
+.scheduled-actions,
+.scheduled-filters { user-select: none; }
+
+.scheduled-task-rows,
+.scheduled-earlier-runs { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.scheduled-task-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-6);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-primary);
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+
+.scheduled-task-row:hover { background: var(--fill-1); }
+.scheduled-task-row[aria-pressed="true"],
+.scheduled-filters [aria-pressed="true"] { background: var(--fill-3); }
+.scheduled-task-row:focus-visible,
+.scheduled-search:focus-visible { outline: none; box-shadow: var(--focus-ring-shadow); }
+
+.scheduled-search {
+  min-width: 0;
+  padding: var(--space-4) var(--space-6);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--fill-2);
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.scheduled-result,
+.scheduled-issue { margin-block: var(--space-8); overflow-wrap: anywhere; }
+.scheduled-result { border-block: var(--space-hairline) solid var(--separator); padding-block: var(--space-8); }
+.scheduled-list-back { display: none; }
+
+.scheduled-editor-sheet {
+  display: flex;
+  flex-direction: column;
+  width: min(var(--reading-max), calc(100vw - var(--space-xl)));
+  height: min(85vh, calc(var(--reading-max) + var(--space-xl)));
+  min-height: 0;
+  border-radius: var(--radius-xl);
+  background: var(--bg-elevated);
+  box-shadow: var(--overlay-shadow-level-2);
+  overflow: hidden;
+  padding: var(--space-8);
+}
+
+/* The plan's list/detail breakpoint is a logical pane width, independent of window width. */
+@container (max-width: 720px) {
+  .scheduled-task-list,
+  .scheduled-task-detail { grid-column: 1 / -1; }
+  .scheduled-task-list { border-right: 0; }
+  .scheduled-task-detail { display: none; }
+  .is-detail > .scheduled-task-list { display: none; }
+  .is-detail > .scheduled-task-detail { display: block; }
+  .scheduled-list-back { display: inline-flex; }
+}
+
+.scheduled-panel { display: flex; flex-direction: column; overflow: hidden; }
+.scheduled-panel > .scheduled-workspace { flex: 1; height: auto; }
+.scheduled-task-row strong { font-size: var(--font-ui-sm); font-weight: 500; }
+.scheduled-material { display: grid; gap: var(--space-4); margin-block: var(--space-6); }

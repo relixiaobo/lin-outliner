@@ -4,7 +4,7 @@ import { configurationCommandAllowed, isModelConfigurationCommand } from './conf
 import { readPreferencesView, editPreference, ensurePreferencesFile, ensureConfigurationSource } from './configuration/discovery';
 import type { PreferenceEdit, PreferencesView } from '../core/settingsDefinitions';
 import type { ConfigurationDomain } from '../core/settingsWindow';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, powerMonitor, protocol, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, nativeImage, powerMonitor, protocol, shell } from 'electron';
 import type { IpcMainInvokeEvent } from 'electron';
 import { SKILL_LIBRARY_CHANGED_CHANNEL, SKILL_REVIEW_DECIDE_CHANNEL, SKILL_REVIEW_GET_CHANNEL } from '../core/agent/skillOperations';
 import { createHash, randomUUID } from 'node:crypto';
@@ -514,8 +514,29 @@ function requireAgentHost(): AgentHost {
   }
   return agentHost;
 }
+const scheduledNoticesShown = new Set<string>();
+const activeScheduledNotices = new Set<Notification>();
 function constructAgentHost(): Promise<AgentHost> {
   return createAgentHost({
+  onScheduledAttention: (notice) => {
+    if (!Notification.isSupported() || scheduledNoticesShown.has(notice.key)) return;
+    scheduledNoticesShown.add(notice.key);
+    if (scheduledNoticesShown.size > 2048) scheduledNoticesShown.delete(scheduledNoticesShown.values().next().value!);
+    try {
+      const labels = getMessages(windowApplicationHost.effectiveLocale()).agent.automations.work;
+      const notification = new Notification({ title: notice.name, body: notice.kind === 'question' ? labels.questionNotice : labels.failureNotice });
+      activeScheduledNotices.add(notification);
+      notification.on('close', () => activeScheduledNotices.delete(notification));
+      notification.on('failed', () => activeScheduledNotices.delete(notification));
+      notification.on('click', () => {
+        const window = windowApplicationHost.windows.main();
+        if (!window || window.isDestroyed()) return;
+        window.show(); window.focus();
+        window.webContents.send(AUTOMATION_NOTIFICATION_CHANNEL, { type: 'automation/open', automationId: notice.automationId });
+      });
+      notification.show();
+    } catch { /* Native delivery obeys OS settings; task attention remains in the workspace. */ }
+  },
   readMemoryEnabled: () => loadFilePreferences(resolvedUserDataDir).preferences.agent.memory.enabled,
   reviewSkillOperation: (input) => windowApplicationHost.reviewSkillOperation(input),
   reviewMemoryReset: (review, caller) => windowApplicationHost.reviewMemoryReset(review, caller),
@@ -775,7 +796,7 @@ async function validateAutomationEffectiveConfiguration(
 }
 const wakeAutomationsOnResume = () => {
   void lifecycle.ready('agent').then(() => Promise.all([
-    requireAgentHost().automations.wake(), requireAgentHost().threads.reconcileUserInputsOnResume(),
+    requireAgentHost().automations.wake('unavailable'), requireAgentHost().threads.reconcileUserInputsOnResume(),
   ])).catch(() => undefined);
 };
 async function initializeAgentHost(assertActive: () => void): Promise<void> {
