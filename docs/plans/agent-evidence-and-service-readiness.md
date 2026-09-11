@@ -219,7 +219,7 @@ committed fixtures. Update existing fixtures when #674 changes their entry seam.
 
 | Existing design | Required treatment |
 | --- | --- |
-| [Conversation work folders](conversation-work-folders.md), PR #674 | Targeted clarification at BR-2/3 and one acceptance case: default-folder edits never redirect old services; authorized post-launch checks can use another directory; handoff consumes Task-owned references, not cwd equality. Preserve all Project/default-folder decisions. The open claim owns this file, so this draft specifies the delta without editing its concurrent plan. Prefer Unit B after #674 for shared Host/Thread integration; this is collision order, not an intrinsic dependency. |
+| [Conversation work folders](archive/conversation-work-folders.md), PR #674 | Consume the shipped Project/default-folder contract. Unit B owns the additional acceptance case: default-folder edits never redirect old services; authorized post-launch checks can use another directory; handoff consumes Task-owned references, not cwd equality. Preserve all Project/default-folder decisions and the archived design. Fold this clarification into the current Agent Core/tool specifications with Unit B; do not reopen #674's completed gate. |
 | [Computer Pilot managed Skill](computer-pilot-managed-skill.md) | Strengthen FR-3, AC-3 and packaged verification to require actual screenshot pixels after resource adoption and provider projection, including `.blob` storage. Consume Unit A's shared boundary; add no Computer-Pilot-specific decoder. This companion clarification is included with this design. CLI/acquisition preparation does not depend on Unit A. |
 | [Scheduled work](scheduled-work-redesign.md) | No design rewrite: BR-6/7, AC-11 and the Task-owner handoff already separate process observations from readiness and retain assignment location. Integration fixtures consume Unit B's final validator; do not add scheduling health checks, cwd-based membership, or another continuation owner. |
 | [Targeted recovery](targeted-thread-recovery.md) | No design rewrite: exact Task/resource closure and immutable observations already govern recovery. These units change no stored references or format. Preserve historical observations on restore and cover the final Task owner; do not turn a service timeout into permission for a whole-data reset. |
@@ -227,12 +227,10 @@ committed fixtures. Update existing fixtures when #674 changes their entry seam.
 | [Office preview](file-preview-office.md) and [URL reader](url-static-reader.md) | No design edit: extraction and network acquisition remain separate owners. Preserve their shared image consumers if the implementation overlaps; normalization creates no new fetch or preview authority. |
 | [Memory/profile](memory-agent-profile.md), [Settings working states](semantic-working-state.md), [floating toolbar](floating-toolbar-polish.md), [dark-mode verification](dark-mode-contrast-pass.md) | No changed premise or required implementation dependency was found. |
 
-All 11 active plans were checked against the task board and open claims. PR #674
-claims Host directory resolution, Task admission and shared Thread/context files;
-its explicit implementation authorization is newer than the board's draft
-snapshot. Recheck its actual diff before implementation. Unit A may proceed on
-image-local ownership without waiting for that feature; coordinate any shared
-`desktopHost` edits instead of treating the entire file as a prerequisite.
+The active consumer designs and shipped #674 contract define the integration
+boundary. Unit B consumes the final Host directory resolution, Task admission and
+Thread/context owners from #674. Unit A stays image-local; shared `desktopHost`
+edits must still be checked against open claims before implementation.
 
 Archived `background-task-continuation-policy`, `startup-fault-isolation`,
 `startup-window-first`, `generated-image-resources` and `workbench-tool-boundaries`
@@ -243,10 +241,10 @@ remaining product choices.
 
 ## Open questions
 
-**OQ-1:** Ratify DEC-2/3: remove cwd equality while preserving existing evidence
-association and all actual ownership/admission checks. This is the directional
-contract change; Unit A does not depend on that decision. The recommendation is
-the existing Task/Item association, not an additional health-check protocol.
+DEC-2/3 define the evidence contract: remove cwd equality while preserving
+existing Task/Item association and all actual ownership/admission checks. Unit A
+remains independent of this contract; no additional health-check protocol is
+introduced.
 
 **OQ-2:** What caused the original Outline Runtime timeout? Before proposing a
 runtime fix, inspect the retained launch receipts/logs and reproduce with isolated
@@ -267,7 +265,7 @@ prerequisites of these units.
 
 ## Implementation checklist
 
-- [ ] Ratify Unit B's evidence boundary and reconcile #674's stated plan delta.
+- [ ] Verify Unit B against the shipped #674 directory owner and its new acceptance case.
 - [ ] Ship Unit A with actual pixel/provider-boundary evidence and owning specs.
 - [ ] Ship Unit B with Task authority, application verification and restart fixtures.
 - [ ] Complete the bounded startup investigation; add a causal fix only when supported.
