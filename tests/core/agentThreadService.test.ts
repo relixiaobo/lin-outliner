@@ -7559,12 +7559,13 @@ describe('background Task responsibility authority', () => {
     const input = { action: 'handoff', task_id: taskId, operation_id: 'cross-directory', expected_revision: 0, readiness: [checked.data.evidence] };
     const accepted = await execute('task_control', input);
     expect(accepted).toMatchObject({ ok: true, data: { receipt: { status: 'accepted', revision: 1 } } });
+    expect(accepted.instructions).toContain('This exact operation was accepted');
     expect((await execute('task_control', input)).data.receipt).toEqual(accepted.data.receipt);
     expect(service.projects.store.executionDefault(thread.id)).toMatchObject({ path: await realpath(b), revision: 2 });
     expect(tasks.readOwned(taskId, thread.id)).toMatchObject({ cwd: await realpath(a), executionContext: { address: original.executionContext.address } });
     await tasks.stop(taskId, thread.id, context.turn.id, 'agent');
     expect(await execute('task_control', { ...input, operation_id: 'stopped', expected_revision: tasks.readOwned(taskId, thread.id)!.continuation.revision }))
-      .toMatchObject({ ok: true, data: { receipt: { status: 'conflict' } } });
+      .toMatchObject({ ok: true, instructions: expect.stringContaining('The operation was not accepted'), data: { receipt: { status: 'conflict' } } });
     fixture.executor.finish();
     await service.waitForIdle(thread.id);
   });

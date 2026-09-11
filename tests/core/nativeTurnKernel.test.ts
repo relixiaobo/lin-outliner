@@ -539,8 +539,14 @@ describe('native turn kernel parity', () => {
         taskId, state: 'running', result: null,
         observation: { observedAt: expect.any(Number), output: expect.any(String), outputTruncated: true },
       } });
+      expect(header.instructions).toContain('There is no pending terminal event to acknowledge');
       expect(store.read(taskId)?.state).toBe('running');
       expect((await tasks.stop(taskId, context.thread.id))?.state).toBe('cancelled');
+      const stopped = await executeToolWithArguments(status, { task_id: taskId });
+      const stoppedMessage = stopped.gateway.requests[1]!.context.messages.find((message) => message.role === 'toolResult')!;
+      const stoppedHeader = JSON.parse((stoppedMessage.content[0] as { text: string }).text);
+      expect(stoppedHeader.instructions).toContain('There is no pending terminal event to acknowledge');
+      expect(stoppedHeader.instructions).toContain('availability is unknown, not proven unavailable');
       const timed = await bash.execute('timed-background', { command: 'sleep 30', run_in_background: true, timeout: 50 });
       const timedId = (timed.details as { data: { backgroundTaskId: string } }).data.backgroundTaskId;
       expect((await tasks.waitForTerminal(timedId, context.thread.id, 5_000))?.state).toBe('timed_out');

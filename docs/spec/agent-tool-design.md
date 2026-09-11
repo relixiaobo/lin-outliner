@@ -513,6 +513,14 @@ Report partial startup and preserve evidence when application verification fails
 An authorized reset uses the existing process/managed-content owners and an
 absence check, then requires the same application verification after restart.
 
+Task result instructions distinguish a successful tool exchange from an accepted
+operation. Conflict guidance requests exact Task/operation reconciliation without
+inferring a historical cause from current state. Accepted replay retains its
+original receipt; already-handled events create no new handler. Status asks for
+acknowledgement only when its observed event is pending. Exit zero describes the
+command, not continuing application health. Guidance neither retries writes nor
+changes receipt storage, operation identity or restart authority.
+
 `task_status.continuation` exposes revision, handoff, watch, Stop provenance, and
 event facts. Its optional `operation_id` reconciles an exact receipt read-only;
 `requestReference` identifies the latest reader request. After caller authorization,

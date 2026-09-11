@@ -82,7 +82,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
         "cwd": {
           "type": "string",
           "minLength": 1,
-          "description": "Directory for this call only. Relative paths resolve from the saved conversation work folder or application default; this does not change later calls."
+          "description": "Directory for this call only. Relative paths resolve from the selected Project primary folder or application default; this does not change later calls."
         }
       }
     }
@@ -140,7 +140,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
         "cwd": {
           "type": "string",
           "minLength": 1,
-          "description": "Directory for this call only. Relative paths resolve from the saved conversation work folder or application default; this does not change later calls."
+          "description": "Directory for this call only. Relative paths resolve from the selected Project primary folder or application default; this does not change later calls."
         }
       }
     }
@@ -168,7 +168,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
         "cwd": {
           "type": "string",
           "minLength": 1,
-          "description": "Directory for this call only. Relative paths resolve from the saved conversation work folder or application default; this does not change later calls."
+          "description": "Directory for this call only. Relative paths resolve from the selected Project primary folder or application default; this does not change later calls."
         }
       }
     }
@@ -257,7 +257,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
         "cwd": {
           "type": "string",
           "minLength": 1,
-          "description": "Directory for this call only. Relative paths resolve from the saved conversation work folder or application default; this does not change later calls."
+          "description": "Directory for this call only. Relative paths resolve from the selected Project primary folder or application default; this does not change later calls."
         }
       }
     }
@@ -302,7 +302,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
         "cwd": {
           "type": "string",
           "minLength": 1,
-          "description": "Directory for this call only. Relative paths resolve from the saved conversation work folder or application default; this does not change later calls."
+          "description": "Directory for this call only. Relative paths resolve from the selected Project primary folder or application default; this does not change later calls."
         }
       }
     }
@@ -330,7 +330,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
         "cwd": {
           "type": "string",
           "minLength": 1,
-          "description": "Directory for this call only. Relative paths resolve from the saved conversation work folder or application default; this does not change later calls."
+          "description": "Directory for this call only. Relative paths resolve from the selected Project primary folder or application default; this does not change later calls."
         }
       }
     }
