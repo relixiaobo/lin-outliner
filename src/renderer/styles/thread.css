@@ -3448,3 +3448,5 @@ textarea.thread-user-input-other {
 
 .thread-dock-conversation-surface[hidden],
 .thread-dock-scheduled[hidden] { display: none; }
+
+.thread-dock-header[hidden] { display: none; }

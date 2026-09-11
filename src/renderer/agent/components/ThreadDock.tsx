@@ -36,7 +36,7 @@ import { matchesShortcutEvent } from '../../ui/interactions/shortcutRegistry';
 import { useShortcutHint } from '../../ui/interactions/useShortcutHint';
 import { onThreadRailRevealRequest, requestSendContextToThreadComposer, type PendingComposerContext } from '../agentReveal';
 import type { ScheduledTasksViewState } from '../automations/ScheduledTasksView';
-import { BackIcon, ScheduledIcon } from '../../ui/icons';
+import { ScheduledIcon } from '../../ui/icons';
 
 const ProjectDialog = lazy(async () => ({ default: (await import('../projects/ProjectDialog')).ProjectDialog }));
 const ScheduledTasksView = lazy(async () => ({ default: (await import('../automations/ScheduledTasksView')).ScheduledTasksView }));
@@ -402,11 +402,9 @@ export const ThreadDock = memo(function ThreadDock({
       inert={open ? undefined : true}
     >
       <div className="thread-dock" ref={dockRef}>
-        <header className="thread-dock-header">
-          {scheduledOpen ? <IconButton icon={BackIcon} label={t.agent.thread.title}
-            onClick={() => setScheduledOpen(false)} variant="chrome" /> : null}
+        <header className="thread-dock-header" hidden={scheduledOpen}>
           {(
-            // Conversation access remains global while viewing scheduled work.
+            // The title opens conversations; scheduled work owns its own header.
             <div className="thread-dock-breadcrumb">
               <button
                 aria-expanded={listOpen}
@@ -416,7 +414,7 @@ export const ThreadDock = memo(function ThreadDock({
                 ref={threadListAnchorRef}
                 type="button"
               >
-                <span className="thread-dock-title">{scheduledOpen ? t.agent.automations.work.workspace : thread ? title : t.agent.thread.title}</span>
+                <span className="thread-dock-title">{thread ? title : t.agent.thread.title}</span>
                 <ChevronDownIcon
                   className={`thread-title-chevron${listOpen ? ' is-open' : ''}`}
                   size={ICON_SIZE.menu}
@@ -424,9 +422,9 @@ export const ThreadDock = memo(function ThreadDock({
               </button>
             </div>
           )}
-          {!scheduledOpen ? <IconButton icon={ScheduledIcon} label={t.agent.automations.work.workspace}
-            className="thread-dock-surface-action" onClick={() => showScheduledTasks()} variant="chrome" /> : null}
-          {thread && !scheduledOpen ? (
+          <IconButton icon={ScheduledIcon} label={t.agent.automations.work.workspace}
+            className="thread-dock-surface-action" onClick={() => showScheduledTasks()} variant="chrome" />
+          {thread ? (
             <ToolTaskStrip
               onClearDetails={(threadId) => threadStore.clearToolTaskDetails(threadId)}
               onRead={(threadId, taskId) => threadStore.readToolTask(threadId, taskId)}
@@ -439,8 +437,8 @@ export const ThreadDock = memo(function ThreadDock({
         {scheduledView ? <div className="thread-dock-scheduled" hidden={!scheduledOpen}>
           <Suspense fallback={<p className="thread-empty-copy">{t.agent.automations.loading}</p>}>
             <ScheduledTasksView active={open && scheduledOpen} view={scheduledView} onViewChange={setScheduledView}
-              indexStore={indexStore} onOpenNode={onOpenNodeReference} onOpenProcess={onOpenTurnDetails}
-              onDiscussResult={discussScheduledResult} />
+              indexStore={indexStore} projectCatalog={projects.view} onOpenNode={onOpenNodeReference} onOpenProcess={onOpenTurnDetails}
+              onDiscussResult={discussScheduledResult} onBackToConversations={() => setScheduledOpen(false)} />
           </Suspense>
         </div> : null}
         <div className="thread-dock-conversation-surface" hidden={scheduledOpen}>

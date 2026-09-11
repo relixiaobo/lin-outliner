@@ -1,14 +1,21 @@
 import { expect, test, type Page } from '@playwright/test';
+import type { ScheduledRunResult } from '../../src/core/agent/scheduledResult';
 import { commandCalls, openMockedApp } from './outlinerMock';
 
-async function createTask(page: Page) {
+async function createTask(page: Page, name = 'Repository review') {
   await page.getByRole('button', { name: 'New task', exact: true }).click();
   const sheet = page.getByRole('dialog', { name: 'New task' });
   await sheet.getByRole('textbox', { name: 'Task', exact: true }).fill('Review the repository and report important changes.');
-  await sheet.getByRole('textbox', { name: 'Name', exact: true }).fill('Repository review');
+  await sheet.getByRole('textbox', { name: 'Name', exact: true }).fill(name);
   await sheet.getByRole('button', { name: 'Create task', exact: true }).click();
   await expect(sheet).toHaveCount(0);
-  await expect(page.locator('.scheduled-task-detail h2')).toHaveText('Repository review');
+  await expect(page.locator('.scheduled-header h2')).toHaveText(name);
+}
+
+async function setResult(page: Page, runId: string, result: Partial<ScheduledRunResult>) {
+  await page.evaluate(({ runId, result }) => {
+    (window as unknown as { __LIN_E2E__: { setScheduledResult: (id: string, result: Partial<ScheduledRunResult>) => void } }).__LIN_E2E__.setScheduledResult(runId, result);
+  }, { runId, result });
 }
 
 test.describe('Scheduled tasks in Agent Deck', () => {
@@ -22,7 +29,7 @@ test.describe('Scheduled tasks in Agent Deck', () => {
 
   test('task navigation and conversation drafts survive switching without changing Outline panes', async ({ page }) => {
     const layout = await page.evaluate(() => localStorage.getItem('lin-outliner:workspace-layout:v7'));
-    const backToConversation = page.locator('.thread-dock-header').getByRole('button', { name: 'Threads', exact: true });
+    const backToConversation = page.locator('.thread-dock-header').getByRole('button', { name: 'Back to Threads', exact: true });
     await backToConversation.click();
     const composer = page.getByRole('textbox', { name: 'Message this Thread' });
     await composer.fill('Keep my conversation draft.');
@@ -31,15 +38,17 @@ test.describe('Scheduled tasks in Agent Deck', () => {
     await page.locator('.scheduled-task-detail').getByRole('button', { name: 'Run now', exact: true }).click();
     await expect(page.locator('.scheduled-result')).toContainText('The scheduled review was delivered.');
     await page.getByRole('button', { name: 'Back to tasks', exact: true }).click();
+    await page.getByRole('button', { name: 'Search scheduled tasks', exact: true }).click();
     await page.locator('.scheduled-search').fill('Repository');
     await page.locator('.scheduled-task-row').click();
+    await page.getByRole('button', { name: 'Back to tasks', exact: true }).click();
     await backToConversation.click();
     await expect(composer).toHaveText('Keep my conversation draft.');
     await page.locator('.thread-dock-header').getByRole('button', { name: 'Scheduled tasks', exact: true }).click();
-    await expect(page.locator('.scheduled-task-detail h2')).toHaveText('Repository review');
-    await expect(page.locator('.scheduled-result')).toContainText('The scheduled review was delivered.');
-    await page.getByRole('button', { name: 'Back to tasks', exact: true }).click();
     await expect(page.locator('.scheduled-search')).toHaveValue('Repository');
+    await page.locator('.scheduled-task-row').click();
+    await expect(page.locator('.scheduled-header h2')).toHaveText('Repository review');
+    await expect(page.locator('.scheduled-result')).toContainText('The scheduled review was delivered.');
     expect(await page.evaluate(() => localStorage.getItem('lin-outliner:workspace-layout:v7'))).toBe(layout);
   });
 
@@ -54,7 +63,7 @@ test.describe('Scheduled tasks in Agent Deck', () => {
       testHost.emitAutomationNotification({ type: 'automation/open', automationId: task.id });
     });
     await expect(page.locator('.agent-dock')).toHaveAttribute('data-rail-state', 'open');
-    await expect(page.locator('.scheduled-task-detail h2')).toHaveText('Repository review');
+    await expect(page.locator('.scheduled-header h2')).toHaveText('Repository review');
     expect(await page.evaluate(() => localStorage.getItem('lin-outliner:workspace-layout:v7'))).toBe(layout);
   });
 
@@ -78,7 +87,7 @@ test.describe('Scheduled tasks in Agent Deck', () => {
     expect(JSON.parse(context.value)).toMatchObject({ automationRunId: run.id, threadId: run.threadId, turnId: run.turnId });
     expect(context.value).not.toContain('The scheduled review was delivered.');
     await page.locator('.thread-dock-header').getByRole('button', { name: 'Scheduled tasks', exact: true }).click();
-    await expect(page.locator('.scheduled-task-detail h2')).toHaveText('Repository review');
+    await expect(page.locator('.scheduled-header h2')).toHaveText('Repository review');
     await expect(page.locator('.scheduled-result')).toContainText('The scheduled review was delivered.');
   });
 
@@ -99,17 +108,19 @@ test.describe('Scheduled tasks in Agent Deck', () => {
   test('creates an assignment, runs while paused, reads its result and restores an archive paused', async ({ page }) => {
     await createTask(page);
     const detail = page.locator('.scheduled-task-detail');
-    await detail.getByRole('button', { name: 'Pause schedule', exact: true }).click();
-    await expect(detail.getByRole('button', { name: 'Resume schedule', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Task actions', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Pause schedule', exact: true }).click();
+    await expect(detail.getByRole('button', { name: 'Edit task', exact: true })).toHaveText('Paused');
     await detail.getByRole('button', { name: 'Run now', exact: true }).click();
     await expect(detail.getByText('The scheduled review was delivered.', { exact: true })).toBeVisible();
-    await expect(detail.getByRole('button', { name: 'Resume schedule', exact: true })).toBeVisible();
+    await expect(detail.getByRole('button', { name: 'Edit task', exact: true })).toHaveText('Paused');
     const run = (await commandCalls(page)).find((call) => call.cmd === 'automation/startNow');
     expect(run?.args.expectedRevision).toBe(2);
-    await detail.getByRole('button', { name: 'Archive', exact: true }).click();
+    await page.getByRole('button', { name: 'Task actions', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Archive', exact: true }).click();
     await expect(detail.getByRole('button', { name: 'Restore', exact: true })).toBeVisible();
     await detail.getByRole('button', { name: 'Restore', exact: true }).click();
-    await expect(detail.getByRole('button', { name: 'Resume schedule', exact: true })).toBeVisible();
+    await expect(detail.getByRole('button', { name: 'Edit task', exact: true })).toHaveText('Paused');
     await expect(detail.getByText('The scheduled review was delivered.', { exact: true })).toBeVisible();
   });
 
@@ -134,11 +145,12 @@ test.describe('Scheduled tasks in Agent Deck', () => {
     await expect(page.locator('.scheduled-result')).toContainText('The scheduled review was delivered.');
     await page.locator('.scheduled-result').getByRole('button', { name: 'View process', exact: true }).click();
     await expect(page.locator('.thread-trajectory-panel')).toBeVisible();
-    await expect(page.locator('.agent-dock .scheduled-task-detail h2')).toHaveText('Repository review');
+    await expect(page.locator('.agent-dock .scheduled-header h2')).toHaveText('Repository review');
     await page.locator('.thread-trajectory-panel').getByRole('button', { name: 'Previous page', exact: true }).click();
-    await expect(page.locator('.scheduled-task-detail h2')).toHaveText('Repository review');
+    await expect(page.locator('.scheduled-header h2')).toHaveText('Repository review');
     await expect(page.locator('.scheduled-result')).toContainText('The scheduled review was delivered.');
-    await expect(page.locator('.scheduled-earlier-runs [aria-pressed="true"]')).toHaveCount(1);
+    await expect(page.locator('.scheduled-result')).toHaveAttribute('data-run-id', /.+/);
+    await expect(page.locator('.scheduled-history')).toHaveCount(0);
   });
 
   test('external edits preserve the draft and require an explicit reload or deliberate revision', async ({ page }) => {
@@ -211,7 +223,122 @@ test.describe('Scheduled tasks in Agent Deck', () => {
     await expect(sheet.getByRole('button', { name: 'On days', exact: true })).toBeVisible();
     await expect(sheet.getByText('/mock/workspace', { exact: true })).toBeVisible();
     await sheet.locator('.automation-editor-scroll').evaluate((element) => { element.scrollTop = 0; });
-    await page.screenshot({ path: testInfo.outputPath('scheduled-task-editor.png') });
+    await page.screenshot({ animations: 'disabled', path: testInfo.outputPath('scheduled-task-editor.png') });
+  });
+
+  test('the list has one title, on-demand search and keyboard-accessible archive discovery', async ({ page }) => {
+    await expect(page.getByRole('heading', { name: 'Scheduled tasks', exact: true })).toHaveCount(1);
+    await expect(page.locator('.scheduled-search')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /Needs attention/ })).toHaveCount(0);
+    await expect(page.getByText('No scheduled tasks yet.', { exact: true })).toBeVisible();
+    await page.keyboard.press('Meta+f');
+    await expect(page.locator('.scheduled-search')).toBeFocused();
+    await page.locator('.scheduled-search').fill('No such assignment');
+    await expect(page.getByText('No matching tasks', { exact: true })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.scheduled-search')).toHaveCount(0);
+    const more = page.getByRole('button', { name: 'Task list options', exact: true });
+    await more.focus(); await page.keyboard.press('Enter');
+    const archive = page.getByRole('menuitem', { name: 'Show archived tasks', exact: true });
+    await expect(archive).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('heading', { name: 'Archived tasks', exact: true })).toBeVisible();
+    await expect(page.getByText('No archived tasks.', { exact: true })).toBeVisible();
+  });
+
+  test('results lead the detail and older issues stay reachable after a newer success', async ({ page }, testInfo) => {
+    await createTask(page, 'AI morning brief');
+    await page.getByRole('button', { name: 'Run now', exact: true }).click();
+    const first = (await page.evaluate(() => window.lin!.automationRequest('runs', {}))).data[0]!;
+    await setResult(page, first.id, { state: 'failed', answer: null, parts: [], issues: [
+      { key: 'source-unavailable', text: 'The news source could not be reached.', turnId: first.turnId, terminal: true, acknowledged: false },
+    ] });
+    await page.getByRole('button', { name: 'Run now', exact: true }).click();
+    const second = (await page.evaluate(() => window.lin!.automationRequest('runs', {}))).data[0]!;
+    const answer = '## Three developments to watch\n\n**Smaller models are becoming more practical.** New releases focus on efficient local inference and lower operating costs.\n\n**Coding tools are improving their review workflow.** The useful change is clearer evidence before accepting edits.\n\n**Reliability still needs scrutiny.** Compare published results with your own tasks before switching providers.';
+    await setResult(page, second.id, { answer, parts: [{ text: answer, itemId: 'brief-answer', turnId: second.turnId!, finalCitations: [] }] });
+    await expect(page.locator('.scheduled-result')).toHaveAttribute('data-run-id', second.id);
+    await expect(page.locator('.scheduled-result')).toContainText('Three developments to watch');
+    expect(await page.locator('.scheduled-result .thread-markdown p').evaluateAll((nodes) => nodes[1]!.getBoundingClientRect().top - nodes[0]!.getBoundingClientRect().bottom)).toBeGreaterThan(0);
+    await expect(page.locator('.scheduled-history')).not.toHaveAttribute('open');
+    await expect(page.locator('.scheduled-task-info')).not.toHaveAttribute('open');
+    await expect(page.getByRole('button', { name: 'Pause schedule', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Archive', exact: true })).toHaveCount(0);
+    for (const colorScheme of ['light', 'dark'] as const) {
+      await page.emulateMedia({ colorScheme });
+      await page.screenshot({ animations: 'disabled', path: testInfo.outputPath(`task-result-${colorScheme}.png`) });
+    }
+    await page.locator('.scheduled-attention-history summary').click();
+    await page.locator('.scheduled-attention-history button').click();
+    await expect(page.locator('.scheduled-result')).toHaveAttribute('data-run-id', first.id);
+    await expect(page.getByText('The news source could not be reached.', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Acknowledge issue', exact: true }).click();
+    const acknowledgement = (await commandCalls(page)).findLast((call) => call.cmd === 'automation/acknowledge');
+    expect(acknowledgement?.args).toMatchObject({ id: first.id, issueKey: 'source-unavailable' });
+  });
+
+  test('attention beyond the first history page is discoverable from a successful result', async ({ page }) => {
+    await createTask(page);
+    await page.getByRole('button', { name: 'Collapse agent', exact: true }).click();
+    const first = await page.evaluate(async () => {
+      const task = (await window.lin!.automationRequest('list', {})).data[0]!;
+      let first: string | null = null;
+      for (let count = 0; count < 51; count++) {
+        const run = (await window.lin!.automationRequest('startNow', { id: task.id, expectedRevision: task.revision, requestId: `history-${count}` })).runs[0]!;
+        first ??= run.id;
+      }
+      return first!;
+    });
+    await setResult(page, first, { state: 'failed', answer: null, parts: [], issues: [
+      { key: 'older-cause', text: 'The old delivery still needs review.', turnId: null, terminal: true, acknowledged: false },
+    ] });
+    await page.getByRole('button', { name: 'Expand agent', exact: true }).click();
+    await expect(page.locator('.scheduled-result')).toContainText('The scheduled review was delivered.');
+    const attention = page.locator('.scheduled-attention-history');
+    await attention.locator('summary').click();
+    await attention.getByRole('button', { name: 'Previous runs', exact: true }).click();
+    await expect(attention.getByRole('button', { name: /Failed/ })).toBeVisible();
+    await attention.getByRole('button', { name: /Failed/ }).click();
+    await expect(page.locator('.scheduled-result')).toHaveAttribute('data-run-id', first);
+    await expect(page.getByText('The old delivery still needs review.', { exact: true })).toBeVisible();
+  });
+
+  test('task rows expose timing and attention without copying generated result text', async ({ page }, testInfo) => {
+    await createTask(page, 'AI morning brief');
+    await page.getByRole('button', { name: 'Run now', exact: true }).click();
+    const first = (await page.evaluate(() => window.lin!.automationRequest('runs', {}))).data[0]!;
+    await setResult(page, first.id, { state: 'failed', answer: null, parts: [], issues: [
+      { key: 'source', text: 'Provider diagnostics that must not become a list preview', turnId: first.turnId, terminal: true, acknowledged: false },
+    ] });
+    await page.getByRole('button', { name: 'Back to tasks', exact: true }).click();
+    await createTask(page, 'Weekly reading roundup');
+    await page.getByRole('button', { name: 'Back to tasks', exact: true }).click();
+    await createTask(page, 'Review project changes');
+    await page.getByRole('button', { name: 'Task actions', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Pause schedule', exact: true }).click();
+    await page.getByRole('button', { name: 'Back to tasks', exact: true }).click();
+    await expect(page.locator('.scheduled-task-row')).toHaveCount(3);
+    await expect(page.locator('.scheduled-task-list')).toContainText('Needs your attention');
+    await expect(page.locator('.scheduled-task-list')).not.toContainText('Provider diagnostics');
+    await expect(page.locator('.scheduled-task-list')).not.toContainText('No result yet');
+    for (const colorScheme of ['light', 'dark'] as const) {
+      await page.emulateMedia({ colorScheme });
+      await page.screenshot({ animations: 'disabled', path: testInfo.outputPath(`task-list-${colorScheme}.png`) });
+    }
+    await page.getByRole('button', { name: /Needs attention/ }).click();
+    await expect(page.locator('.scheduled-task-row')).toHaveCount(1);
+    await expect(page.locator('.scheduled-task-row')).toContainText('AI morning brief');
+  });
+
+  test('a waiting run has its own status and replaces Run now with Stop run', async ({ page }) => {
+    await createTask(page);
+    await page.getByRole('button', { name: 'Run now', exact: true }).click();
+    const run = (await page.evaluate(() => window.lin!.automationRequest('runs', {}))).data[0]!;
+    await setResult(page, run.id, { state: 'waiting', answer: null, parts: [] });
+    await expect(page.getByText('This task is waiting to start.', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Stop run', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Run now', exact: true })).toHaveCount(0);
+    await expect(page.locator('.scheduled-result')).not.toContainText('No delivered answer');
   });
 
   for (const colorScheme of ['light', 'dark'] as const) {
@@ -220,11 +347,11 @@ test.describe('Scheduled tasks in Agent Deck', () => {
       await page.setViewportSize({ width: 1100, height: 850 });
       await createTask(page);
       const workspace = page.locator('.scheduled-workspace');
-      await expect(workspace.getByRole('button', { name: 'Back to tasks', exact: true })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Back to tasks', exact: true })).toBeVisible();
       await expect(workspace.getByRole('button', { name: 'Run now', exact: true })).toBeVisible();
-      await workspace.getByRole('button', { name: 'Back to tasks', exact: true }).click();
+      await page.getByRole('button', { name: 'Back to tasks', exact: true }).click();
       await expect(page.locator('.scheduled-task-row', { hasText: 'Repository review' })).toBeVisible();
-      await page.screenshot({ path: testInfo.outputPath(`scheduled-tasks-${colorScheme}.png`) });
+      await page.screenshot({ animations: 'disabled', path: testInfo.outputPath(`scheduled-tasks-${colorScheme}.png`) });
       expect(await workspace.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
     });
   }

@@ -1310,7 +1310,8 @@ User asks agent to rewrite selected node
 ### Scheduled tasks in Agent Deck
 
 Scheduled tasks belong to the Agent Deck, independently of its selected
-conversation. The global header control opens the task list/detail surface;
+conversation. The global header control opens the task list/detail surface with
+a single title and Back action. Task views use one column at every Deck width;
 returning to conversations preserves both task navigation and the conversation
 draft. Task references and scroll positions are session-local Agent view state,
 not Outline layout entries. Native notices open the same surface. Discuss result

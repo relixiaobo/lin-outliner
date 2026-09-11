@@ -256,16 +256,34 @@ user-managed source folders.
 
 ## Renderer And Persistence
 
-The Agent Deck task surface has a compact task list and result-first detail.
-Below 720 logical Deck pixels it uses list/detail navigation while keeping both
-surfaces mounted. Switching back to conversations or collapsing the Deck retains
-task/run selection, filters, scroll, unfinished task edits and conversation drafts. Hidden task views do
-not mark results read or fetch result updates; reopening reconciles current facts.
+The Agent Deck task surface uses single-column list/detail navigation at every
+Deck width, keeping both surfaces mounted. Each screen has one title and one
+Back action: detail returns to the list, and the list returns to conversations.
+List rows show task name, next occurrence or paused/ended state, and factual
+attention, current execution or an unread delivered result when relevant. They never show generated-output
+snippets. Search expands on demand (including Cmd/Ctrl+F); archive discovery
+lives in the list menu. The attention filter appears only for unresolved causes
+or while selected. Loading, no tasks, no matches and unavailable lists remain
+distinct.
+
+Detail starts with one schedule row and one Run now / Stop run control. The task
+menu owns edit, pause/resume and archive. Live questions and exceptions precede
+the answer; a result's state and time stay adjacent to its content and Discuss
+result. Earlier runs is collapsed and absent when there is no other history.
+Older unresolved issues remain reachable through their own disclosure, including
+issues beyond the first history page. New arrivals refresh the pagination cursor
+without changing an explicitly selected historical run. Task
+information (brief, materials, location, timezone, local execution conditions
+and origin) is secondary and collapsed. Simplifying chrome changes neither
+canonical result availability nor exact issue acknowledgement.
+
+Switching back to conversations or collapsing the Deck retains
+task/run selection, filters, scroll, unfinished task edits and conversation
+drafts. Hidden task views do not mark results read or fetch result updates; reopening reconciles current facts.
 Native task notices open the exact assignment in the Deck. Discuss result returns
 to an ordinary conversation with an explicit result reference, staged after that
 exact conversation's composer initializes so mounting cannot clear the handoff.
-View process uses
-the shared Agent Trajectory inspector without replacing the task surface.
+View process uses the shared Agent Trajectory inspector without replacing the task surface.
 Create/edit uses a modal sheet with shared focus trapping and restoration.
 Dirty close requires explicit discard. Live result updates do not replace the
 form draft. A successful local pause updates the editor's base revision while

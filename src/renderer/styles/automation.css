@@ -825,91 +825,123 @@
   color: var(--text-quaternary);
 }
 
+.scheduled-surface,
 .scheduled-workspace {
-  container-type: inline-size;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
-  width: 100%;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
   min-width: 0;
-  height: 100%;
   min-height: 0;
+}
+
+.scheduled-workspace {
   background: var(--bg-content);
   color: var(--text-primary);
+  overflow: hidden;
+}
+
+.scheduled-header .thread-dock-title {
+  margin: 0;
+  flex: 1;
+}
+
+.scheduled-header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-1);
+  margin-inline-start: auto;
 }
 
 .scheduled-task-list,
 .scheduled-task-detail {
+  flex: 1;
   min-width: 0;
   min-height: 0;
-  padding: var(--space-8);
+  padding: var(--space-8) var(--agent-content-x);
   overflow: auto;
 }
 
-.scheduled-task-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  border-right: var(--space-hairline) solid var(--separator);
-  user-select: none;
-}
+.scheduled-task-list[hidden],
+.scheduled-task-detail[hidden] { display: none; }
 
-.scheduled-task-heading,
-.scheduled-actions,
-.scheduled-filters {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-4);
-}
-
-.scheduled-task-heading { justify-content: space-between; }
-.scheduled-task-heading h2 { font-size: var(--font-ui-md); }
-.scheduled-task-heading h3 { font-size: var(--font-ui-sm); }
-.scheduled-task-heading p,
-.scheduled-task-heading time,
-.scheduled-local-note,
-.scheduled-task-row small { color: var(--text-secondary); font-size: var(--font-ui-sm); }
-.scheduled-task-heading,
-.scheduled-actions,
-.scheduled-filters { user-select: none; }
-
-.scheduled-task-rows,
-.scheduled-earlier-runs { display: flex; flex-direction: column; gap: var(--space-2); }
+.scheduled-task-list { user-select: none; }
+.scheduled-task-rows { display: flex; flex-direction: column; }
 
 .scheduled-task-row {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--space-2);
-  padding: var(--space-6);
+  align-items: center;
+  width: 100%;
+  gap: var(--space-6);
+  padding: var(--space-6) var(--space-2);
   border: 0;
-  border-radius: var(--radius-md);
+  border-bottom: var(--space-hairline) solid var(--separator);
   background: transparent;
   color: var(--text-primary);
   text-align: start;
-  overflow-wrap: anywhere;
 }
 
+.scheduled-task-row-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; gap: var(--space-2); }
+.scheduled-task-row strong { font-size: var(--font-ui-md); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scheduled-task-row small { color: var(--text-secondary); font-size: var(--font-ui-sm); }
+.scheduled-row-chevron { flex: 0 0 auto; color: var(--text-tertiary); }
+.scheduled-row-attention { display: flex; align-items: center; gap: var(--space-2); }
 .scheduled-task-row:hover { background: var(--fill-1); }
-.scheduled-task-row[aria-pressed="true"],
-.scheduled-filters [aria-pressed="true"] { background: var(--fill-3); }
 .scheduled-task-row:focus-visible,
-.scheduled-search:focus-visible { outline: none; box-shadow: var(--focus-ring-shadow); }
+.scheduled-search:focus-visible,
+.scheduled-plan-link:focus-visible,
+.scheduled-disclosure > summary:focus-visible { outline: none; box-shadow: var(--focus-ring-shadow); }
 
+.scheduled-search-row { display: flex; align-items: center; gap: var(--space-2); margin-block-end: var(--space-6); }
 .scheduled-search {
+  flex: 1;
+  width: 100%;
   min-width: 0;
-  padding: var(--space-4) var(--space-6);
+  padding: var(--space-3) var(--space-4);
   border: 0;
   border-radius: var(--radius-sm);
   background: var(--fill-2);
   color: var(--text-primary);
   font: inherit;
+  font-size: var(--font-ui-sm);
 }
 
-.scheduled-result,
-.scheduled-issue { margin-block: var(--space-8); overflow-wrap: anywhere; }
-.scheduled-result { border-block: var(--space-hairline) solid var(--separator); padding-block: var(--space-8); }
-.scheduled-list-back { display: none; }
+.scheduled-attention-filter { margin-block-end: var(--space-4); }
+.scheduled-attention-filter[aria-pressed="true"] { background: var(--fill-3); }
+.scheduled-error { margin: var(--space-6) var(--space-8) 0; }
+
+.scheduled-plan-row { display: flex; align-items: center; gap: var(--space-4); margin-block-end: var(--space-8); user-select: none; }
+.scheduled-plan-link { flex: 1; min-width: 0; border: 0; padding: var(--space-2) 0; background: transparent; color: var(--text-secondary); font-size: var(--font-ui-sm); text-align: start; }
+button.scheduled-plan-link:hover { color: var(--text-primary); }
+.scheduled-plan-row > .button { flex: 0 0 auto; }
+
+.scheduled-result { margin-block: var(--space-8); overflow-wrap: anywhere; }
+.scheduled-result-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-2) var(--space-4); margin-block-end: var(--space-6); user-select: none; }
+.scheduled-result-heading h3 { font-size: var(--font-ui-sm); font-weight: 500; margin: 0; }
+.scheduled-result-heading time { color: var(--text-tertiary); font-size: var(--font-ui-sm); }
+.scheduled-task-heading,
+.scheduled-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-4); user-select: none; }
+.scheduled-task-heading { justify-content: space-between; }
+.scheduled-task-heading h2 { font-size: var(--font-ui-md); }
+.scheduled-result-actions { margin-block-start: var(--space-6); }
+.scheduled-issue { margin-block: var(--space-6); overflow-wrap: anywhere; }
+.scheduled-issue p { margin-block: 0 var(--space-4); }
+.scheduled-empty-copy,
+.scheduled-local-note { color: var(--text-secondary); font-size: var(--font-ui-sm); }
+
+.scheduled-disclosure { border-top: var(--space-hairline) solid var(--separator); padding-block: var(--space-5); }
+.scheduled-disclosure > summary { color: var(--text-secondary); font-size: var(--font-ui-sm); list-style-position: inside; user-select: none; }
+.scheduled-disclosure > summary:hover { color: var(--text-primary); }
+.scheduled-disclosure[open] > summary { margin-block-end: var(--space-6); }
+.scheduled-attention-history > summary svg { display: inline-block; vertical-align: middle; margin-inline-end: var(--space-2); }
+.scheduled-earlier-runs { display: flex; flex-direction: column; gap: var(--space-2); }
+.scheduled-earlier-runs > .button { justify-content: flex-start; text-align: start; }
+.scheduled-earlier-runs [aria-pressed="true"] { background: var(--fill-2); }
+.scheduled-task-info-content { color: var(--text-secondary); font-size: var(--font-ui-sm); overflow-wrap: anywhere; }
+.scheduled-task-info-content dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-4) var(--space-6); }
+.scheduled-task-info-content dt { color: var(--text-tertiary); }
+.scheduled-task-info-content dd { margin: 0; }
+.scheduled-task-info-content dd p { margin: 0; }
 
 .scheduled-editor-sheet {
   display: flex;
@@ -924,18 +956,6 @@
   padding: var(--space-8);
 }
 
-/* List/detail follows the Agent Deck width, independent of window width. */
-@container (max-width: 720px) {
-  .scheduled-task-list,
-  .scheduled-task-detail { grid-column: 1 / -1; }
-  .scheduled-task-list { border-right: 0; }
-  .scheduled-task-detail { display: none; }
-  .is-detail > .scheduled-task-list { display: none; }
-  .is-detail > .scheduled-task-detail { display: block; }
-  .scheduled-list-back { display: inline-flex; }
-}
-
-.scheduled-task-row strong { font-size: var(--font-ui-sm); font-weight: 500; }
 .scheduled-material { display: grid; gap: var(--space-4); margin-block: var(--space-6); }
 
 .scheduled-material-required {
@@ -964,3 +984,10 @@
 }
 .scheduled-advanced > summary:hover { color: var(--text-primary); }
 .scheduled-advanced > summary:focus-visible { outline: none; box-shadow: var(--focus-ring-shadow); }
+
+.scheduled-material-reference { color: var(--text-primary); background: transparent; border: 0; padding: 0; text-align: start; }
+.scheduled-material-reference:focus-visible { outline: none; box-shadow: var(--focus-ring-shadow); }
+.scheduled-task-info-content a { color: var(--link); }
+
+.scheduled-prose { font-size: var(--font-content); line-height: var(--line-content); }
+.scheduled-prose .thread-markdown > * + * { margin-block-start: var(--space-5); }

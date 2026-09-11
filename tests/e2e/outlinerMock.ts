@@ -1,3 +1,4 @@
+import type { ScheduledRunResult } from '../../src/core/agent/scheduledResult';
 import type { RequestUserInputRequest, UserInputSettlement, UserInputReadResponse } from '../../src/core/agent/protocol';
 import type { ProviderApiKeyReadMode, ProviderApiKeyReadResult } from '../../src/core/providerApiKeyPreview';
 import { PREFERENCE_DEFINITIONS, preferenceDefault } from '../../src/core/settingsDefinitions';
@@ -122,6 +123,7 @@ type E2EWindow = Window & {
     clipboardText: () => string;
     emitAgentCoreNotification: (notification: unknown) => void;
     emitAutomationNotification: (notification: unknown) => void;
+    setScheduledResult: (runId: string, result: Partial<ScheduledRunResult>) => void;
     /**
      * Seeds a Thread's canonical history. A drawer or a selection READS history
      * from the host, so a Turn only pushed as a notification is replaced by the
@@ -977,6 +979,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     };
     const mockAutomations: MockAutomation[] = [];
     const mockAutomationRuns: MockAutomationRun[] = [];
+    const scheduledResults = new Map<string, Partial<ScheduledRunResult>>();
     const mockThreadConfigurations = new Map<string, {
       modelProvider: string;
       model: string;
@@ -3670,6 +3673,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       clipboardText: () => clipboardText,
       emitAgentCoreNotification,
       emitAutomationNotification,
+      setScheduledResult(runId, result) {
+        scheduledResults.set(runId, clone(result));
+        const run = mockAutomationRuns.find((run) => run.id === runId);
+        if (run?.threadId) emitAgentCoreNotification({ type: 'thread/status/changed', threadId: run.threadId, status: clone(threadById(run.threadId).status) });
+      },
       setMockThreadTurns: (threadId, turns) => {
         mockTurns.set(threadId, clone(turns) as MockTurn[]);
       },
@@ -3848,8 +3856,14 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const result = run ? { run, state: 'completed', answer: 'The scheduled review was delivered.',
             parts: [{ text: 'The scheduled review was delivered.', itemId: 'mock-answer', turnId: run.turnId, finalCitations: [] }], answerTruncated: false,
             resultTurnId: run.turnId, startedAt: run.createdAt, finishedAt: run.createdAt + 20,
-            recordPath: '/mock/record.md', issues: [], issue: null, issueKey: null, acknowledged: false } : null;
-          return clone(method === 'summary' ? { attentionCount: 0, latest: result, current: null } : result) as T;
+            recordPath: '/mock/record.md', issues: [], issue: null, issueKey: null, acknowledged: false, ...scheduledResults.get(run.id) } : null;
+          const attentionCount = mockAutomationRuns.filter((run) => run.automationId === input.id).reduce((count, run) => count + (scheduledResults.get(run.id)?.issues ?? []).filter((issue) => !issue.acknowledged).length, 0);
+          return clone(method === 'summary' ? { attentionCount, latest: result, current: result && ['running', 'waiting', 'stopping'].includes(result.state) ? result : null } : result) as T;
+        }
+        if (method === 'acknowledge') {
+          const result = scheduledResults.get(String(input.id));
+          if (result) scheduledResults.set(String(input.id), { ...result, issues: result.issues?.map((issue) => issue.key === input.issueKey ? { ...issue, acknowledged: true } : issue) });
+          return clone(result) as T;
         }
         if (method === 'archive' || method === 'restore') {
           const task = mockAutomations.find((task) => task.id === input.id);

@@ -343,39 +343,48 @@ canonical run records into task-owned files.
 
 ### Screens and interaction
 
-**SCREEN-1: Scheduled tasks in Agent Deck.** A global Scheduled tasks control
-in the Agent Deck header opens the task surface alongside conversation access,
-independently of the selected conversation. It contributes no Outline sidebar
-entry or workspace panel type. Task ownership remains independent of conversation
-ownership; presentation stays in the Agent domain. At sufficient Deck width it
-has a compact task list and task detail; below 720 logical pixels it uses
-list/detail navigation with Back restoring selection and scroll. Switching to
-conversations or collapsing the Deck preserves task selection and conversation
-drafts. Discuss result creates an ordinary conversation with the exact result
-reference. Native task notices open the same Deck surface. View process reuses
-the ordinary Agent Trajectory inspector while retaining the task in the Deck.
+**SCREEN-1: Scheduled tasks in Agent Deck.** The global Deck entry opens a
+single-column task list, independently of the selected conversation. One header
+owns the screen title and one Back action: task detail returns to the list, and
+the list returns to conversations. No Outline navigation or panel is introduced.
+The same navigation works at every Deck width. Both surfaces remain mounted to
+preserve selection, scroll, unfinished edits and conversation drafts.
 
-The list offers **All** and **Needs attention**, with **Archived** in the list
-menu. Rows show name, latest result/exception, and the next planned time or paused
-state. Attention count includes unresolved questions/failures/uncertain outcomes,
-not every unread run. Opening a result marks that delivery read; reading alone
-does not resolve its question or failure. Selection never starts execution.
-Needs attention includes missed one-off decisions as well as run issues. Its
-count is the number of tasks with at least one unresolved cause, not the number
-of historical errors. Detail names each cause and its exact occurrence/run;
-repeated equivalent terminal failures can be grouped with an affected-run count.
-Acknowledgement targets the shown causes, and a later failure remains new attention.
+The list answers three questions: what work is saved, when it runs next, and
+whether the user needs to act. Each unboxed row contains the assignment name,
+its next occurrence or paused/ended state, and a factual attention/running or
+unread-result hint only when relevant. Generated answer/error text is not a list preview. Selecting
+a row opens its result; it never runs the task. Header actions are New task,
+Search and More. Search expands on demand (also Cmd/Ctrl+F), preserving the query
+when returning from a task. Archived tasks live in More. Needs attention appears
+only when there are unresolved causes or that filter is selected; there is no
+permanent zero-count filter strip. Empty, searching, loading and unavailable
+states use distinct, quiet copy at the list itself.
 
-**SCREEN-2: Task detail.** The header shows name, readable plan summary, and
-**Run now**, **Pause schedule / Resume schedule**, and **Edit task**. The content
-starts with the current execution/exception when present, followed by the most
-recent delivered result and **Earlier runs**. Configuration is secondary.
+**SCREEN-2: Task detail.** The single Deck header names the assignment. A compact
+schedule row shows the next occurrence or paused/ended state and opens the task
+editor. Run now is the only persistent management action; a current execution
+replaces it with Stop run or the factual Stopping state. Pause/resume, Edit and
+Archive/Restore are in the task's More menu. Origin and local execution conditions
+belong in task information, not in a permanent paragraph above every result.
 
-A result shows its actual outcome and scheduled/start/finish times as relevant,
-answer or explicit absence, files/notes, and **Discuss result** plus **View
-process**. Earlier runs are paginated; selecting one opens that exact run and
-its exact Turn position. A contextual Back returns to the task. Long content
-uses the normal reader. Files preserve their canonical availability and retention.
+The content starts with a live question or actionable exception when present;
+otherwise the delivered answer is the first substantial content. A compact run
+heading identifies its actual state and time. Discuss result is adjacent to the
+answer. View process is secondary to that exact result. Earlier runs is a
+collapsed disclosure, present only when history offers another run or page;
+opening it provides exact-run selection and pagination. Older unacknowledged
+issues remain reachable through a Needs attention disclosure even after a newer
+success. Reading a run marks it read but never acknowledges its issues. Result
+content uses the existing Markdown, citations and resource controls. Running,
+waiting, stopping, never-run and unavailable states must not all say No result.
+
+Task information is a secondary disclosure containing the durable brief,
+materials, work location, timezone and originating-conversation route. It uses
+existing source references and never guesses content availability. Create/edit
+and dirty/conflict behavior remain SCREEN-3. No function is removed to make the
+screen quieter; low-frequency controls and diagnostic information are disclosed
+at their point of use.
 
 Current execution displays its latest meaningful activity and **Stop run**.
 Questions use the shared user-input interaction in place. A delivered result
@@ -648,6 +657,18 @@ functional requirements above.
   or a newer question, reconciliation shall preserve those independent states.
   Lost notifications/reload shall recover the canonical request outcome without
   inferring acceptance from absence or showing a historical timeout as answerable.
+
+- **AC-42:** The list and detail shall each have one screen title and one Back
+  action. Default list rows shall contain no generated result text, permanent
+  zero-count filters or decorative cards. Search and archive remain keyboard
+  accessible through their header controls.
+- **AC-43:** A delivered answer shall precede task information and collapsed
+  history. The default detail shall have at most one persistent lifecycle action;
+  management menus shall preserve revision checks and focus restoration.
+- **AC-44:** Loading, no tasks, no search matches, never-run, live execution,
+  unavailable output and older unresolved issues shall retain distinct visible
+  states. Simplifying presentation shall not acknowledge an issue, mark hidden
+  output read, fabricate delivery or lose a draft.
 
 ### Recent iteration dependencies and implementation ownership
 
