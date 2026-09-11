@@ -117,8 +117,11 @@ eligible idle transitions enqueue the same durable per-Thread job rather than a
 timer per Thread.
 
 Phase 1 fingerprints the complete ordered eligible stream, then reads the oldest
-unprocessed complete Items in a batch of at most 500 Items, 120,000 characters,
-and fourteen source dates. Accepted origin coverage is private control state,
+unprocessed complete Items in a batch of at most 500 Items, 120,000 evidence-text
+characters, and fourteen source dates. The character count uses the exact text
+sent to the model: all original message-part text, including leading/trailing
+whitespace and extracted attachment text, or the content string for other Items.
+The trimmed comparison string never stands in for the transmitted parts. Accepted origin coverage is private control state,
 transactionally committed with source/lineage finalization. Failed batches advance
 nothing. Oversized individual Items remain pending with an explicit error rather
 than admitting a misleading prefix. A distinct durable continuation job handles
@@ -180,7 +183,11 @@ personal claim to cite reader-authored text, so web/MCP results, attachments,
 references, Host notifications and assistant prose alone cannot establish a user
 preference. The model must still distinguish the reader's own statement from a
 quotation or a transient instruction; a source label is not semantic proof.
-The Host does not treat model self-assessment as a quality guarantee. All cited
+Origin kind and the presence of reader-authored text are immutable private claim
+metadata. Each generated Node retains its subject in the control store and
+publication journal. These fields survive restart and are supplied to the
+consolidation model with its selected Nodes. The Host does not treat model
+self-assessment as a quality guarantee. All cited
 origins and source dates are validated before deduplication/redaction. Repeated
 Agent prose alone cannot support a new statement. A no-signal or empty-date
 result accepts its exact coverage without creating a day/container or withdrawing
@@ -225,8 +232,19 @@ user-edited Nodes always remain input. Untouched generated Nodes rank by citatio
 usage and recency and may age out of selection after ninety unused days, while
 unsupported Nodes remain eligible for cleanup.
 
-The internal model receives an isolated bounded graph snapshot and returns an
-exact change set. It may keep or update generated episodes and categories,
+The internal model receives an isolated bounded graph snapshot, including each
+Node's retained subject and current origin/source metadata, and returns an exact
+change set. Every create/update declares its subject. Personal creates and
+updates require current reader-text evidence at preparation and again at document
+admission. Existing personal Nodes cannot be downgraded to contextual knowledge
+to evade this rule. Day titles remain contextual navigation. The same rule
+covers extraction-time reuse/promotion of existing records; subject changes are
+part of the publication precondition. A generated personal Node with no current
+reader support is unsupported even if external origins remain, and cannot supply
+derived evidence to another proposal. Model judgment still owns whether the
+meaning of a new statement is personal or contextual.
+
+The model may keep or update generated episodes and categories,
 delete a complete generated subtree, merge duplicate generated episodes by
 updating one and deleting the other complete subtree, or create an episode or
 category beneath a container or episode. For a generated day container, a title
@@ -260,7 +278,14 @@ cleaned in bounded deepest-first batches. A generated ancestor inherits current
 descendant evidence when possible. If an ordinary or user-authoritative
 descendant makes deletion structurally impossible, the ancestor relinquishes
 generated ownership and becomes authoritative rather than keeping rollback
-suppression open forever. Each partial batch journals a distinct follow-up job.
+suppression open forever. Each partial batch journals a distinct follow-up job. An unsupported personal
+episode cannot inherit external-only support from generated contextual children.
+When its complete generated subtree is selected, cleanup reparents the surviving
+children directly under the same day container before purging the episode in the
+same transaction. Their subjects, current lineage and new parent fingerprints
+are journaled; this does not invent user authorship or add a model-facing move
+operation. Existing protection for ordinary/user-authoritative descendants and
+Reset subtree scope are unchanged.
 
 Deletion fails closed if any descendant is unselected, ordinary, or
 user-authoritative. User-authoritative Nodes cannot be updated or deleted by the

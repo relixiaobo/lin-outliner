@@ -3,6 +3,8 @@ import {
   memoryTagId,
   type MemoryConsolidationChange,
   type MemoryConsolidationNode,
+  type MemoryOriginSource,
+  type MemorySubject,
   type MemoryConsolidationOutput,
 } from '../../../../core/agent/memory';
 import type { Thread } from '../../../../core/agent/protocol';
@@ -100,7 +102,8 @@ export class Phase2 {
     const status = this.control.status();
     if (status.featureMode !== 'enabled') return 'disabled';
     const selected = this.selectInputs(sourceDate);
-    const hasUnsupported = selected.some((node) => node.generated && node.supportingOriginItemIds.length === 0);
+    const unsupported = new Set(this.control.generatedNodeIdsWithoutCurrentSupport());
+    const hasUnsupported = selected.some((node) => node.generated && unsupported.has(node.nodeId));
     const activeRollbacks = this.control.activeRollbacks();
     if (activeRollbacks.some((rollback) => rollback.status === 'prepared')) return 'unchanged';
     const rollbackIds = activeRollbacks.map((rollback) => rollback.rollbackId);
@@ -144,9 +147,14 @@ export class Phase2 {
         if (!fingerprint) throw new Error(`Memory deletion target disappeared during preparation: ${change.nodeId}`);
         return [[change.nodeId, fingerprint]];
       }));
+      const moveParents = prepared.changes.flatMap((change) => change.action === 'move' ? [change.parentId] : []);
+      const structuralInputs = this.timeline.graph().nodes.filter((node) => moveParents.includes(node.node.id));
       const payload: ConsolidationPublicationPayload = {
         titleSubtreeFingerprints,
-        inputFingerprints: Object.fromEntries(selected.map((entry) => [entry.nodeId, entry.fingerprint])),
+        inputFingerprints: Object.fromEntries([
+          ...selected.map((entry) => [entry.nodeId, entry.fingerprint]),
+          ...structuralInputs.map((entry) => [entry.node.id, timelineNodeFingerprint(entry)]),
+        ]),
         deletionSubtreeFingerprints,
         changes: prepared.changes,
         upsertedNodes: prepared.upsertedNodes,
@@ -222,9 +230,10 @@ export class Phase2 {
         || generatedRecord.userAuthoritative
         || generatedRecord.fingerprint !== fingerprint;
       const usage = this.control.usageForNode(entry.node.id);
-      const supportingOriginItemIds = this.control.lineageForNode(entry.node.id)
-        .filter((edge) => this.control.isOriginClaimed(edge.originItemId))
-        .map((edge) => edge.originItemId);
+      const supportingSources = this.control.lineageForNode(entry.node.id)
+        .map((edge) => this.control.originSource(edge.originItemId))
+        .filter((source): source is MemoryOriginSource => source !== null);
+      const supportingOriginItemIds = supportingSources.map((source) => source.originItemId);
       if (
         !sourceDate
         && !userAuthoritative
@@ -241,6 +250,8 @@ export class Phase2 {
         generated: !userAuthoritative,
         fingerprint,
         supportingOriginItemIds,
+        subject: generatedRecord?.subject ?? null,
+        supportingSources,
         rankUnsupported: unsupported.has(entry.node.id) ? 1 : 0,
         rankDepth: nodeDepth(entry.node.id, projection),
         rankUsage: usage.count,
@@ -333,6 +344,11 @@ function validatePreparedConsolidation(
   journal: MemoryPublicationRecord<ConsolidationPublicationPayload>,
   signal: AbortSignal,
 ): void {
+  for (const node of journal.payload.upsertedNodes) {
+    const current = control.generatedNodesById().get(node.nodeId);
+    if (current?.subject === 'user' && node.subject !== 'user') throw new Error('Personal Memory cannot be reclassified as context');
+    control.requireSubjectSupport(node.subject, journal.payload.lineage.filter((edge) => edge.nodeId === node.nodeId).map((edge) => edge.originItemId));
+  }
   validateTitleSubtrees(journal.payload.titleSubtreeFingerprints, timeline);
   validateConsolidationState(
     control,
@@ -402,7 +418,11 @@ function validateChanges(
     if (!node.generated && change.action !== 'keep') {
       throw new Error(`Memory consolidation cannot change user-authoritative Node: ${change.nodeId}`);
     }
+    if (change.action === 'update' && node.subject === 'user' && change.subject !== 'user') {
+      throw new Error('Personal Memory cannot be reclassified as context');
+    }
     if (node.category === 'memory' && change.action === 'update') {
+      if (change.subject !== 'context') throw new Error('A Memory day title is context, not a personal claim');
       if (!node.titleSourceNodeIds?.length) throw new Error('Memory title requires the complete source-day record set');
       if (change.text.length > 160) throw new Error('Memory title exceeds 160 characters');
       if (change.sourceNodeIds.some((id) => !node.titleSourceNodeIds!.includes(id))) {
@@ -445,6 +465,7 @@ function prepareConsolidation(
     readonly category: Exclude<MemoryConsolidationNode['category'], 'memory'>;
     readonly sourceDate: string;
     readonly text: string;
+    readonly subject: MemorySubject;
     readonly sourceNodeIds: readonly string[];
   }>();
   const resolveParent = (parentId: string) => temporaryIds.get(parentId) ?? parentId;
@@ -470,15 +491,14 @@ function prepareConsolidation(
         }
       }
       const lineage = currentLineage(change.sourceNodeIds, control);
-      if (lineage.length === 0) {
-        throw new Error(`Memory consolidation create has no current evidence: ${change.temporaryId}`);
-      }
+      control.requireSubjectSupport(change.subject, lineage.map((edge) => edge.originItemId));
       createdEntries.set(nodeId, {
         nodeId,
         parentId,
         category: change.category,
         sourceDate: parent.sourceDate,
         text: change.text,
+        subject: change.subject,
         sourceNodeIds: change.sourceNodeIds,
       });
       progressed = true;
@@ -490,6 +510,7 @@ function prepareConsolidation(
   const unsupportedNodeIds = new Set(control.generatedNodeIdsWithoutCurrentSupport().filter((nodeId) => entries.has(nodeId)));
   const releasedNodeIds = new Set<string>();
   const transferredLineage = new Map<string, readonly MemoryLineageInput[]>();
+  const moves = new Map<string, string>();
   if (unsupportedNodeIds.size > 0) {
     for (const node of selected) {
       if (!unsupportedNodeIds.has(node.nodeId)) continue;
@@ -512,9 +533,22 @@ function prepareConsolidation(
       }
       const supportingDescendants = descendants.filter((nodeId) => !unsupportedNodeIds.has(nodeId));
       const inherited = currentLineage(supportingDescendants, control);
-      if (inherited.length > 0) {
+      if (inherited.length > 0 && control.subjectHasCurrentSupport(node.subject ?? 'context', inherited.map((edge) => edge.originItemId))) {
         transferredLineage.set(node.nodeId, inherited);
         existingChanges.set(node.nodeId, { nodeId: node.nodeId, action: 'keep' });
+        continue;
+      }
+      if (inherited.length > 0) {
+        // Personal episode text cannot inherit external-only support. Preserve
+        // its independently supported generated children on the same day before
+        // removing that unsupported episode; no authored authority is invented.
+        const entry = entries.get(node.nodeId)!;
+        if (entry.category === 'episode' && descendants.every((id) => selectedById.has(id))) {
+          for (const childId of entry.node.children) {
+            if (existingChanges.get(childId)?.action !== 'delete') moves.set(childId, entry.containerId);
+          }
+          existingChanges.set(node.nodeId, { nodeId: node.nodeId, action: 'delete' });
+        }
         continue;
       }
       const completeSelectedSubtree = descendants.every((nodeId) => (
@@ -539,7 +573,9 @@ function prepareConsolidation(
     if (!record || record.userAuthoritative) {
       throw new Error(`Memory consolidation cannot delete user-authoritative Node: ${nodeId}`);
     }
+    const movedDescendants = new Set([...moves.keys()].flatMap((id) => [id, ...projectionDescendants(id, timeline)]));
     for (const descendantId of projectionDescendants(entry.node.id, timeline)) {
+      if (movedDescendants.has(descendantId)) continue;
       const descendant = generated.get(descendantId);
       if (!deletedNodeIds.has(descendantId) || !descendant || descendant.userAuthoritative) {
         throw new Error(`Memory consolidation cannot delete a Node with retained descendants: ${nodeId}`);
@@ -560,12 +596,14 @@ function prepareConsolidation(
     if (!entry || !record || record.userAuthoritative) {
       throw new Error(`Memory consolidation cannot update user-authoritative Node: ${node.nodeId}`);
     }
+    if (record.subject === 'user' && change.subject !== 'user') throw new Error('Personal Memory cannot be reclassified as context');
     upsertedNodes.push({
       ...record,
+      subject: change.subject,
       fingerprint: timelineNodeFingerprint(entry, change.text),
     });
     const evidence = currentLineage(node.category === 'memory' ? node.titleSourceNodeIds! : change.sourceNodeIds, control);
-    if (evidence.length === 0) throw new Error(`Memory consolidation update has no current evidence: ${node.nodeId}`);
+    control.requireSubjectSupport(change.subject, evidence.map((edge) => edge.originItemId));
     for (const edge of evidence) lineage.push({ ...edge, nodeId: node.nodeId });
   }
   for (const [nodeId, evidence] of transferredLineage) {
@@ -587,6 +625,7 @@ function prepareConsolidation(
     });
     upsertedNodes.push({
       nodeId: created.nodeId,
+      subject: created.subject,
       category: created.category,
       sourceDate: created.sourceDate,
       fingerprint: memoryNodeFingerprint({
@@ -602,6 +641,21 @@ function prepareConsolidation(
     for (const edge of currentLineage(created.sourceNodeIds, control)) {
       lineage.push({ ...edge, nodeId: created.nodeId });
     }
+  }
+  for (const [nodeId, parentId] of moves) {
+    const entry = entries.get(nodeId)!;
+    const index = upsertedNodes.findIndex((node) => node.nodeId === nodeId);
+    const record = index < 0 ? generated.get(nodeId)! : upsertedNodes[index]!;
+    const update = existingChanges.get(nodeId);
+    const moved = { ...record, fingerprint: memoryNodeFingerprint({
+      category: entry.category, sourceDate: entry.sourceDate, parentKey: parentId,
+      tags: entry.node.tags, text: update?.action === 'update' ? update.text : entry.node.content.text,
+    }) };
+    if (index < 0) {
+      upsertedNodes.push(moved);
+      for (const edge of currentLineage([nodeId], control)) lineage.push({ ...edge, nodeId });
+    } else upsertedNodes[index] = moved;
+    canonicalChanges.push({ action: 'move', nodeId, parentId });
   }
   for (const created of createdEntries.values()) {
     if (deletedNodeIds.has(created.parentId)) {
@@ -641,9 +695,10 @@ function createdEntryAsCanonical(entry: {
 function currentLineage(nodeIds: readonly string[], control: MemoryControlStore): readonly MemoryLineageInput[] {
   const byOrigin = new Map<string, MemoryLineageInput>();
   for (const nodeId of nodeIds) {
-    for (const edge of control.lineageForNode(nodeId)) {
-      if (control.isOriginClaimed(edge.originItemId)) byOrigin.set(edge.originItemId, edge);
-    }
+    const edges = control.lineageForNode(nodeId).filter((edge) => control.isOriginClaimed(edge.originItemId));
+    const record = control.generatedNodesById().get(nodeId);
+    if (record && !record.userAuthoritative && !control.subjectHasCurrentSupport(record.subject, edges.map((edge) => edge.originItemId))) continue;
+    for (const edge of edges) byOrigin.set(edge.originItemId, edge);
   }
   return [...byOrigin.values()];
 }
@@ -679,6 +734,8 @@ function consolidationPrompt(nodes: readonly MemoryConsolidationNode[]): string 
     task: 'Reconcile the selected Daily Timeline Memory graph.',
     rules: [
       'Keep user-authored or user-edited Nodes unchanged, including manually edited day titles.',
+      'Every create/update declares subject:user for personal preferences or background, or subject:context otherwise. A personal Node cannot be downgraded to context. Day titles remain context.',
+      'Use supportingSources to inspect actual origin kinds and reader-text availability. Personal creates and updates require current reader-authored text; web/MCP/attachment/Host/assistant sources alone cannot establish or replace them. Preserve the actual attribution and scope of external knowledge.',
       'A generated memory container starts as Memory. titleSourceNodeIds is provided only after that source day ends and its eligible evidence has finished processing, with the complete same-day record set selected.',
       'Then give that finished day a short, vivid and memorable title grounded in its records, using their language and at most 160 characters. A concrete image or gentle wordplay is welcome when it fits; never invent events, exaggerate, or force humor.',
       'A day title is navigation, not new evidence or a daily narrative. Summarize the resulting retained records without repeating Memory or the date. Keep it when it still describes the content.',
@@ -698,6 +755,7 @@ function consolidationPrompt(nodes: readonly MemoryConsolidationNode[]): string 
           nodeId: 'exact supplied id',
           action: 'update',
           text: 'updated Memory text',
+          subject: 'user | context',
           sourceNodeIds: ['supplied nodeId carrying evidence'],
         },
         { nodeId: 'exact supplied id', action: 'keep | delete' },
@@ -707,6 +765,7 @@ function consolidationPrompt(nodes: readonly MemoryConsolidationNode[]): string 
           parentId: 'supplied nodeId or earlier temporaryId',
           category: 'episode | belief | question | guidance',
           text: 'new Memory text',
+          subject: 'user | context',
           sourceNodeIds: ['supplied nodeId carrying evidence'],
         },
       ],

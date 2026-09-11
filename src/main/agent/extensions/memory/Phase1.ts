@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import {
   decodeMemoryStage1Output,
+  memoryEvidenceHasReaderText,
+  type MemorySubject,
   memoryTagId,
   type MemoryCategory,
   type MemoryEvidenceSource,
@@ -65,6 +67,7 @@ interface Stage1PublicationPayload {
 }
 
 interface Stage1TargetSnapshot {
+  readonly subject: MemorySubject | null;
   readonly nodeId: string;
   readonly fingerprint: string | null;
   readonly generatedState: 'missing' | 'generated' | 'userAuthoritative';
@@ -98,7 +101,7 @@ export class Phase1 {
       batchId: uuidV7(),
     };
     for (const item of evidence.items) {
-      if (!this.control.claimOrigin(item.originItemId, item.threadId, item.turnId, item.sourceDate, item.contentHash)) {
+      if (!this.control.claimOrigin(item.originItemId, item.threadId, item.turnId, item.sourceDate, item.contentHash, { source: item.source, hasReaderText: memoryEvidenceHasReaderText(item) })) {
         throw new Error(`Memory evidence origin is already owned by another Thread: ${item.originItemId}`);
       }
     }
@@ -198,6 +201,14 @@ export class Phase1 {
       if (journal.payload.lineage.some((edge) => this.control.isTurnExcluded(edge.turnId))) throw abortError();
       if (this.validateSource && !await this.validateSource(journal.payload.threadId, journal.payload.sourceVersion)) {
         throw new Error('Thread changed during Memory extraction');
+      }
+      for (const nodeId of new Set(journal.payload.lineage.map((edge) => edge.nodeId))) {
+        const node = journal.payload.nodes.find((node) => node.nodeId === nodeId) ?? this.control.generatedNodesById().get(nodeId);
+        if (!node) throw new Error('Memory publication lost its subject');
+        this.control.requireSubjectSupport(node.subject, [
+          ...this.control.lineageForNode(nodeId).filter((edge) => this.control.isOriginClaimed(edge.originItemId)),
+          ...journal.payload.lineage.filter((edge) => edge.nodeId === nodeId),
+        ].map((edge) => edge.originItemId));
       }
       validateTargetSnapshots(journal.payload.targetSnapshots, this.timeline, this.control);
     });
@@ -306,13 +317,16 @@ export function collectMemoryEvidence(source: Phase1Source, control: MemoryContr
   let totalChars = 0;
   for (const candidate of pending) {
     if (items.length === MAX_EVIDENCE_ITEMS || (dates.size === 14 && !dates.has(candidate.sourceDate))) break;
-    if (totalChars + candidate.content.length > MAX_EVIDENCE_CHARS) {
+    const sentChars = candidate.parts
+      ? candidate.parts.reduce((sum, part) => sum + part.text.length, 0)
+      : candidate.content.length;
+    if (totalChars + sentChars > MAX_EVIDENCE_CHARS) {
       if (items.length === 0) throw new Error('Memory evidence Item exceeds the complete-input budget; batch remains pending');
       break;
     }
     items.push(candidate);
     dates.add(candidate.sourceDate);
-    totalChars += candidate.content.length;
+    totalChars += sentChars;
   }
   return { items: Object.freeze(items), sourceVersion, hasMore: pending.length > items.length };
 }
@@ -347,7 +361,16 @@ function preparePublicationPayload(
 
   // Preserve exact current text and every previous source edge. New evidence is
   // additive; only rollback/forget/consolidation can withdraw an accepted claim.
-  const support = (nodeId: string, origins: readonly string[]) => {
+  const support = (nodeId: string, origins: readonly string[], subject?: MemorySubject) => {
+    const record = nodes.get(nodeId) ?? generatedById.get(nodeId);
+    if (!record) throw new Error('Memory support requires a registered subject');
+    const retainedSubject = record.subject === 'user' || subject === 'user' ? 'user' : 'context';
+    control.requireSubjectSupport(retainedSubject, [
+      ...control.lineageForNode(nodeId).filter((edge) => control.isOriginClaimed(edge.originItemId)).map((edge) => edge.originItemId),
+      ...lineage.filter((edge) => edge.nodeId === nodeId).map((edge) => edge.originItemId),
+      ...origins,
+    ]);
+    if (record.subject !== retainedSubject) nodes.set(nodeId, { ...record, subject: retainedSubject });
     for (const originItemId of origins) {
       const item = evidenceByOrigin.get(originItemId)!;
       lineage.push({ nodeId, threadId: thread.id, turnId: item.turnId, originItemId });
@@ -362,7 +385,7 @@ function preparePublicationPayload(
       const key = JSON.stringify([category, normalizedText(statement.text)]);
       const preparedId = preparedStatements.get(key);
       if (preparedId) {
-        support(preparedId, statement.originItemIds);
+        support(preparedId, statement.originItemIds, statement.subject);
         return preparedId;
       }
       // Compare all canonical Nodes exactly even when the model's comparison view
@@ -373,16 +396,16 @@ function preparePublicationPayload(
         targetIds.add(match.node.id);
         const record = generatedById.get(match.node.id);
         if (record && !record.userAuthoritative && record.fingerprint === timelineNodeFingerprint(match)) {
-          support(match.node.id, statement.originItemIds);
+          support(match.node.id, statement.originItemIds, statement.subject);
         }
         return match.node.id;
       }
       const nodeId = freshNodeId();
       preparedStatements.set(key, nodeId);
       records.push({ nodeId, category, text: statement.text, parentId });
-      nodes.set(nodeId, generated(nodeId, category, date.sourceDate, parentId, statement.text, now));
+      nodes.set(nodeId, generated(nodeId, category, date.sourceDate, parentId, statement.text, now, statement.subject));
       targetIds.add(nodeId);
-      support(nodeId, statement.originItemIds);
+      support(nodeId, statement.originItemIds, statement.subject);
       return nodeId;
     };
     // An already retained episode is comparison evidence, not a destination for
@@ -398,7 +421,7 @@ function preparePublicationPayload(
     if (records.length === 0) continue;
     targetIds.add(containerId);
     if (!existingContainer) {
-      nodes.set(containerId, generated(containerId, 'memory', date.sourceDate, `date:${date.sourceDate}`, 'Memory', now));
+      nodes.set(containerId, generated(containerId, 'memory', date.sourceDate, `date:${date.sourceDate}`, 'Memory', now, 'context'));
     }
     const containerRecord = generatedById.get(containerId);
     if (!existingContainer || (containerRecord && !containerRecord.userAuthoritative
@@ -412,6 +435,7 @@ function preparePublicationPayload(
   const projection = timeline.projection();
   const targetSnapshots = [...targetIds].map((nodeId): Stage1TargetSnapshot => ({
     nodeId,
+    subject: generatedById.get(nodeId)?.subject ?? null,
     fingerprint: timelineNodeStateFingerprint(nodeId, projection, graph),
     generatedState: generatedById.get(nodeId)?.userAuthoritative
       ? 'userAuthoritative' : generatedById.has(nodeId) ? 'generated' : 'missing',
@@ -426,9 +450,11 @@ function generated(
   parentKey: string,
   text: string,
   generatedAt: number,
+  subject: MemorySubject,
 ): MemoryGeneratedNodeRecord {
   return {
     nodeId,
+    subject,
     category,
     sourceDate,
     fingerprint: memoryNodeFingerprint({
@@ -492,7 +518,7 @@ function validateStage1Output(
     for (const statement of statements) {
       if (statement.subject === 'user' && !statement.originItemIds.some((id) => {
         const item = byOrigin.get(id);
-        return item?.source === 'reader' && item.parts?.some((part) => part.type === 'text' && part.text.trim());
+        return item && memoryEvidenceHasReaderText(item);
       })) throw new Error('Personal Memory requires reader-authored text; external or host content cannot establish a user preference');
       if (statement.originItemIds.every((id) => byOrigin.get(id)?.source === 'assistant')) {
         throw new Error('Repeated Agent prose is not independent Memory evidence');
@@ -528,6 +554,7 @@ function validateTargetSnapshots(
       : generated.has(snapshot.nodeId) ? 'generated' : 'missing';
     if (
       currentState !== snapshot.generatedState
+      || (generated.get(snapshot.nodeId)?.subject ?? null) !== snapshot.subject
       || timelineNodeStateFingerprint(snapshot.nodeId, projection, graph) !== snapshot.fingerprint
     ) {
       throw new Error(`Memory Node changed during extraction: ${snapshot.nodeId}`);

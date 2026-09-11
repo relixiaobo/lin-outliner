@@ -78,6 +78,7 @@ export type TimelineConsolidationChange =
   | { readonly nodeId: string; readonly action: 'keep' }
   | { readonly nodeId: string; readonly action: 'update'; readonly text: string }
   | { readonly nodeId: string; readonly action: 'delete' }
+  | { readonly nodeId: string; readonly action: 'move'; readonly parentId: string }
   | {
       readonly nodeId: string;
       readonly action: 'create';
@@ -231,6 +232,11 @@ export class TimelineMemoryStore {
         if (change.action === 'update' && index.has(change.nodeId)) {
           operations.push(updateTextChange(change.nodeId, change.text));
         }
+      }
+      for (const change of changes) {
+        if (change.action === 'move') operations.push({
+          op: 'move', targets: oneId(change.nodeId), placement: { kind: 'last', parent: oneId(change.parentId) },
+        });
       }
       const deletes = changes
         .filter((change) => change.action === 'delete' && index.has(change.nodeId))

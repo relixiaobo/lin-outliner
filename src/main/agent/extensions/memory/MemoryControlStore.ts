@@ -5,6 +5,9 @@ import type {
   MemoryAdmissionSnapshot,
   MemoryFeatureMode,
   MemoryStatus,
+  MemoryEvidenceSource,
+  MemoryOriginSource,
+  MemorySubject,
   ThreadMemoryMode,
 } from '../../../../core/agent/memory';
 import type { ThreadId, ThreadItemId, TurnId } from '../../../../core/agent/protocol';
@@ -55,6 +58,7 @@ interface RollbackRow {
   created_at: number;
 }
 interface GeneratedNodeRow {
+  subject: MemorySubject;
   node_id: string;
   category: string;
   source_date: string;
@@ -84,6 +88,7 @@ export interface MemoryPublicationRecord<T = unknown> {
 }
 
 export interface MemoryGeneratedNodeRecord {
+  readonly subject: MemorySubject;
   readonly nodeId: string;
   readonly category: string;
   readonly sourceDate: string;
@@ -199,12 +204,15 @@ export class MemoryControlStore {
         thread_id TEXT NOT NULL,
         turn_id TEXT NOT NULL,
         source_date TEXT NOT NULL,
-        content_hash TEXT NOT NULL
+        content_hash TEXT NOT NULL,
+        source TEXT NOT NULL CHECK (source IN ('reader', 'host', 'assistant', 'tool', 'web', 'mcp')),
+        has_reader_text INTEGER NOT NULL CHECK (has_reader_text IN (0, 1) AND (has_reader_text = 0 OR source = 'reader'))
       ) STRICT;
       CREATE TABLE IF NOT EXISTS processed_origins (
         origin_item_id TEXT PRIMARY KEY REFERENCES origin_claims(origin_item_id) ON DELETE CASCADE
       ) STRICT;
       CREATE TABLE IF NOT EXISTS generated_nodes (
+        subject TEXT NOT NULL CHECK (subject IN ('user', 'context')),
         node_id TEXT PRIMARY KEY,
         category TEXT NOT NULL,
         source_date TEXT NOT NULL,
@@ -451,20 +459,40 @@ export class MemoryControlStore {
     turnId: TurnId,
     sourceDate: string,
     contentHash: string,
+    source: Omit<MemoryOriginSource, 'originItemId'>,
   ): boolean {
     const result = this.db.prepare(`
-      INSERT OR IGNORE INTO origin_claims(origin_item_id, thread_id, turn_id, source_date, content_hash)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(originItemId, threadId, turnId, sourceDate, contentHash);
+      INSERT OR IGNORE INTO origin_claims(origin_item_id, thread_id, turn_id, source_date, content_hash, source, has_reader_text)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(originItemId, threadId, turnId, sourceDate, contentHash, source.source, source.hasReaderText ? 1 : 0);
     if (Number(result.changes) === 1) {
       this.invalidateMemoryVisibilityCache();
       return true;
     }
     const row = this.db.prepare('SELECT * FROM origin_claims WHERE origin_item_id = ?').get(originItemId) as {
-      thread_id: string; turn_id: string; source_date: string; content_hash: string;
+      thread_id: string; turn_id: string; source_date: string; content_hash: string; source: MemoryEvidenceSource; has_reader_text: number;
     };
     return row.thread_id === threadId && row.turn_id === turnId
-      && row.source_date === sourceDate && row.content_hash === contentHash;
+      && row.source_date === sourceDate && row.content_hash === contentHash
+      && row.source === source.source && row.has_reader_text === Number(source.hasReaderText);
+  }
+
+  originSource(originItemId: ThreadItemId): MemoryOriginSource | null {
+    const row = this.db.prepare('SELECT source, has_reader_text FROM origin_claims WHERE origin_item_id = ?').get(originItemId) as
+      { source: MemoryEvidenceSource; has_reader_text: number } | undefined;
+    return row ? { originItemId, source: row.source, hasReaderText: row.has_reader_text === 1 } : null;
+  }
+
+  subjectHasCurrentSupport(subject: MemorySubject, originItemIds: readonly ThreadItemId[]): boolean {
+    const sources = originItemIds.map((id) => this.originSource(id));
+    return sources.length > 0 && sources.every((source) => source !== null)
+      && (subject === 'context' || sources.some((source) => source?.source === 'reader' && source.hasReaderText));
+  }
+
+  requireSubjectSupport(subject: MemorySubject, originItemIds: readonly ThreadItemId[]): void {
+    if (!this.subjectHasCurrentSupport(subject, originItemIds)) {
+      throw new Error(subject === 'user' ? 'Personal Memory requires current reader-authored text' : 'Memory has no current evidence');
+    }
   }
 
   originSourceDate(originItemId: ThreadItemId): string | null {
@@ -488,6 +516,7 @@ export class MemoryControlStore {
       WHERE generated.user_authoritative = 0
       GROUP BY generated.node_id, generated.generated_at
       HAVING COUNT(origin.origin_item_id) = 0
+        OR (generated.subject = 'user' AND SUM(CASE WHEN origin.source = 'reader' AND origin.has_reader_text = 1 THEN 1 ELSE 0 END) = 0)
       ORDER BY generated.generated_at, generated.node_id
     `).all() as Array<{ node_id: string }>).map((row) => row.node_id));
     return this.unsupportedGeneratedNodeIdsCache;
@@ -638,6 +667,7 @@ export class MemoryControlStore {
       (this.db.prepare('SELECT * FROM generated_nodes ORDER BY generated_at, node_id').all() as GeneratedNodeRow[])
         .map((row) => Object.freeze({
           nodeId: row.node_id,
+          subject: row.subject,
           category: row.category,
           sourceDate: row.source_date,
           fingerprint: row.fingerprint,
@@ -671,6 +701,7 @@ export class MemoryControlStore {
       ORDER BY generated_nodes.source_date, generated_nodes.category, generated_nodes.node_id
     `).all(threadId) as GeneratedNodeRow[]).map((row) => ({
       nodeId: row.node_id,
+      subject: row.subject,
       category: row.category,
       sourceDate: row.source_date,
       fingerprint: row.fingerprint,
@@ -973,9 +1004,10 @@ export class MemoryControlStore {
   ): void {
     for (const node of nodes) {
       this.db.prepare(`
-        INSERT INTO generated_nodes(node_id, category, source_date, fingerprint, user_authoritative, generated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO generated_nodes(node_id, category, source_date, fingerprint, user_authoritative, generated_at, subject)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(node_id) DO UPDATE SET
+          subject = CASE WHEN generated_nodes.subject = 'user' THEN 'user' ELSE excluded.subject END,
           category = excluded.category,
           source_date = excluded.source_date,
           fingerprint = excluded.fingerprint,
@@ -988,6 +1020,7 @@ export class MemoryControlStore {
         node.fingerprint,
         node.userAuthoritative ? 1 : 0,
         node.generatedAt,
+        node.subject,
       );
     }
     for (const edge of lineage) {

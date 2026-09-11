@@ -50,6 +50,14 @@ export interface MemoryView {
   readonly thread: ThreadMemoryStatus | null;
 }
 
+export type MemorySubject = 'user' | 'context';
+
+export interface MemoryOriginSource {
+  readonly originItemId: ThreadItemId;
+  readonly source: MemoryEvidenceSource;
+  readonly hasReaderText: boolean;
+}
+
 export type MemoryEvidenceSource = 'reader' | 'host' | 'assistant' | 'tool' | 'web' | 'mcp';
 
 export interface MemoryEvidencePart {
@@ -72,7 +80,7 @@ export interface MemoryStage1EvidenceItem {
 
 export interface MemoryStage1Statement {
   /** Semantic routing, never permission or authorship authority. */
-  readonly subject: 'user' | 'context';
+  readonly subject: MemorySubject;
   readonly text: string;
   readonly originItemIds: readonly ThreadItemId[];
   readonly rationale: { readonly futureUse: string; readonly novelty: string };
@@ -94,6 +102,8 @@ export interface MemoryStage1Output {
 }
 
 export interface MemoryConsolidationNode {
+  readonly subject: MemorySubject | null;
+  readonly supportingSources: readonly MemoryOriginSource[];
   readonly nodeId: string;
   readonly parentId: string | null;
   readonly category: MemoryCategory;
@@ -113,6 +123,7 @@ export interface MemoryConsolidationKeepChange {
 }
 
 export interface MemoryConsolidationUpdateChange {
+  readonly subject: MemorySubject;
   readonly nodeId: string;
   readonly action: 'update';
   readonly text: string;
@@ -125,6 +136,7 @@ export interface MemoryConsolidationDeleteChange {
 }
 
 export interface MemoryConsolidationCreateChange {
+  readonly subject: MemorySubject;
   readonly temporaryId: string;
   readonly action: 'create';
   readonly parentId: string;
@@ -192,9 +204,8 @@ function stage1Statement(value: unknown, field: string, charLimit: number): Memo
     throw new Error(`${field}.originItemIds must contain distinct evidence IDs`);
   }
   const rationale = exactRecord(record.rationale, ['futureUse', 'novelty'], `${field}.rationale`);
-  if (record.subject !== 'user' && record.subject !== 'context') throw new Error('Memory subject must be user or context');
   return Object.freeze({
-    subject: record.subject,
+    subject: decodeMemorySubject(record.subject),
     rationale: Object.freeze({
       futureUse: boundedString(rationale.futureUse, 'rationale.futureUse', 600),
       novelty: boundedString(rationale.novelty, 'rationale.novelty', 600),
@@ -230,7 +241,7 @@ export function decodeMemoryConsolidationOutput(value: unknown): MemoryConsolida
     if (action === 'create') {
       assertExactKeys(
         item,
-        ['temporaryId', 'action', 'parentId', 'category', 'text', 'sourceNodeIds'],
+        ['temporaryId', 'action', 'parentId', 'category', 'text', 'subject', 'sourceNodeIds'],
         `Memory consolidation changes[${index}]`,
       );
       const temporaryId = string(item.temporaryId, 'temporaryId');
@@ -247,12 +258,13 @@ export function decodeMemoryConsolidationOutput(value: unknown): MemoryConsolida
         action,
         parentId: string(item.parentId, 'parentId'),
         category,
+        subject: decodeMemorySubject(item.subject),
         text: boundedString(item.text, 'text', 2_000),
         sourceNodeIds,
       });
     }
     const allowed = action === 'update'
-      ? ['nodeId', 'action', 'text', 'sourceNodeIds']
+      ? ['nodeId', 'action', 'text', 'subject', 'sourceNodeIds']
       : ['nodeId', 'action'];
     assertExactKeys(item, allowed, `Memory consolidation changes[${index}]`);
     const nodeId = string(item.nodeId, 'nodeId');
@@ -261,6 +273,7 @@ export function decodeMemoryConsolidationOutput(value: unknown): MemoryConsolida
       return Object.freeze({
         nodeId,
         action,
+        subject: decodeMemorySubject(item.subject),
         text: boundedString(item.text, 'text', 2_000),
         sourceNodeIds,
       });
@@ -331,4 +344,13 @@ function assertKnownKeys(record: Record<string, unknown>, keys: readonly string[
   const allowed = new Set(keys);
   const unknown = Object.keys(record).find((key) => !allowed.has(key));
   if (unknown) throw new Error(`${field} contains unknown field: ${unknown}`);
+}
+
+export function decodeMemorySubject(value: unknown): MemorySubject {
+  if (value !== 'user' && value !== 'context') throw new Error('Memory subject must be user or context');
+  return value;
+}
+
+export function memoryEvidenceHasReaderText(item: MemoryStage1EvidenceItem): boolean {
+  return item.source === 'reader' && Boolean(item.parts?.some((part) => part.type === 'text' && part.text.trim()));
 }

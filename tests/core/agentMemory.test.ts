@@ -93,7 +93,7 @@ describe('Codex Memory contracts', () => {
       changes: [{ nodeId: MEMORY_NODE_ID, action: 'keep' }],
     }).changes).toHaveLength(1);
     expect(decodeMemoryConsolidationOutput({
-      changes: [{
+      changes: [{ subject: 'context',
         nodeId: MEMORY_NODE_ID,
         action: 'update',
         text: 'Updated Memory',
@@ -101,13 +101,13 @@ describe('Codex Memory contracts', () => {
       }],
     }).changes[0]).toMatchObject({ action: 'update', sourceNodeIds: [EPISODE_NODE_ID] });
     expect(() => decodeMemoryConsolidationOutput({
-      changes: [{ nodeId: MEMORY_NODE_ID, action: 'update', text: 'Missing lineage' }],
+      changes: [{ subject: 'context', nodeId: MEMORY_NODE_ID, action: 'update', text: 'Missing lineage' }],
     })).toThrow('sourceNodeIds');
     expect(() => decodeMemoryConsolidationOutput({
       changes: [{ nodeId: MEMORY_NODE_ID, action: 'delete', text: 'not allowed' }],
     })).toThrow('unknown field');
     expect(decodeMemoryConsolidationOutput({
-      changes: [{
+      changes: [{ subject: 'context',
         temporaryId: 'new:follow-up',
         action: 'create',
         parentId: EPISODE_NODE_ID,
@@ -264,7 +264,7 @@ describe('Codex Memory contracts', () => {
 
   test('commits rollback invalidation atomically and removes stale origins', () => {
     const store = memoryStore();
-    expect(store.claimOrigin(ITEM_ID, THREAD_ID, TURN_ID, '2026-07-24', 'hash')).toBe(true);
+    expect(store.claimOrigin(ITEM_ID, THREAD_ID, TURN_ID, '2026-07-24', 'hash', { source: 'reader', hasReaderText: true })).toBe(true);
     const node = generatedNode();
     store.replaceGeneratedNodes(THREAD_ID, [node], [{
       nodeId: node.nodeId,
@@ -293,7 +293,7 @@ describe('Codex Memory contracts', () => {
   test('removes citation usage contributed by a rolled-back response Turn', () => {
     const store = memoryStore();
     const citationTurnId = 'turn:citation';
-    expect(store.claimOrigin(ITEM_ID, THREAD_ID, TURN_ID, '2026-07-24', 'hash')).toBe(true);
+    expect(store.claimOrigin(ITEM_ID, THREAD_ID, TURN_ID, '2026-07-24', 'hash', { source: 'reader', hasReaderText: true })).toBe(true);
     store.recordCitationUsage({
       citationItemId: 'item:citation',
       citationTurnId,
@@ -442,7 +442,7 @@ describe('Codex Memory contracts', () => {
         admittedAt: 1,
       });
     }
-    expect(store.claimOrigin(ITEM_ID, THREAD_ID, TURN_ID, '2020-01-02', 'old-hash')).toBe(true);
+    expect(store.claimOrigin(ITEM_ID, THREAD_ID, TURN_ID, '2020-01-02', 'old-hash', { source: 'reader', hasReaderText: true })).toBe(true);
     const evidence = collectMemoryEvidence({ thread, turns: thread.turns ?? [] }, store);
     expect(evidence.items.map((item) => item.content)).toEqual(['remember local evidence']);
     expect(evidence.items[0]?.sourceDate).toBe('2020-01-02');
@@ -663,6 +663,202 @@ describe('Codex Memory contracts', () => {
       expect(store.status().lastError).toBeNull();
       expect(timeline.graph().nodes.some((node) => node.node.content.text === 'Research reports lead with conclusions.')).toBe(true);
     } finally { await memory.stopWorker(); }
+  });
+
+  test('consolidation cannot replace a personal preference with external-only support', async () => {
+    const store = memoryStore();
+    const state = mutableTimelineHost(memoryProjection());
+    const timeline = new TimelineMemoryStore(state.host);
+    const base = userTurn('For my reports, start with short conclusions.');
+    const turn = { ...base, items: [...base.items, webEvidence(base)] };
+    store.writeAdmission(admissionSnapshot(turn));
+    const phase1 = new Phase1(store, timeline, { run: async () => JSON.stringify({ dates: [{
+      sourceDate: '2026-07-24', episode: null, questions: [],
+      guidance: [statement('The reader wants short conclusions.', [ITEM_ID], 'user')],
+      beliefs: [statement('The web manual recommends long reports.', ['item:web'], 'context')],
+    }] }) });
+    await phase1.run({ thread: rootThread([turn]), turns: [turn] }, new AbortController().signal);
+    const personal = timeline.graph().nodes.find((node) => node.node.content.text === 'The reader wants short conclusions.')!;
+    const external = timeline.graph().nodes.find((node) => node.node.content.text === 'The web manual recommends long reports.')!;
+    const before = store.lineageForNode(personal.node.id);
+    const phase2 = new Phase2(store, timeline, { run: async ({ prompt }) => {
+      const node = JSON.parse(prompt).nodes.find((node: { nodeId: string }) => node.nodeId === personal.node.id);
+      // Follow the advertised schema on either side of the source/subject change.
+      return JSON.stringify({ changes: [{ action: 'update', nodeId: personal.node.id,
+        ...(node.subject === undefined ? {} : { subject: 'user' }),
+        text: 'The reader always wants long reports.', sourceNodeIds: [external.node.id] }] });
+    } }, () => rootThread([turn]));
+    await expect(phase2.run(new AbortController().signal)).rejects.toThrow('reader-authored text');
+    expect(timeline.graph().nodes.find((node) => node.node.id === personal.node.id)!.node.content.text).toBe('The reader wants short conclusions.');
+    expect(store.lineageForNode(personal.node.id)).toEqual(before);
+  });
+
+  test.each(['reader', 'attachment'] as const)('budgets the actual untrimmed %s parts before invoking the model', async (kind) => {
+    const store = memoryStore();
+    const text = 'A useful correction.' + '\n '.repeat(120_000);
+    const base = userTurn(text);
+    const reader = base.items[0];
+    if (reader?.type !== 'userMessage') throw new Error('Missing reader fixture');
+    const turn: Turn = kind === 'reader' ? base : { ...base, items: [{ ...reader, content: [{
+      type: 'attachment', id: 'oversized', name: 'notes.txt', mimeType: 'text/plain', sizeBytes: text.length,
+      source: { kind: 'localFile', path: '/fixture/notes.txt' }, extractedText: text,
+    }] }] };
+    store.writeAdmission(admissionSnapshot(turn));
+    let calls = 0;
+    const phase = new Phase1(store, new TimelineMemoryStore(readOnlyTimelineHost(memoryProjection())), {
+      run: async () => { calls++; return '{"dates":[]}'; },
+    });
+    await expect(phase.run({ thread: rootThread([turn]), turns: [turn] }, new AbortController().signal)).rejects.toThrow('complete-input budget');
+    expect(calls).toBe(0);
+    expect(store.processedOrigins(THREAD_ID).size).toBe(0);
+  });
+
+  test.each(['create', 'downgrade', 'reader-update'] as const)('applies personal-source admission to consolidation %s', async (action) => {
+    const { store, state, timeline, thread, personal, external } = await personalMemoryFixture();
+    const phase = new Phase2(store, timeline, { run: async ({ prompt }) => {
+      const nodes = JSON.parse(prompt).nodes;
+      expect(nodes.find((node: { nodeId: string }) => node.nodeId === personal.node.id)).toMatchObject({
+        subject: 'user', supportingSources: [{ originItemId: ITEM_ID, source: 'reader', hasReaderText: true }],
+      });
+      expect(nodes.find((node: { nodeId: string }) => node.nodeId === external.node.id)).toMatchObject({
+        subject: 'context', supportingSources: [{ originItemId: 'item:web', source: 'web', hasReaderText: false }],
+      });
+      return JSON.stringify({ changes: [action === 'create'
+        ? { action: 'create', temporaryId: 'new:personal', parentId: personal.containerId, category: 'guidance', subject: 'user',
+          text: 'The reader always wants long reports.', sourceNodeIds: [external.node.id] }
+        : { action: 'update', nodeId: personal.node.id, subject: action === 'downgrade' ? 'context' : 'user',
+          text: action === 'reader-update' ? 'The reader prefers short conclusions first.' : 'The reader always wants long reports.',
+          sourceNodeIds: [action === 'reader-update' ? personal.node.id : external.node.id] }] });
+    } }, () => thread);
+    const calls = state.calls.length;
+    if (action === 'reader-update') {
+      await phase.run(new AbortController().signal);
+      expect(store.generatedNodesById().get(personal.node.id)?.subject).toBe('user');
+      expect(store.lineageForNode(personal.node.id).map((edge) => edge.originItemId)).toEqual([ITEM_ID]);
+    } else {
+      await expect(phase.run(new AbortController().signal)).rejects.toThrow(action === 'create' ? 'reader-authored text' : 'reclassified');
+      expect(state.calls).toHaveLength(calls);
+      expect(timeline.graph().nodes.find((node) => node.node.id === personal.node.id)!.node.content.text).toBe('The reader wants short conclusions.');
+    }
+  });
+
+  test('retains source and subject metadata after reopening the control store', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'memory-subject-'));
+    const path = join(directory, 'control.sqlite');
+    let store = new MemoryControlStore(path, new Database(path) as unknown as SqliteDatabase);
+    try {
+      const fixture = await personalMemoryFixture(store);
+      store.close();
+      store = new MemoryControlStore(path, new Database(path) as unknown as SqliteDatabase);
+      expect(store.originSource(ITEM_ID)).toEqual({ originItemId: ITEM_ID, source: 'reader', hasReaderText: true });
+      expect(store.originSource('item:web')).toEqual({ originItemId: 'item:web', source: 'web', hasReaderText: false });
+      expect(store.generatedNodesById().get(fixture.personal.node.id)?.subject).toBe('user');
+      expect(store.generatedNodesForThread(THREAD_ID).find((node) => node.nodeId === fixture.external.node.id)?.subject).toBe('context');
+      const phase = new Phase2(store, fixture.timeline, { run: async () => JSON.stringify({ changes: [{
+        action: 'update', nodeId: fixture.personal.node.id, subject: 'user', text: 'The reader always wants long reports.',
+        sourceNodeIds: [fixture.external.node.id],
+      }] }) }, () => fixture.thread);
+      await expect(phase.run(new AbortController().signal)).rejects.toThrow('reader-authored text');
+    } finally { store.close(); rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  test('external lineage cannot keep a personal record supported after reader evidence is withdrawn', async () => {
+    const { store, timeline, thread, personal, external } = await personalMemoryFixture();
+    const phase = new Phase2(store, timeline, { run: async () => JSON.stringify({ changes: [{
+      action: 'update', nodeId: personal.node.id, subject: 'user', text: 'The reader wants short conclusions.',
+      sourceNodeIds: [personal.node.id, external.node.id],
+    }] }) }, () => thread);
+    await phase.run(new AbortController().signal);
+    const rows = store.lineageForNode(personal.node.id);
+    expect(rows.map((edge) => edge.originItemId).sort()).toEqual([ITEM_ID, 'item:web'].sort());
+    store.prepareRollback({ rollbackId: 'rollback:reader-source', threadId: THREAD_ID, omittedTurnIds: [TURN_ID],
+      beforeVersion: 1, afterVersion: 2, suppressedNodeIds: [], suppressAllGenerated: false });
+    store.commitRollback('rollback:reader-source');
+    expect(store.isOriginClaimed('item:web')).toBe(true);
+    expect(store.generatedNodeIdsWithoutCurrentSupport()).toContain(personal.node.id);
+    expect(store.generatedNodeIdsWithoutCurrentSupport()).not.toContain(external.node.id);
+    await expect(new Phase2(store, timeline, { run: async () => JSON.stringify({ changes: [{
+      action: 'create', temporaryId: 'new:laundered', parentId: personal.containerId, category: 'belief',
+      subject: 'context', text: 'The reader wants short conclusions.', sourceNodeIds: [personal.node.id],
+    }] }) }, () => thread).run(new AbortController().signal)).rejects.toThrow('no current evidence');
+    await new Phase2(store, timeline, { run: async () => '{"changes":[]}' }, () => thread).run(new AbortController().signal);
+    expect(timeline.graph().nodes.some((node) => node.node.id === personal.node.id)).toBe(false);
+    expect(timeline.graph().nodes.some((node) => node.node.id === external.node.id)).toBe(true);
+  });
+
+  test('rechecks personal support if a source disappears inside the document planning queue', async () => {
+    const { store, state, timeline, thread, personal, external } = await personalMemoryFixture();
+    const original = state.host.runPlannedChanges;
+    state.host.runPlannedChanges = async (build, options) => {
+      store.prepareRollback({ rollbackId: 'rollback:publication-reader', threadId: THREAD_ID, omittedTurnIds: [TURN_ID],
+        beforeVersion: 1, afterVersion: 2, suppressedNodeIds: [], suppressAllGenerated: false });
+      store.commitRollback('rollback:publication-reader');
+      return original(build, options);
+    };
+    const phase = new Phase2(store, timeline, { run: async () => JSON.stringify({ changes: [{
+      action: 'update', nodeId: personal.node.id, subject: 'user', text: 'The reader prefers concise conclusions.',
+      sourceNodeIds: [personal.node.id, external.node.id],
+    }] }) }, () => thread);
+    const calls = state.calls.length;
+    await expect(phase.run(new AbortController().signal)).rejects.toThrow('reader-authored text');
+    expect(state.calls).toHaveLength(calls);
+    expect(timeline.graph().nodes.find((node) => node.node.id === personal.node.id)!.node.content.text).toBe('The reader wants short conclusions.');
+  });
+
+  test('counts untrimmed parts cumulatively while keeping boundary-sized Items intact', async () => {
+    const store = memoryStore();
+    const firstText = 'A' + ' '.repeat(59_999);
+    const secondText = 'B' + '\n'.repeat(60_000);
+    const first = userTurn(firstText);
+    const second = userTurn(secondText, undefined, { kind: 'user' }, 'turn:second-padded', 'item:second-padded');
+    for (const turn of [first, second]) store.writeAdmission(admissionSnapshot(turn));
+    const source = { thread: rootThread([first, second]), turns: [first, second] };
+    const seen: string[] = [];
+    const phase = new Phase1(store, new TimelineMemoryStore(readOnlyTimelineHost(memoryProjection())), {
+      run: async ({ prompt }) => {
+        const evidence = JSON.parse(prompt).evidence;
+        expect(evidence).toHaveLength(1);
+        const text = evidence[0].parts.map((part: { text: string }) => part.text).join('');
+        expect(text.length).toBeLessThanOrEqual(120_000);
+        seen.push(text);
+        return '{"dates":[]}';
+      },
+    });
+    await phase.run(source, new AbortController().signal);
+    expect(store.processedOrigins(THREAD_ID).has(second.items[0]!.id)).toBe(false);
+    await phase.run(source, new AbortController().signal);
+    expect(seen).toEqual([firstText, secondText]);
+    expect(store.processedOrigins(THREAD_ID).size).toBe(2);
+  });
+
+  test('removes an unsupported personal episode while preserving its independently supported context child', async () => {
+    const store = memoryStore();
+    const state = mutableTimelineHost(memoryProjection());
+    const timeline = new TimelineMemoryStore(state.host);
+    const reader = userTurn('I decided to use short conclusions in reports.');
+    const researchBase = userTurn('Read the report manual.', undefined, { kind: 'user' }, 'turn:episode-web', 'item:episode-web-request');
+    const research = { ...researchBase, items: [...researchBase.items, webEvidence(researchBase)] };
+    const turns = [reader, research];
+    for (const turn of turns) store.writeAdmission(admissionSnapshot(turn));
+    const thread = rootThread(turns);
+    await new Phase1(store, timeline, { run: async () => JSON.stringify({ dates: [{ sourceDate: '2026-07-24',
+      episode: statement('The reader chose concise report conclusions.', [ITEM_ID], 'user'),
+      beliefs: [statement('The manual recommends long reports.', ['item:web'], 'context')], questions: [], guidance: [],
+    }] }) }).run({ thread, turns }, new AbortController().signal);
+    const episode = timeline.graph().nodes.find((node) => node.node.content.text === 'The reader chose concise report conclusions.')!;
+    const child = timeline.graph().nodes.find((node) => node.node.content.text === 'The manual recommends long reports.')!;
+    store.prepareRollback({ rollbackId: 'rollback:personal-episode', threadId: THREAD_ID, omittedTurnIds: [reader.id],
+      beforeVersion: 1, afterVersion: 2, suppressedNodeIds: [], suppressAllGenerated: false });
+    store.commitRollback('rollback:personal-episode');
+    await new Phase2(store, timeline, { run: async () => '{"changes":[]}' }, () => thread).run(new AbortController().signal);
+    expect(timeline.graph().nodes.some((node) => node.node.id === episode.node.id)).toBe(false);
+    const retained = timeline.graph().nodes.find((node) => node.node.id === child.node.id)!;
+    expect(retained.node.parentId).toBe(child.containerId);
+    expect(store.generatedNodesById().get(retained.node.id)).toMatchObject({ subject: 'context', userAuthoritative: false,
+      fingerprint: timelineNodeFingerprint(retained) });
+    expect(store.lineageForNode(retained.node.id).map((edge) => edge.originItemId)).toEqual(['item:web']);
+    expect(store.generatedNodeIdsWithoutCurrentSupport()).toEqual([]);
+    expect(store.rollback('rollback:personal-episode')?.status).toBe('reconciled');
   });
 
   test('fingerprints all eligible evidence while sending the oldest complete unprocessed batch', () => {
@@ -1113,7 +1309,7 @@ describe('Codex Memory contracts', () => {
     const store = new MemoryControlStore(':memory:', instrumented);
     stores.push(store);
     const unsupportedOriginId = 'item:unsupported';
-    expect(store.claimOrigin(ITEM_ID, THREAD_ID, TURN_ID, '2026-07-24', 'hash')).toBe(true);
+    expect(store.claimOrigin(ITEM_ID, THREAD_ID, TURN_ID, '2026-07-24', 'hash', { source: 'reader', hasReaderText: true })).toBe(true);
     store.replaceGeneratedNodes(THREAD_ID, [
       generatedNode(),
       { ...generatedNode(), nodeId: EPISODE_NODE_ID },
@@ -1126,14 +1322,14 @@ describe('Codex Memory contracts', () => {
     expect(store.generatedNodeIdsWithoutCurrentSupport()).toEqual([EPISODE_NODE_ID]);
     expect(unsupportedJoinSelects).toBe(1);
 
-    expect(store.claimOrigin(unsupportedOriginId, THREAD_ID, TURN_ID, '2026-07-24', 'hash:second')).toBe(true);
+    expect(store.claimOrigin(unsupportedOriginId, THREAD_ID, TURN_ID, '2026-07-24', 'hash:second', { source: 'reader', hasReaderText: true })).toBe(true);
     expect(store.generatedNodeIdsWithoutCurrentSupport()).toEqual([]);
     expect(unsupportedJoinSelects).toBe(2);
   });
 
   test('no-signal coverage preserves unrelated accepted lineage', () => {
     const store = memoryStore();
-    expect(store.claimOrigin(ITEM_ID, THREAD_ID, TURN_ID, '2026-07-24', 'hash')).toBe(true);
+    expect(store.claimOrigin(ITEM_ID, THREAD_ID, TURN_ID, '2026-07-24', 'hash', { source: 'reader', hasReaderText: true })).toBe(true);
     store.replaceGeneratedNodes(THREAD_ID, [generatedNode()], [{
       nodeId: MEMORY_NODE_ID,
       threadId: THREAD_ID,
@@ -1155,7 +1351,7 @@ describe('Codex Memory contracts', () => {
     const movedProjection = memoryProjection();
     const movedTimeline = new TimelineMemoryStore(readOnlyTimelineHost(movedProjection));
     const movedEntry = canonicalMemoryGraph(movedProjection).nodes.find((entry) => entry.node.id === BELIEF_NODE_ID)!;
-    movedStore.replaceGeneratedNodes(THREAD_ID, [{
+    movedStore.replaceGeneratedNodes(THREAD_ID, [{ subject: 'context',
       nodeId: movedEntry.node.id,
       category: movedEntry.category,
       sourceDate: movedEntry.sourceDate,
@@ -1205,7 +1401,7 @@ describe('Codex Memory contracts', () => {
     const taggedProjection = memoryProjection();
     const taggedTimeline = new TimelineMemoryStore(readOnlyTimelineHost(taggedProjection));
     const taggedEntry = canonicalMemoryGraph(taggedProjection).nodes.find((entry) => entry.node.id === BELIEF_NODE_ID)!;
-    taggedStore.replaceGeneratedNodes(THREAD_ID, [{
+    taggedStore.replaceGeneratedNodes(THREAD_ID, [{ subject: 'context',
       nodeId: taggedEntry.node.id,
       category: taggedEntry.category,
       sourceDate: taggedEntry.sourceDate,
@@ -1234,7 +1430,7 @@ describe('Codex Memory contracts', () => {
     seedGeneratedGraph(store, timeline);
     const phase = new Phase2(store, timeline, {
       run: async () => JSON.stringify({
-        changes: [{
+        changes: [{ subject: 'context',
           temporaryId: 'new:open-question',
           action: 'create',
           parentId: EPISODE_NODE_ID,
@@ -1267,9 +1463,9 @@ describe('Codex Memory contracts', () => {
     const timelineState = mutableTimelineHost(projection);
     const timeline = new TimelineMemoryStore(timelineState.host);
     seedGeneratedGraph(store, timeline);
-    expect(store.claimOrigin(secondItemId, secondThreadId, secondTurnId, '2026-07-24', 'second-hash')).toBe(true);
+    expect(store.claimOrigin(secondItemId, secondThreadId, secondTurnId, '2026-07-24', 'second-hash', { source: 'reader', hasReaderText: true })).toBe(true);
     const question = timeline.graph().nodes.find((entry) => entry.node.id === questionId)!;
-    store.replaceGeneratedNodes(secondThreadId, [{
+    store.replaceGeneratedNodes(secondThreadId, [{ subject: 'context',
       nodeId: questionId,
       category: question.category,
       sourceDate: question.sourceDate,
@@ -1285,7 +1481,7 @@ describe('Codex Memory contracts', () => {
     const phase = new Phase2(store, timeline, {
       run: async () => JSON.stringify({
         changes: [
-          {
+          { subject: 'context',
             nodeId: BELIEF_NODE_ID,
             action: 'update',
             text: 'Merged belief',
@@ -1779,7 +1975,7 @@ describe('Codex Memory contracts', () => {
     const path = join(directory, 'control.sqlite');
     let store = new MemoryControlStore(path, new Database(path) as unknown as SqliteDatabase);
     try {
-      store.claimOrigin(ITEM_ID, THREAD_ID, TURN_ID, '2026-07-24', 'canonical-hash');
+      store.claimOrigin(ITEM_ID, THREAD_ID, TURN_ID, '2026-07-24', 'canonical-hash', { source: 'reader', hasReaderText: true });
       store.finalizeStage1NoOutput(THREAD_ID, 'source', { originItemIds: [ITEM_ID], hasMore: true, batchId: 'durable' });
       store.close();
       store = new MemoryControlStore(path, new Database(path) as unknown as SqliteDatabase);
@@ -1856,7 +2052,7 @@ describe('Codex Memory contracts', () => {
         return '{"changes":[]}';
       }
       expect(day.titleSourceNodeIds.sort()).toEqual([EPISODE_NODE_ID, BELIEF_NODE_ID].sort());
-      return JSON.stringify({ changes: [{ nodeId: MEMORY_NODE_ID, action: 'update',
+      return JSON.stringify({ changes: [{ subject: 'context', nodeId: MEMORY_NODE_ID, action: 'update',
         text: 'A compass for clearer reports', sourceNodeIds: [BELIEF_NODE_ID] }] });
     } }, () => rootThread([]), { now: () => now });
     expect(phase.needsDayTitle('2026-07-24')).toBe(true);
@@ -1879,7 +2075,7 @@ describe('Codex Memory contracts', () => {
     const timeline = new TimelineMemoryStore(state.host);
     seedGeneratedGraph(store, timeline);
     state.projection().nodes.find((entry) => entry.id === MEMORY_NODE_ID)!.content.text = 'My own title';
-    const phase = new Phase2(store, timeline, { run: async () => JSON.stringify({ changes: [{
+    const phase = new Phase2(store, timeline, { run: async () => JSON.stringify({ changes: [{ subject: 'context',
       nodeId: MEMORY_NODE_ID, action: 'update', text: 'Unwanted model title', sourceNodeIds: [BELIEF_NODE_ID],
     }] }) }, () => rootThread([]), { now: () => new Date(2026, 6, 25).getTime() });
     await expect(phase.run(new AbortController().signal)).rejects.toThrow('user-authoritative');
@@ -1896,7 +2092,7 @@ describe('Codex Memory contracts', () => {
     store.replaceGeneratedNodes(THREAD_ID, store.generatedNodes().map((node) => ({
       ...node, generatedAt: node.nodeId === BELIEF_NODE_ID ? 1 : Date.now(),
     })), store.generatedNodes().flatMap((node) => store.lineageForNode(node.nodeId)));
-    const phase = new Phase2(store, timeline, { run: async () => JSON.stringify({ changes: [{
+    const phase = new Phase2(store, timeline, { run: async () => JSON.stringify({ changes: [{ subject: 'context',
       nodeId: MEMORY_NODE_ID, action: 'update', text: 'Context before conclusions', sourceNodeIds: [EPISODE_NODE_ID],
     }] }) }, () => rootThread([]));
     await expect(phase.run(new AbortController().signal)).rejects.toThrow('complete source-day');
@@ -1912,7 +2108,7 @@ describe('Codex Memory contracts', () => {
     const store = memoryStore();
     const timeline = new TimelineMemoryStore(mutableTimelineHost(memoryProjection()).host);
     seedGeneratedGraph(store, timeline);
-    const phase = new Phase2(store, timeline, { run: async () => JSON.stringify({ changes: [{
+    const phase = new Phase2(store, timeline, { run: async () => JSON.stringify({ changes: [{ subject: 'context',
       nodeId: MEMORY_NODE_ID, action: 'update', text, sourceNodeIds,
     }] }) }, () => rootThread([]));
     await expect(phase.run(new AbortController().signal)).rejects.toThrow(error);
@@ -1927,7 +2123,7 @@ describe('Codex Memory contracts', () => {
     let ready = true;
     const phase = new Phase2(store, timeline, { run: async () => {
       ready = false;
-      return JSON.stringify({ changes: [{ nodeId: MEMORY_NODE_ID, action: 'update',
+      return JSON.stringify({ changes: [{ subject: 'context', nodeId: MEMORY_NODE_ID, action: 'update',
         text: 'Premature title', sourceNodeIds: [BELIEF_NODE_ID] }] });
     } }, () => rootThread([]), { canTitleDay: () => ready });
     await expect(phase.run(new AbortController().signal)).rejects.toThrow('still receiving');
@@ -1947,7 +2143,7 @@ describe('Codex Memory contracts', () => {
       state.projection().nodes.find((entry) => entry.id === MEMORY_NODE_ID)!.children.push(added.id);
       return original(build, options);
     };
-    const phase = new Phase2(store, timeline, { run: async () => JSON.stringify({ changes: [{
+    const phase = new Phase2(store, timeline, { run: async () => JSON.stringify({ changes: [{ subject: 'context',
       nodeId: MEMORY_NODE_ID, action: 'update', text: 'Stale title', sourceNodeIds: [BELIEF_NODE_ID],
     }] }) }, () => rootThread([]));
     await expect(phase.run(new AbortController().signal)).rejects.toThrow('day changed');
@@ -1964,7 +2160,7 @@ describe('Codex Memory contracts', () => {
     expect(memorySourceDayPending(source, store, '2026-07-24')).toBe(true);
     expect(memorySourceDayPending(source, store, '2026-07-25')).toBe(false);
     const evidence = collectMemoryEvidence(source, store).items[0]!;
-    store.claimOrigin(ITEM_ID, THREAD_ID, TURN_ID, evidence.sourceDate, evidence.contentHash);
+    store.claimOrigin(ITEM_ID, THREAD_ID, TURN_ID, evidence.sourceDate, evidence.contentHash, { source: 'reader', hasReaderText: true });
     store.finalizeStage1NoOutput(THREAD_ID, 'done', { originItemIds: [ITEM_ID], hasMore: false, batchId: 'day' });
     expect(memorySourceDayPending(source, store, '2026-07-24')).toBe(false);
     expect(memorySourceDayPending({ ...source, turns: [{ ...turn, status: 'inProgress' }] }, store, '2026-07-24')).toBe(true);
@@ -1975,7 +2171,7 @@ describe('Codex Memory contracts', () => {
   test('journals a local-midnight naming job with accepted publication', () => {
     const store = memoryStore();
     const now = new Date(2026, 6, 24, 12).getTime();
-    store.claimOrigin(ITEM_ID, THREAD_ID, TURN_ID, '2026-07-24', 'hash');
+    store.claimOrigin(ITEM_ID, THREAD_ID, TURN_ID, '2026-07-24', 'hash', { source: 'reader', hasReaderText: true });
     const publicationId = 'memory:stage1:day-close';
     store.preparePublication({ id: publicationId, kind: 'stage1', status: 'prepared', generation: 1,
       featureGeneration: 0, resetEpoch: 0, digest: 'day', payload: {}, createdAt: now });
@@ -2557,7 +2753,7 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 }
 
 function generatedNode(): MemoryGeneratedNodeRecord {
-  return {
+  return { subject: 'context',
     nodeId: MEMORY_NODE_ID,
     category: 'memory',
     sourceDate: '2026-07-24',
@@ -2568,11 +2764,11 @@ function generatedNode(): MemoryGeneratedNodeRecord {
 }
 
 function seedGeneratedGraph(store: MemoryControlStore, timeline: TimelineMemoryStore): void {
-  expect(store.claimOrigin(ITEM_ID, THREAD_ID, TURN_ID, '2026-07-24', 'hash')).toBe(true);
+  expect(store.claimOrigin(ITEM_ID, THREAD_ID, TURN_ID, '2026-07-24', 'hash', { source: 'reader', hasReaderText: true })).toBe(true);
   const entries = timeline.graph().nodes;
   store.replaceGeneratedNodes(
     THREAD_ID,
-    entries.map((entry) => ({
+    entries.map((entry) => ({ subject: 'context',
       nodeId: entry.node.id,
       category: entry.category,
       sourceDate: entry.sourceDate,
@@ -2924,6 +3120,15 @@ function mutableTimelineHost(
       }
       return;
     }
+    if (change.op === 'move' && 'parent' in change.placement) {
+      const nodeId = resolveMemoryTestTarget(change.targets, bindings);
+      const parentId = resolveMemoryTestTarget(change.placement.parent, bindings);
+      const moved = projection.nodes.find((node) => node.id === nodeId)!;
+      projection.nodes = projection.nodes.map((node) => node.id === moved.parentId ? { ...node, children: node.children.filter((id) => id !== nodeId) }
+        : node.id === parentId ? { ...node, children: [...node.children, nodeId] }
+        : node.id === nodeId ? { ...node, parentId } : node);
+      return;
+    }
     if (change.op === 'update') {
       const nodeId = resolveMemoryTestTarget(change.targets, bindings);
       projection.nodes = projection.nodes.map((entry) => {
@@ -3137,4 +3342,23 @@ function mcpEvidence(turn: Turn): ThreadItem {
     pluginId: null, error: null, durationMs: 5, outputRef: null, resourceRefs: [],
     modelCall: replayableModelCall('docs__search', { query: 'report structure' }),
   };
+}
+
+async function personalMemoryFixture(store = memoryStore()) {
+  const state = mutableTimelineHost(memoryProjection());
+  const timeline = new TimelineMemoryStore(state.host);
+  const base = userTurn('For my reports, start with short conclusions.');
+  const request = userTurn('Read the report manual.', undefined, { kind: 'user' }, 'turn:web-research', 'item:web-request');
+  const research = { ...request, items: [...request.items, webEvidence(request)] };
+  const turns = [base, research];
+  const thread = rootThread(turns);
+  for (const turn of turns) store.writeAdmission(admissionSnapshot(turn));
+  await new Phase1(store, timeline, { run: async () => JSON.stringify({ dates: [{
+    sourceDate: '2026-07-24', episode: null, questions: [],
+    guidance: [statement('The reader wants short conclusions.', [ITEM_ID], 'user')],
+    beliefs: [statement('The web manual recommends long reports.', ['item:web'], 'context')],
+  }] }) }).run({ thread, turns }, new AbortController().signal);
+  const personal = timeline.graph().nodes.find((node) => node.node.content.text === 'The reader wants short conclusions.')!;
+  const external = timeline.graph().nodes.find((node) => node.node.content.text === 'The web manual recommends long reports.')!;
+  return { store, state, timeline, thread, personal, external };
 }

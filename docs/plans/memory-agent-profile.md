@@ -203,7 +203,11 @@ advances; new or duplicate evidence never replaces lineage outside that batch.
 Compare proposals with a bounded canonical Memory view, retain per-statement
 subject and future-use/novelty rationales privately, and validate every cited
 origin before normalization. Preserve Host-assigned source kinds and message
-parts for model judgment; personal proposals must cite reader-authored text.
+parts for model judgment; personal proposals must cite reader-authored text. Persist source kinds,
+reader-text presence and generated subjects so consolidation enforces the same
+rule on creates/updates, including after restart; a personal subject cannot be
+downgraded to evade admission. Count the actual transmitted part text against
+the evidence limit, including surrounding whitespace.
 External context is eligible knowledge with attribution and never a Thread veto. Publish a container initially called Memory, optional episodes,
 and complete category records. Accepted extraction journals a local day-close job
 in the existing worker; consolidation names the completed day only after its
