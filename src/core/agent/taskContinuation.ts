@@ -195,6 +195,7 @@ export const TASK_CONTROL_RECEIPT_SCHEMA = { type: ['object', 'null'], propertie
   watchId: { type: ['string', 'null'] }, event: eventSchema,
 }, required: ['operationId', 'taskId', 'action', 'status', 'revision', 'watchId', 'event'], additionalProperties: false } as const;
 // One action definition feeds model schemas and exact action admission.
+// Field order (including reference properties) preserves stored operation digests.
 const actionFields = {
   handoff: ['expected_revision', 'readiness'],
   acknowledge: ['event_id'],
@@ -253,10 +254,10 @@ function decodeActionRequest(value: unknown, path: string): Record<string, unkno
   }
   const fields = [...commonFields, ...actionFields[action as keyof typeof actionFields]];
   const r = inputRecord(value, path, fields);
-  for (const field of fields) if (field !== 'action') validateInputField(r[field], fieldSchemas[field]!, `${path}/${field}`);
-  return r;
+  return Object.fromEntries(fields.map((field) => [field, field === 'action' ? action
+    : decodeInputField(r[field], fieldSchemas[field]!, `${path}/${field}`)]));
 }
-function validateInputField(value: unknown, schema: Record<string, unknown>, path: string): void {
+function decodeInputField(value: unknown, schema: Record<string, unknown>, path: string): unknown {
   if (schema.type === 'string') {
     if (typeof value !== 'string' || !value.trim() || value.length > Number(schema.maxLength)) {
       inputError(path, `expected a nonblank string of at most ${schema.maxLength} characters`);
@@ -267,10 +268,12 @@ function validateInputField(value: unknown, schema: Record<string, unknown>, pat
     if (!Array.isArray(value) || value.length < Number(schema.minItems) || value.length > Number(schema.maxItems)) {
       inputError(path, `expected ${schema.minItems} to ${schema.maxItems} references`);
     }
-    (value as unknown[]).forEach((entry, index) => validateInputField(entry, schema.items as Record<string, unknown>, `${path}/${index}`));
+    return (value as unknown[]).map((entry, index) => decodeInputField(entry, schema.items as Record<string, unknown>, `${path}/${index}`));
   } else if (schema.type === 'object') {
     const properties = schema.properties as Record<string, Record<string, unknown>>;
     const r = inputRecord(value, path, Object.keys(properties));
-    for (const [field, child] of Object.entries(properties)) validateInputField(r[field], child, `${path}/${field}`);
+    return Object.fromEntries(Object.entries(properties)
+      .map(([field, child]) => [field, decodeInputField(r[field], child, `${path}/${field}`)]));
   }
+  return value;
 }

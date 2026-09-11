@@ -494,7 +494,10 @@ cannot control another owner. Every action has `task_id` and `operation_id`:
 The model-facing `task_control` input is `{ request: { task_id, operation_id,
 action, ...actionFields } }`. A shared action definition generates closed nested
 schema alternatives and exact admission; internal Task commands and receipts
-keep their flat shapes. `acknowledge` accepts only the common fields and `event_id`.
+keep their flat shapes. Admission reconstructs action fields and nested Item
+references in the existing canonical order before operation digesting. JSON object
+key order cannot change replay identity; changed values or readiness array order
+still count as different input. `acknowledge` accepts only the common fields and `event_id`.
 Wrong action fields receive `invalid_arguments` with a bounded contract field
 path, required/allowed fields and repair guidance, without echoing rejected
 values or arbitrary keys. Rejection performs no Task mutation. Provider conversion

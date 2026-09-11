@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { TASK_CONTROL_INPUT_SCHEMA, decodeTaskControlToolInput } from '../../src/core/agent/taskContinuation';
+import { TASK_CONTROL_INPUT_SCHEMA, decodeTaskControlInput, decodeTaskControlToolInput } from '../../src/core/agent/taskContinuation';
 import { providerToolSchemaFailure } from '../../src/core/agent/tools';
 import { compileToolParameters } from '../../src/main/agent/runtime/kernel/exactToolArguments';
 import { convertResponsesTools } from '@earendil-works/pi-ai/api/openai-responses-shared';
@@ -52,6 +52,21 @@ test('Task action schema and exact decoder accept the same field language', () =
     expect(String(error)).not.toContain('private-secret');
     expect(String(error)).not.toContain('private-value');
     expect(String(error)).toContain('Required and allowed fields: task_id, operation_id, action, event_id');
+  }
+});
+
+test('every Task action preserves its stored digest representation regardless of input key order', () => {
+  function reverseKeys(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map(reverseKeys);
+    if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).reverse()
+      .map(([key, child]) => [key, reverseKeys(child)]));
+    return value;
+  }
+  for (const request of requests) {
+    // Fixtures retain the original decoder's field order, including references.
+    const expected = JSON.stringify(request);
+    expect(JSON.stringify(decodeTaskControlInput(reverseKeys(request)))).toBe(expected);
+    expect(JSON.stringify(decodeTaskControlToolInput({ request: reverseKeys(request) }).request)).toBe(expected);
   }
 });
 
