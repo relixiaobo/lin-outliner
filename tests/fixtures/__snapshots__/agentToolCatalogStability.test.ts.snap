@@ -82,7 +82,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
         "cwd": {
           "type": "string",
           "minLength": 1,
-          "description": "Directory for this call only. Relative paths resolve from the saved conversation work folder or application default; this does not change later calls."
+          "description": "Directory for this call only. Relative paths resolve from the selected Project primary folder or application default; this does not change later calls."
         }
       }
     }
@@ -140,7 +140,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
         "cwd": {
           "type": "string",
           "minLength": 1,
-          "description": "Directory for this call only. Relative paths resolve from the saved conversation work folder or application default; this does not change later calls."
+          "description": "Directory for this call only. Relative paths resolve from the selected Project primary folder or application default; this does not change later calls."
         }
       }
     }
@@ -168,7 +168,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
         "cwd": {
           "type": "string",
           "minLength": 1,
-          "description": "Directory for this call only. Relative paths resolve from the saved conversation work folder or application default; this does not change later calls."
+          "description": "Directory for this call only. Relative paths resolve from the selected Project primary folder or application default; this does not change later calls."
         }
       }
     }
@@ -257,7 +257,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
         "cwd": {
           "type": "string",
           "minLength": 1,
-          "description": "Directory for this call only. Relative paths resolve from the saved conversation work folder or application default; this does not change later calls."
+          "description": "Directory for this call only. Relative paths resolve from the selected Project primary folder or application default; this does not change later calls."
         }
       }
     }
@@ -302,7 +302,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
         "cwd": {
           "type": "string",
           "minLength": 1,
-          "description": "Directory for this call only. Relative paths resolve from the saved conversation work folder or application default; this does not change later calls."
+          "description": "Directory for this call only. Relative paths resolve from the selected Project primary folder or application default; this does not change later calls."
         }
       }
     }
@@ -330,7 +330,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
         "cwd": {
           "type": "string",
           "minLength": 1,
-          "description": "Directory for this call only. Relative paths resolve from the saved conversation work folder or application default; this does not change later calls."
+          "description": "Directory for this call only. Relative paths resolve from the selected Project primary folder or application default; this does not change later calls."
         }
       }
     }
@@ -511,100 +511,219 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
   },
   {
     "name": "task_control",
-    "description": "Change responsibility for an owned Task. handoff requires expected_revision and completed successful readiness references; launch progress/status alone is insufficient. acknowledge binds an exact terminal event_id to this Turn before reporting its result. start_watch requires expected_revision and an explicit reader request reference; revoke_watch requires expected_revision and the exact watch_id and keeps the process running. Handoff preserves a watch. All actions require operation_id; reconcile lost replies with task_status. A conflict or existing handler never transfers responsibility or grants repair/restart authority.",
+    "description": "Change responsibility for an owned Task. Put all fields inside request; select exactly one action and only its fields. acknowledge forbids expected_revision. handoff requires expected_revision and completed successful readiness references; launch progress/status alone is insufficient. acknowledge binds an exact terminal event_id to this Turn before reporting its result. start_watch requires expected_revision and an explicit reader request reference; revoke_watch requires expected_revision and the exact watch_id and keeps the process running. Handoff preserves a watch. All actions require operation_id; reconcile lost replies with task_status. A conflict or existing handler never transfers responsibility or grants repair/restart authority.",
     "parameters": {
       "type": "object",
-      "properties": {
-        "task_id": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 256
-        },
-        "operation_id": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 256,
-          "description": "Stable operation identity. Retry the same input with this identity after reconciling task_status; never reuse it for different input."
-        },
-        "action": {
-          "enum": [
-            "handoff",
-            "acknowledge",
-            "start_watch",
-            "revoke_watch"
-          ]
-        },
-        "expected_revision": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "readiness": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "turnId": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 256
-              },
-              "itemId": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 256
-              }
-            },
-            "required": [
-              "turnId",
-              "itemId"
-            ],
-            "additionalProperties": false
-          },
-          "minItems": 1,
-          "maxItems": 8
-        },
-        "request": {
-          "type": "object",
-          "properties": {
-            "turnId": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 256
-            },
-            "itemId": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 256
-            }
-          },
-          "required": [
-            "turnId",
-            "itemId"
-          ],
-          "additionalProperties": false
-        },
-        "event_id": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 256
-        },
-        "watch_id": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 256
-        }
-      },
+      "additionalProperties": false,
       "required": [
-        "task_id",
-        "operation_id",
-        "action"
+        "request"
       ],
-      "additionalProperties": false
+      "properties": {
+        "request": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "task_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "\\\\S"
+                },
+                "operation_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "\\\\S",
+                  "description": "Stable exact-input identity. Reconcile lost replies with task_status; never reuse it for different input."
+                },
+                "expected_revision": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "readiness": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "turnId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256,
+                        "pattern": "\\\\S"
+                      },
+                      "itemId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256,
+                        "pattern": "\\\\S"
+                      }
+                    },
+                    "required": [
+                      "turnId",
+                      "itemId"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "minItems": 1,
+                  "maxItems": 8
+                },
+                "action": {
+                  "type": "string",
+                  "const": "handoff"
+                }
+              },
+              "required": [
+                "task_id",
+                "operation_id",
+                "action",
+                "expected_revision",
+                "readiness"
+              ]
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "task_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "\\\\S"
+                },
+                "operation_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "\\\\S",
+                  "description": "Stable exact-input identity. Reconcile lost replies with task_status; never reuse it for different input."
+                },
+                "event_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "\\\\S"
+                },
+                "action": {
+                  "type": "string",
+                  "const": "acknowledge"
+                }
+              },
+              "required": [
+                "task_id",
+                "operation_id",
+                "action",
+                "event_id"
+              ]
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "task_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "\\\\S"
+                },
+                "operation_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "\\\\S",
+                  "description": "Stable exact-input identity. Reconcile lost replies with task_status; never reuse it for different input."
+                },
+                "expected_revision": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "request": {
+                  "type": "object",
+                  "properties": {
+                    "turnId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "pattern": "\\\\S"
+                    },
+                    "itemId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "pattern": "\\\\S"
+                    }
+                  },
+                  "required": [
+                    "turnId",
+                    "itemId"
+                  ],
+                  "additionalProperties": false
+                },
+                "action": {
+                  "type": "string",
+                  "const": "start_watch"
+                }
+              },
+              "required": [
+                "task_id",
+                "operation_id",
+                "action",
+                "expected_revision",
+                "request"
+              ]
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "task_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "\\\\S"
+                },
+                "operation_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "\\\\S",
+                  "description": "Stable exact-input identity. Reconcile lost replies with task_status; never reuse it for different input."
+                },
+                "expected_revision": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "watch_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "\\\\S"
+                },
+                "action": {
+                  "type": "string",
+                  "const": "revoke_watch"
+                }
+              },
+              "required": [
+                "task_id",
+                "operation_id",
+                "action",
+                "expected_revision",
+                "watch_id"
+              ]
+            }
+          ]
+        }
+      }
     }
   },
   {
     "name": "task_status",
-    "description": "Read one background Tool Task owned by this Thread.\\nRead bounded running logs and responsibility/event facts without changing them. Running observations are not readiness proof. Use for readiness, an explicit status request, or recovery; avoid repetitive polling. operation_id reconciles an exact Task control receipt. Finite unhandled results and unfinished service launches continue automatically; handed-over services do not unless watched.",
+    "description": "Read one background Tool Task owned by this Thread.\\nRead bounded running logs and responsibility/event facts without changing them. Running observations are not readiness proof. Use for readiness, an explicit status request, or recovery; avoid repetitive polling. operation_id reconciles an exact Task control receipt. Finite unhandled results and unfinished service launches continue automatically; handed-over services do not unless watched. execution contains recorded owner facts for this Task. Recorded PIDs are not proof of live process identity; match start identity or retain unknown. State observation time and log time are separate. A matching path/name/port never grants ownership of another process.",
     "parameters": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",

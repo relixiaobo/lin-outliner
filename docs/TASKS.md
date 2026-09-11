@@ -13,12 +13,14 @@ starting or integrating work; the audit below is a dated snapshot, not a lock.
 
 ## In Flight
 
-Status refresh: 2026-09-11. #679 is integrated: the composer owns Project
-selection and management, and each new root task uses the selected Project
-primary or application default. Independent conversation folders are retired;
-admitted Task addresses remain immutable. The plan is archived, leaving 10
-active designs. No open PR claims remain at this refresh. #675/#676/#677 image
-and service-evidence contracts remain available.
+Status refresh: 2026-09-11. Task action admission, outcome-aware recovery and
+attributable observations are integrated through #681/#683/#684; their #680
+design is archived. Scheduling (#682, Draft) and Memory Node quality (#685,
+Draft) are the open claims at this refresh. Ten active designs remain.
+
+#679 Project-owned defaults and #675/#676/#677 image/service-evidence contracts
+remain available. Admitted Task addresses and receipt identities stay immutable;
+new Task guidance neither infers historical causes nor grants restart authority.
 
 #674's authorization finding and source CLI cleanup tail are resolved by #678.
 The image and service repairs preserve that final supervisor transport, resource
@@ -152,8 +154,8 @@ extend these prerequisites.
 
 | Priority | Plan / PR claim | Status | Next action / eligibility |
 | --- | --- | --- | --- |
-| P2 | [scheduled-work-redesign](plans/scheduled-work-redesign.md) | `draft` | Record, input, Task and #679 Project-default contracts are available; OQ-1/OQ-2 remain. The corrected #677 Task/Thread evidence owner is available; preparation can proceed. One complete UI/CLI feature consuming final owners. |
-| P2 | [memory-agent-profile: Node retention quality](plans/memory-agent-profile.md#implementation-ownership-and-complete-delivery-units) | `draft` | Eligible now on Memory-local files; preserve the delivered source interface. Freeze quality/coverage fixtures before implementation. |
+| P2 | [scheduled-work-redesign](plans/scheduled-work-redesign.md), #682 | `in-progress` | Draft claim for the complete UI/CLI feature. Consume shipped record, input, Project and #681/#683/#684 Task contracts; product decisions and complete acceptance remain with #682. |
+| P2 | [memory-agent-profile: Node retention quality](plans/memory-agent-profile.md#implementation-ownership-and-complete-delivery-units), #685 | `in-progress` | Draft claim on Memory-local owners; preserve the delivered source interface and verify useful retention with fixed quality/coverage fixtures. |
 | P2 | [memory-agent-profile: Profile files and direct learning](plans/memory-agent-profile.md#implementation-ownership-and-complete-delivery-units) | `draft` | Record prerequisite is available; follow selected Node-quality changes. Demonstrate edit/source/activation contracts before consumers; parallel with the Agent lane only where shared context/configuration owners remain settled. |
 | P2 | [targeted-thread-recovery](plans/targeted-thread-recovery.md) | `draft` | Record, input and Task prerequisites are available; final profile owners remain required. Prefer after other selected lifecycle consumers; verify exact question, Task, Project and scheduled-run closure through their actual owners. |
 | P2 | [file-preview-office](plans/file-preview-office.md) | `draft` | Prove no-Python DOCX/XLSX extraction and archive policy first; cut over Agent and preview in the same feature. Preserve #669's delivered file-tool contract; take the first preview-shell claim and ship all three readers together. |
@@ -182,8 +184,9 @@ open question. Reuse existing PM decisions instead of requesting them again.
   membership remain separate authorities.
 - **Input and Task lifecycle:** #672 delivers deadline/settlement and renderer
   draft state; #673 delivers Task responsibility, receipts and event disposition.
-  Scheduling consumes both. Timeout keeps the same execution and slot until its
-  owner settles. It clears only the exact question cause, not unread results or
+  #681/#683/#684 add exact action admission, receipt-specific recovery and bounded
+  execution provenance without replacing those owners. Scheduling consumes them.
+  Timeout keeps the same execution and slot until its owner settles. It clears only the exact question cause, not unread results or
   unrelated issues. No consumer adds a second timer or completion ledger.
 - **Project and scheduling:** selected Project primary or application default
   supplies an explicit initial choice only; no independent chat folder remains.
@@ -203,8 +206,10 @@ open question. Reuse existing PM decisions instead of requesting them again.
 - **Image/evidence consumers:** #676 supplies common model-image
   normalization, not UI-only thumbnails, Office parsing or URL acquisition.
   #677 supplies readiness validation and development guidance, not a new health
-  registry, Task relationship or recovery schema. Targeted recovery preserves
-  immutable historical observations and current receipts through existing owners.
+  registry, Task relationship or recovery schema. #684 exposes recorded source,
+  address, time and PID facts without treating a matching process as owned.
+  Targeted recovery preserves immutable observations and current receipts through
+  existing owners.
 
 ## Other Active Plans
 
@@ -358,6 +363,8 @@ into a blanket dependency for every PR.
 
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
+
+- **tool-recovery-and-evidence-integrity** (`done`, #680/#681/#683/#684, 2026-09-11) - exact Task action admission, receipt-aware recovery and attributable observations are shipped; [plan archived](plans/archive/tool-recovery-and-evidence-integrity.md).
 
 - **composer-project-menu** (`done`, #679, 2026-09-11) - searchable composer Project selection, editing and creation now own future task defaults; independent chat folders are retired and the [plan is archived](plans/archive/composer-project-menu.md).
 - **agent-evidence-and-service-readiness** (`done`, #675/#676/#677, 2026-09-11) - actual image pixels and owned cross-directory readiness evidence are delivered; [plan archived](plans/archive/agent-evidence-and-service-readiness.md), original timeout investigation retained separately.

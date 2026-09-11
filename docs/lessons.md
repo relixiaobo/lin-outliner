@@ -3001,3 +3001,17 @@ leaving a visible menu unable to handle arrows or Escape. Park focus on the menu
 surface during admission and restore an enabled target after failure, unless
 the user moved focus or dismissed the menu. Verify an actually pending request
 and an asynchronous rejection; immediate mocked failures can hide this gap (#679).
+
+
+## Admission normalization preserves rejection and replay identity
+
+**Reject the complete input before reconstructing it, and preserve the canonical
+serialization that stored operation digests already use.** Schema/admission
+parity alone cannot prove either invariant: validate through the native executor
+boundary and reopen the real receipt store when checking replay.
+
+PR #681 first returned input objects in caller key order, changing receipt hashes
+for identical arguments. Canonical reconstruction repaired replay but exposed a
+truthiness check that missed an empty extra key and silently dropped malformed
+fields before schema validation. Check absence explicitly, cover every object
+depth, pin existing digests, and verify that rejected calls enter no executor.
