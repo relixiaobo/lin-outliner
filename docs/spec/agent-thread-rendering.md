@@ -71,6 +71,12 @@ to the parent; Escape dismisses the menus and restores focus to Add. Attachment
 limits disable only the attachment action; paste/drop and attachment ownership
 remain unchanged.
 
+The parent Project row displays the selected Project name, or Choose project when
+unselected. The child shows No Project only when there is a selection to clear.
+With an empty catalog, omit search and the deselection row: show one No Projects
+yet message and New Project. With available projects and no selection, show the
+searchable catalog directly without a redundant checked empty choice.
+
 The flyout includes inline search, No Project and the complete Project list with
 folder icons and the current selection checked. Up to six recent choices lead the
 remaining catalog. The list scrolls while New Project stays fixed below a separator;
@@ -86,6 +92,12 @@ selection retry without another create. Cancellation changes no membership. The 
 an icon/name field, and a large bordered Add folders button in its empty state.
 After adding folders it shows primary selection/removal and an Add folder action;
 Create project submits, and Cancel from direct creation closes the dialog.
+
+The selected Project chip opens the same picker directly, without the Add menu.
+Its separate remove button clears only chat membership, preserving the Project
+catalog. Failed removal keeps the selection and displays its error in Project
+details. The picker also exposes read-only Project details. Closing the picker
+restores focus to the chip; successful removal restores focus to Add.
 
 Project is the sole user-facing default-directory choice. Selection adopts its
 current primary for subsequent task admissions, including in existing chats;

@@ -312,7 +312,8 @@ toolbar is visually unified with the textarea. Add (`+`) is a neutral unboxed
 icon entry for attachments and a searchable Project flyout with recent choices first, the full scrolling
 catalog, and a fixed creation footer. Project creation uses an icon/name field and
 a bordered, fully clickable empty source-folder area.
-A selected Project adds one compact chip directly beside it, with full paths in details;
+A selected Project adds one compact chip directly beside it: click its name to
+change selection or its separate remove icon to clear membership. Full paths remain in details;
 no selection adds no status row. Project names truncate before the application-
 default qualifier. Flexible space precedes the compact model/effort button and
 Send/Stop. Full model and effort identity remains accessible from keyboard and

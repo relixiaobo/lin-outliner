@@ -13,7 +13,10 @@ import type { ComposerProjectContext } from './ConversationControls';
 import { recentProjects, selectConversationProject } from './recentProjects';
 import type { Project } from '../../../core/agent/project';
 
-export function ComposerProjectMenu({ anchorRef, context, threadId, attachmentDisabled, onAttachment, onClose }: {
+export function ComposerProjectMenu({ anchorRef, context, threadId, attachmentDisabled, onAttachment, onClose, pickerOnly = false, onDetails, fallbackAnchorRef }: {
+  pickerOnly?: boolean;
+  fallbackAnchorRef?: RefObject<HTMLButtonElement | null>;
+  onDetails?: () => void;
   anchorRef: RefObject<HTMLButtonElement | null>;
   context?: ComposerProjectContext;
   threadId: string;
@@ -27,7 +30,7 @@ export function ComposerProjectMenu({ anchorRef, context, threadId, attachmentDi
   const rowRef = useRef<HTMLButtonElement>(null);
   const flyoutRef = useRef<HTMLDivElement>(null);
   const [search, setSearch] = useState('');
-  const [flyout, setFlyout] = useState(false);
+  const [flyout, setFlyout] = useState(pickerOnly);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
@@ -42,16 +45,17 @@ export function ComposerProjectMenu({ anchorRef, context, threadId, attachmentDi
   closeRef.current = close;
   const unavailable = !context || context.loading || !!context.error || !context.view.memberships.some((entry) => entry.threadId === threadId);
   const selected = context?.view.memberships.find((entry) => entry.threadId === threadId)?.projectId ?? null;
+  const selectedProject = context?.view.projects.find((project) => project.id === selected);
   const recent = context ? recentProjects(context.view.projects, selected) : [];
   const recentIds = new Set(recent.map((project) => project.id));
   const projects = [...recent, ...(context?.view.projects ?? []).filter((project) => !recentIds.has(project.id))];
   const query = search.trim().toLocaleLowerCase();
   const filtered = projects.filter((project) => project.name.toLocaleLowerCase().includes(query));
-  const style = useAnchoredOverlay(menuRef, { anchorRef, placement: 'top-start', width: 208, maxHeight: 320 });
+  const style = useAnchoredOverlay(pickerOnly ? flyoutRef : menuRef, { anchorRef, placement: 'top-start', width: pickerOnly ? 240 : 208, maxHeight: 320 });
   const flyoutStyle = useFlyoutOverlay(flyoutRef, rowRef, flyout, 240, 'projects', `${filtered.map((entry) => entry.id).join(',')}:${error}`, 'right');
-  const parentKeyboard = useMenuKeyboard({ surfaceRef: menuRef, onClose: close, kind: 'menu', getRestoreTarget: () => anchorRef.current });
+  const parentKeyboard = useMenuKeyboard({ surfaceRef: menuRef, onClose: close, kind: 'menu', active: !pickerOnly, getRestoreTarget: () => anchorRef.current });
   const childKeyboard = useMenuKeyboard({ surfaceRef: flyoutRef, onClose: close, kind: 'menu', active: flyout,
-    getRestoreTarget: () => closingRef.current ? anchorRef.current : rowRef.current ?? anchorRef.current });
+    getRestoreTarget: () => (closingRef.current ? anchorRef.current : rowRef.current ?? anchorRef.current) ?? fallbackAnchorRef?.current ?? null });
   useEffect(() => {
     const dismiss = (event: PointerEvent) => {
       const target = event.target as Node;
@@ -70,25 +74,25 @@ export function ComposerProjectMenu({ anchorRef, context, threadId, attachmentDi
   }
   const itemClass = 'thread-composer-model-item';
   return createPortal(<>
-    <MenuSurface ref={menuRef} role="menu" aria-label={t.add} className="thread-composer-model-popover" style={style} onKeyDown={parentKeyboard.onKeyDown}>
+    {!pickerOnly ? <MenuSurface ref={menuRef} role="menu" aria-label={t.add} className="thread-composer-model-popover" style={style} onKeyDown={parentKeyboard.onKeyDown}>
       <MenuItem role="menuitem" className={itemClass} label={strings.agent.thread.addAttachment} disabled={attachmentDisabled}
         onPointerEnter={() => setFlyout(false)} onFocus={() => setFlyout(false)} onClick={() => { close(); onAttachment(); }} />
       <div role="separator" className="project-menu-separator" />
-      <MenuItem ref={rowRef} role="menuitem" className={itemClass} label={t.project} aria-haspopup="menu" aria-expanded={flyout}
+      <MenuItem ref={rowRef} role="menuitem" className={itemClass} label={selectedProject?.name ?? t.chooseProject} title={selectedProject?.name} icon={<FolderIcon size={ICON_SIZE.compact} />} aria-haspopup="menu" aria-expanded={flyout}
         labelClassName="project-menu-label" meta={<ChevronRightIcon size={ICON_SIZE.compact} />}
         onPointerEnter={() => setFlyout(true)} onClick={() => setFlyout(true)} onKeyDown={(event) => {
           if (event.key === 'ArrowRight') { event.preventDefault(); event.stopPropagation(); setFlyout(true); }
         }} />
-    </MenuSurface>
+    </MenuSurface> : null}
     {flyout ? <MenuSurface ref={flyoutRef} role="menu" aria-label={t.chooseProject} aria-busy={busy}
-      className="thread-composer-model-popover thread-composer-model-submenu project-picker-menu" style={flyoutStyle} onKeyDown={(event) => {
+      className="thread-composer-model-popover thread-composer-model-submenu project-picker-menu" style={pickerOnly ? style : flyoutStyle} onKeyDown={(event) => {
         if (isImeComposingEvent(event)) return;
         const inSearch = event.target instanceof HTMLInputElement;
         if (inSearch && ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
         if (inSearch && event.key === 'Enter') {
           event.preventDefault(); event.stopPropagation();
           if (query && filtered[0]) void choose(filtered[0]);
-        } else if (event.key === 'ArrowLeft') { event.preventDefault(); event.stopPropagation(); setFlyout(false); }
+        } else if (event.key === 'ArrowLeft' && !pickerOnly) { event.preventDefault(); event.stopPropagation(); setFlyout(false); }
         else {
           childKeyboard.onKeyDown(event);
           if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
@@ -96,13 +100,13 @@ export function ComposerProjectMenu({ anchorRef, context, threadId, attachmentDi
           }
         }
       }}>
-      <div className="project-menu-search">
+      {projects.length > 0 ? <div className="project-menu-search">
         <SearchIcon size={ICON_SIZE.compact} />
         <Input variant="bare" label={t.search} placeholder={t.search} value={search} onChange={(event) => setSearch(event.target.value)} />
-      </div>
+      </div> : null}
       <div className="project-menu-list">
-      {!query ? <MenuItem role="menuitemradio" aria-checked={selected === null && !unavailable} className={itemClass} label={t.none}
-        labelClassName="project-menu-label" meta={selected === null && !unavailable ? <CheckIcon size={ICON_SIZE.compact} /> : null}
+      {!query && selected !== null ? <MenuItem role="menuitemradio" aria-checked={false} className={itemClass} label={t.none}
+        labelClassName="project-menu-label"
         disabled={busy || unavailable} onClick={() => void choose(null)} /> : null}
       {filtered.map((project) => <MenuItem key={project.id} role="menuitemradio" aria-checked={selected === project.id} className={itemClass}
         icon={<FolderIcon size={ICON_SIZE.compact} />} label={project.name} labelClassName="project-menu-label" title={`${project.name}\n${project.primaryFolder ?? t.applicationDefault}`}
@@ -112,6 +116,7 @@ export function ComposerProjectMenu({ anchorRef, context, threadId, attachmentDi
       {unavailable ? <p className="project-menu-status" role="status">{context?.error ?? t.loading}</p> : null}
       {error ? <p className="project-menu-status" role="alert">{error}</p> : null}
       <div role="separator" className="project-menu-separator" />
+      {onDetails ? <MenuItem role="menuitem" className={itemClass} label={t.locationDetails} onClick={() => { close(); onDetails(); }} /> : null}
       <MenuItem role="menuitem" className={itemClass} icon={<AddIcon size={ICON_SIZE.compact} />} label={t.new} disabled={busy || unavailable} onClick={() => { close(); context?.onChooseProject('new'); }} />
     </MenuSurface> : null}
   </>, document.body);

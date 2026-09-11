@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { mkdir, mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { closeSmokeApp, launchSmokeApp, type SmokeApp } from './electronApp';
@@ -72,8 +72,9 @@ test('native Project picker and Agent primary-folder edit drive defaults across 
     await page.getByRole('button', { name: 'Show Threads', exact: true }).click();
     await page.getByRole('dialog', { name: 'Threads' }).getByRole('button', { name: 'New Thread', exact: true }).click();
     threadId = await page.evaluate(async () => (await window.lin!.agentCoreRequest('thread/list', {})).data[0]!.id);
-    await page.locator('.thread-composer-toolbar').getByRole('button', { name: 'Add', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Project', exact: true }).hover();
+    await expect.poll(() => page.evaluate(() => window.lin!.startup.get())).toMatchObject({ status: 'ready' });
+    await page.locator('.thread-composer-toolbar').getByRole('button', { name: 'Add', exact: true }).press('Enter');
+    await page.getByRole('menu', { name: 'Add', exact: true }).locator('[aria-haspopup="menu"]').hover();
     await page.getByRole('menuitem', { name: 'New Project', exact: true }).click();
     const form = page.getByRole('dialog', { name: 'Create project', exact: true });
     await form.getByRole('button', { name: 'Add folder', exact: true }).click();
@@ -108,15 +109,16 @@ test('native Project picker and Agent primary-folder edit drive defaults across 
       await page.emulateMedia({ colorScheme: theme });
       await page.locator('.agent-dock').screenshot({ path: testInfo.outputPath(`native-${theme}.png`) });
     }
-    await page.evaluate((threadId) => window.lin!.agentCoreRequest('project/manage', {
-      operation: 'bind', threadId, projectId: null, expectedRevision: null, expectedMembershipRevision: 1,
-    }), threadId);
+    await page.getByRole('button', { name: 'Remove project from chat', exact: true }).click();
     await expect(page.locator('.thread-location-chip')).toHaveCount(0);
     await closeSmokeApp(smoke, { keepUserData: true });
     smoke = await launchSmokeApp({ userDataDir }); page = smoke.window;
     await expect.poll(async () => (await inspect()).memberships[0]?.projectId).toBeNull();
     await expect(page.locator('.thread-location-chip')).toHaveCount(0);
   } finally {
+    const resultsPath = testInfo.outputPath('project-tool-results.json');
+    await writeFile(resultsPath, JSON.stringify(results, null, 2));
+    await testInfo.attach('project-tool-results', { path: resultsPath, contentType: 'application/json' });
     if (smoke) await closeSmokeApp(smoke);
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));

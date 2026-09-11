@@ -1483,7 +1483,7 @@ export const en = {
     projects: {
       operations: { create: 'Create Project', update: 'Edit Project', bind: 'Change conversation Project', delete: 'Delete Project' },
       project: 'Project', create: 'Create project', projectName: 'Project name', addFoldersHint: 'Add folders to this project', noResults: 'No projects found.', retrySelection: 'Retry selection', chooseFolder: 'Choose folder',
-      add: 'Add', chooseProject: 'Choose project', search: 'Search projects', sourceFolders: 'Source folders',
+      add: 'Add', chooseProject: 'Choose project', changeProject: 'Change project', removeFromChat: 'Remove project from chat', search: 'Search projects', sourceFolders: 'Source folders',
       primary: 'Primary', makePrimary: 'Make primary', addFolder: 'Add folder', removeFolder: 'Remove folder',
       duplicateFolder: 'This folder is already in the Project.', choosePrimary: 'Choose a replacement primary folder before saving.',
       organizationOnly: 'Organize conversations; add source folders whenever needed.',

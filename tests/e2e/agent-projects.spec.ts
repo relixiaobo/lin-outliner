@@ -7,7 +7,7 @@ async function nextFolder(page: Page, path: string) {
 async function projectMenu(page: Page) {
   await page.locator('.thread-composer-toolbar').getByRole('button', { name: 'Add', exact: true }).click();
   const add = page.getByRole('menu', { name: 'Add', exact: true });
-  await add.getByRole('menuitem', { name: 'Project', exact: true }).hover();
+  await add.locator('[aria-haspopup="menu"]').hover();
   return page.getByRole('menu', { name: 'Choose project', exact: true });
 }
 for (const theme of ['light', 'dark'] as const) {
@@ -18,6 +18,9 @@ for (const theme of ['light', 'dark'] as const) {
     await page.locator('.app').evaluate((element) => (element as HTMLElement).style.setProperty('--agent-width', '560px'));
     await expect(page.locator('.thread-location-chip')).toHaveCount(0);
     let flyout = await projectMenu(page);
+    await expect(flyout.getByRole('textbox')).toHaveCount(0);
+    await expect(flyout.getByRole('menuitemradio')).toHaveCount(0);
+    await expect(flyout.getByRole('status')).toHaveText('No Projects yet.');
     await expect(page.getByRole('menuitem', { name: 'Set work folder', exact: true })).toHaveCount(0);
     const add = page.getByRole('menu', { name: 'Add', exact: true });
     await expect(add.getByRole('menuitem', { name: 'Add attachment' })).toBeVisible();
@@ -26,6 +29,7 @@ for (const theme of ['light', 'dark'] as const) {
     expect(Math.abs(addBox.x - anchorBox.x)).toBeLessThan(2);
     expect(addBox.y + addBox.height).toBeLessThanOrEqual(anchorBox.y);
     expect(flyoutBox.x).toBeGreaterThanOrEqual(addBox.x + addBox.width);
+    await page.screenshot({ path: testInfo.outputPath(`project-empty-${theme}.png`) });
     await flyout.getByRole('menuitem', { name: 'New Project', exact: true }).click();
     const form = page.getByRole('dialog', { name: 'Create project', exact: true });
     await expect(form.getByRole('textbox', { name: 'Name', exact: true })).toBeFocused();
@@ -41,12 +45,14 @@ for (const theme of ['light', 'dark'] as const) {
     await form.getByRole('button', { name: 'Create project', exact: true }).click();
     await expect(page.locator('.thread-location-chip')).toHaveText('Tenon');
     await expect(form).toHaveCount(0);
-    await page.locator('.thread-location-chip').click();
+    await page.getByRole('button', { name: 'Change project', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Project details', exact: true }).click();
     const details = page.getByRole('dialog', { name: 'Project details', exact: true });
     await expect(details.getByText('/Users/developer/reference', { exact: true })).toBeVisible();
     await expect(details.getByRole('button', { name: 'Set work folder', exact: true })).toHaveCount(0);
     await details.getByRole('button', { name: 'Close', exact: true }).click();
     flyout = await projectMenu(page);
+    await expect(page.getByRole('menu', { name: 'Add', exact: true }).getByRole('menuitem', { name: 'Tenon', exact: true })).toBeVisible();
     await expect(flyout.getByRole('menuitemradio', { name: 'Tenon', exact: true })).toHaveAttribute('aria-checked', 'true');
     await flyout.getByRole('menuitemradio', { name: 'Tenon', exact: true }).hover();
     await expect(flyout).toBeVisible();
@@ -54,6 +60,8 @@ for (const theme of ['light', 'dark'] as const) {
     await flyout.getByRole('menuitemradio', { name: 'No Project', exact: true }).click();
     await expect(page.locator('.thread-location-chip')).toHaveCount(0);
     flyout = await projectMenu(page);
+    await expect(flyout.getByRole('menuitemradio', { name: 'No Project', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('menu', { name: 'Add', exact: true }).getByRole('menuitem', { name: 'Choose project', exact: true })).toBeVisible();
     await flyout.getByRole('menuitemradio', { name: 'Tenon', exact: true }).click();
     await expect(page.locator('.thread-location-chip')).toHaveText('Tenon');
     expect((await commandCalls(page)).filter((call) => call.cmd === 'project/manage' && call.args.operation === 'create')).toHaveLength(1);
@@ -72,9 +80,9 @@ for (const theme of ['light', 'dark'] as const) {
     const flyout = page.getByRole('menu', { name: 'Choose project', exact: true });
     await expect(flyout.getByRole('textbox', { name: 'Search projects' })).toBeFocused();
     await page.keyboard.press('ArrowDown');
-    await expect(flyout.getByRole('menuitemradio', { name: 'No Project', exact: true })).toBeFocused();
+    await expect(flyout.getByRole('menuitemradio', { name: project.name, exact: true })).toBeFocused();
     await page.keyboard.press('ArrowLeft');
-    await expect(page.getByRole('menuitem', { name: 'Project', exact: true })).toBeFocused();
+    await expect(page.getByRole('menuitem', { name: 'Choose project', exact: true })).toBeFocused();
     await page.keyboard.press('ArrowRight');
     const search = flyout.getByRole('textbox', { name: 'Search projects' });
     await search.fill('missing project');
@@ -202,7 +210,7 @@ test('Project flyout lists the whole catalog and keeps creation visible while sc
     window.dispatchEvent(new Event('focus'));
   });
   const flyout = await projectMenu(page);
-  await expect(flyout.getByRole('menuitemradio')).toHaveCount(13);
+  await expect(flyout.getByRole('menuitemradio')).toHaveCount(12);
   await expect(flyout.getByRole('menuitem', { name: 'All Projects…' })).toHaveCount(0);
   const create = flyout.getByRole('menuitem', { name: 'New Project', exact: true });
   const before = (await create.boundingBox())!;
@@ -214,4 +222,54 @@ test('Project flyout lists the whole catalog and keeps creation visible while sc
   await expect(flyout.getByRole('menuitemradio')).toHaveCount(1);
   await flyout.getByRole('menuitemradio', { name: 'Project 11', exact: true }).click();
   await expect(page.locator('.thread-location-chip')).toHaveText('Project 11 · Application default');
+});
+
+
+test('Project chip changes and removes membership directly, retaining selection on failure', async ({ page }, testInfo) => {
+  await openMockedApp(page);
+  await page.evaluate(async () => {
+    for (const name of ['First', 'Second']) await window.lin.agentCoreRequest('project/manage', {
+      operation: 'create', name, folders: [], primaryFolder: null,
+    });
+    window.dispatchEvent(new Event('focus'));
+  });
+  let picker = await projectMenu(page);
+  await picker.getByRole('menuitemradio', { name: 'First', exact: true }).click();
+  const change = page.getByRole('button', { name: 'Change project', exact: true });
+  await change.click();
+  picker = page.getByRole('menu', { name: 'Choose project', exact: true });
+  await expect(page.getByRole('menu', { name: 'Add', exact: true })).toHaveCount(0);
+  await picker.getByRole('menuitemradio', { name: 'Second', exact: true }).click();
+  await expect(page.locator('.thread-location-chip')).toHaveText('Second · Application default');
+  await expect(change).toBeFocused();
+  const chipGeometry = await page.locator('.thread-location-chip').evaluate((chip) => {
+    const name = chip.querySelector('.thread-location-project')!.getBoundingClientRect();
+    const location = chip.querySelector('.thread-location-folder')!.getBoundingClientRect();
+    const remove = chip.querySelector('.icon-button')!.getBoundingClientRect();
+    return { nameWidth: name.width, noOverlap: name.right <= location.left && location.right <= remove.left };
+  });
+  expect(chipGeometry.nameWidth).toBeGreaterThan(0);
+  expect(chipGeometry.noOverlap).toBe(true);
+  await change.click();
+  await page.screenshot({ path: testInfo.outputPath('project-chip-picker.png') });
+  await page.keyboard.press('Escape');
+  await expect(change).toBeFocused();
+  await page.evaluate(() => {
+    const request = window.lin.agentCoreRequest.bind(window.lin);
+    let fail = true;
+    window.lin.agentCoreRequest = (async (method: string, input: Record<string, unknown>) => {
+      if (method === 'project/manage' && input.operation === 'bind' && input.projectId === null && fail) {
+        fail = false; throw new Error('Removal interrupted');
+      }
+      return request(method as never, input as never);
+    }) as typeof window.lin.agentCoreRequest;
+  });
+  await page.getByRole('button', { name: 'Remove project from chat', exact: true }).click();
+  await expect(page.getByRole('alert')).toHaveText('Removal interrupted');
+  await expect(page.locator('.thread-location-chip')).toHaveText('Second · Application default');
+  await page.getByRole('dialog', { name: 'Project details' }).getByRole('button', { name: 'Close', exact: true }).click();
+  await page.getByRole('button', { name: 'Remove project from chat', exact: true }).click();
+  await expect(page.locator('.thread-location-chip')).toHaveCount(0);
+  await expect(page.locator('.thread-composer-toolbar').getByRole('button', { name: 'Add', exact: true })).toBeFocused();
+  expect((await page.evaluate(() => window.lin.agentCoreRequest('project/inspect', {}))).projects).toHaveLength(2);
 });

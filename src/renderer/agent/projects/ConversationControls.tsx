@@ -2,11 +2,12 @@ import { useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ProjectCatalogView } from '../../../core/agent/project';
 import { useT } from '../../i18n/I18nProvider';
-import { AddIcon, WarningIcon, ICON_SIZE } from '../../ui/icons';
+import { AddIcon, CloseIcon, WarningIcon, ICON_SIZE } from '../../ui/icons';
 import { ComposerProjectMenu } from './ComposerProjectMenu';
 import { IconButton } from '../../ui/primitives/IconButton';
 import { Button } from '../../ui/primitives/Button';
 import { Dialog } from '../../ui/primitives/Dialog';
+import { selectConversationProject } from './recentProjects';
 import { conversationLocationLabel } from './locationLabel';
 import '../../styles/projects.css';
 
@@ -26,6 +27,11 @@ export function ConversationControls({ threadId, context, attachmentDisabled, on
   const strings = useT();
   const t = strings.agent.projects;
   const anchor = useRef<HTMLButtonElement>(null);
+  const projectAnchor = useRef<HTMLButtonElement>(null);
+  const removingRef = useRef(false);
+  const [removing, setRemoving] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [picker, setPicker] = useState(false);
   const titleId = useId();
   const [menu, setMenu] = useState(false);
   const [details, setDetails] = useState(false);
@@ -35,20 +41,34 @@ export function ConversationControls({ threadId, context, attachmentDisabled, on
   const folder = project?.primaryFolder ?? null;
   const locationKnown = membership && (!membership.projectId || project);
   const unknown = context?.error ? t.unavailable : t.loading;
-  const close = () => { setDetails(false); anchor.current?.focus(); };
+  const close = () => { setDetails(false); (projectAnchor.current ?? anchor.current)?.focus(); };
   const openDetails = () => setDetails(true);
+  async function removeProject() {
+    if (!context || removingRef.current) return;
+    removingRef.current = true; setRemoving(true); setActionError(null); setPicker(false);
+    try { await selectConversationProject(threadId, null, context.view); anchor.current?.focus(); }
+    catch (error) { setActionError(error instanceof Error ? error.message : String(error)); setDetails(true); }
+    finally { removingRef.current = false; setRemoving(false); }
+  }
   return <>
     <IconButton icon={AddIcon} label={t.add} title={t.add} variant="composerTool" ref={anchor}
-      aria-expanded={menu} aria-haspopup="menu" onClick={() => setMenu((current) => !current)} />
-    {label?.text ? <button className="thread-location-chip" type="button" onClick={openDetails}
-      aria-label={label.detail} title={label.detail} aria-busy={context?.loading}>
+      aria-expanded={menu} aria-haspopup="menu" onClick={() => { setPicker(false); setMenu((current) => !current); }} />
+    {label?.text ? <div className="thread-location-chip" title={label.detail} aria-busy={context?.loading || removing}>
+      <button ref={projectAnchor} className="thread-location-open" type="button" aria-label={t.changeProject}
+        title={t.changeProject} aria-expanded={picker} aria-haspopup="menu" disabled={removing}
+        onClick={() => { setMenu(false); setPicker((current) => !current); }}>
       {label.project ? <span className="thread-location-project">{label.project}</span> : null}
       {label.project && label.location ? <span aria-hidden="true"> · </span> : null}
       {label.location ? <span className={`thread-location-folder${folder === null ? ' is-application-default' : ''}`}>{label.location}</span> : null}
       {label.unavailable ? <span className="thread-location-unavailable" role="img" aria-label={t.unavailable} title={t.unavailable}><WarningIcon size={ICON_SIZE.tiny} /></span> : null}
-    </button> : null}
+      </button>
+      {membership?.projectId ? <IconButton icon={CloseIcon} label={t.removeFromChat} variant="tabClose"
+        disabled={removing || !context || context.loading || !!context.error} onClick={() => void removeProject()} /> : null}
+    </div> : null}
     {menu ? <ComposerProjectMenu anchorRef={anchor} context={context} threadId={threadId}
       attachmentDisabled={attachmentDisabled} onAttachment={onAttachment} onClose={() => setMenu(false)} /> : null}
+    {picker ? <ComposerProjectMenu pickerOnly anchorRef={projectAnchor} fallbackAnchorRef={anchor} context={context} threadId={threadId}
+      attachmentDisabled={attachmentDisabled} onAttachment={onAttachment} onClose={() => setPicker(false)} onDetails={openDetails} /> : null}
     {details ? createPortal(<Dialog labelledBy={titleId} backdropClassName="confirm-dialog-backdrop"
       surfaceClassName="confirm-dialog project-dialog" onEscapeKeyDown={close} onBackdropMouseDown={close}>
       <h2 id={titleId} className="confirm-dialog-title">{t.locationDetails}</h2>
@@ -61,10 +81,11 @@ export function ConversationControls({ threadId, context, attachmentDisabled, on
         {path}{path === project.primaryFolder ? ` · ${t.primary}` : ''}{context?.view.unavailableFolders.includes(path) ? ` · ${t.unavailable}` : ''}
       </li>)}</ul></> : null}
       {context?.loading ? <p role="status">{t.loading}</p> : null}
+      {actionError ? <p className="automation-error" role="alert">{actionError}</p> : null}
       {context?.error ? <p className="automation-error" role="alert">{context.error}</p> : null}
       <div className="confirm-dialog-actions project-location-actions">
         <Button variant="ghost" onClick={close}>{t.close}</Button>
-        <Button variant="ghost" disabled={!context || context.loading || !!context.error} onClick={() => { close(); context?.onChooseProject(); }}>{t.chooseProject}</Button>
+        <Button variant="ghost" disabled={!context || context.loading || !!context.error} onClick={() => { close(); setPicker(true); }}>{t.chooseProject}</Button>
       </div>
     </Dialog>, document.body) : null}
   </>;

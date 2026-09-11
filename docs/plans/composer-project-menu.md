@@ -57,8 +57,16 @@ Remove the retired conversation-folder reader and writer without a migration.
   membership so subsequent admissions use Application default. Explicit task cwd
   remains; remove folder-only CLI mutations and their persistence.
 - **FR-4:** Show the selected Project in the location chip; details show its
-  primary and secondary paths read-only and offer Project selection. Loading, missing paths, stale revisions,
+  primary and secondary paths read-only and offer Project selection. Clicking the
+  chip opens the picker directly; a separate remove icon clears membership without
+  deleting the Project. Failures keep the chip and report the error. Loading, missing paths, stale revisions,
   and failures cannot report successful selection or fall back silently.
+
+The parent Project row displays the selected Project name, or Choose project when
+unselected. The child shows No Project only when there is a selection to clear.
+With an empty catalog, omit search and the deselection row: show one No Projects
+yet message and New Project. With available projects and no selection, show the
+searchable catalog directly without a redundant checked empty choice.
 
 ### Implementation scope and collision check
 

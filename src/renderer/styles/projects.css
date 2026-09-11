@@ -61,7 +61,7 @@
 .thread-location-project { flex: 0 1 auto; min-width: 1ch; overflow: hidden; text-overflow: ellipsis; }
 .thread-location-folder { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .thread-location-project ~ .thread-location-folder { flex-shrink: 0; max-width: calc(100% - 4ch); }
-.thread-location-folder.is-application-default { flex-shrink: 0; max-width: none; }
+.thread-location-folder.is-application-default { flex: 1 1 0; max-width: 60%; }
 .thread-location-unavailable { display: flex; flex: 0 0 auto; }
 
 @container conversation-composer (max-width: 320px) {
@@ -139,3 +139,21 @@
 .project-menu-search:has(input:focus-visible) { border-radius: var(--radius-sm); box-shadow: var(--focus-ring-shadow); }
 .project-menu-list { min-height: 0; max-height: calc(var(--space-8) * 12); overflow-y: auto; }
 .project-menu-list .thread-composer-model-item > svg { flex-shrink: 0; }
+
+.thread-location-open {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: var(--space-1);
+  border: 0;
+  border-radius: var(--radius-pill);
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.thread-location-open:hover { color: var(--text-primary); }
+.thread-location-open:focus-visible { outline: none; box-shadow: var(--focus-ring-shadow); }
+.thread-location-chip > .icon-button { flex-shrink: 0; }
