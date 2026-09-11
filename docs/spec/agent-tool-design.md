@@ -903,7 +903,9 @@ a live root user invocation; it remains available when delegation is disabled.
 The request-bound private broker checks the source Thread/Turn/Item, supervised
 Task/process identity, input digest and current capability before mutation. Project
 proposals use native confirmation with canonical paths and revision revalidation;
-folder-only explicit changes save directly. Combined binds commit membership and
+folder-only explicit changes save directly only for the invoking conversation.
+The CLI rejects a `setWorkFolder` target that differs from the trusted source root
+Thread before receipt replay or mutation. Combined binds commit membership and
 folder together. Durable operation receipts report applied/pending/not_committed;
 retrying the same ID and digest returns the original result. Inspection pages 50
 Projects with a revision-bound cursor and separately includes the selected Project.

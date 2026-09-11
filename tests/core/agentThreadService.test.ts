@@ -8948,6 +8948,18 @@ describe('Project CLI and live conversation location', () => {
       }
       const initial = await command({ action: 'inspect' });
       expect(initial.workFolders[0]).toMatchObject({ threadId: thread.id, path: null, revision: 0 });
+      const otherThread = (await fixture.service.startThread({ source: 'app', threadSource: 'user', modelProvider: 'openai', configurationSource: { kind: 'user' } })).thread;
+      await fixture.service.projects.manage({ operation: 'setWorkFolder', threadId: otherThread.id, path: b, expectedRevision: 0 });
+      const crossConversation = await execute('bash', { command: 'delegate project --input - --output json', cwd: a,
+        stdin: JSON.stringify({ action: 'manage', operationId: 'other-folder', request: {
+          operation: 'setWorkFolder', threadId: otherThread.id, path: a, expectedRevision: 1,
+        } }),
+      });
+      expect(crossConversation.details.ok).toBe(false);
+      expect(JSON.parse(crossConversation.details.data.stdout)).toMatchObject({ ok: false, error: { code: 'unauthorized' } });
+      expect(fixture.service.projects.store.workFolder(otherThread.id)).toMatchObject({ path: b, revision: 1 });
+      expect(await command({ action: 'receipt', operationId: 'other-folder' })).toEqual({ outcome: 'not_committed' });
+      expect(confirmations).toBe(0);
       await command({ action: 'manage', operationId: 'set-a', request: { operation: 'setWorkFolder', threadId: thread.id, path: a, expectedRevision: 0 } });
       expect(confirmations).toBe(0);
       expect((await execute('file_read', { file_path: 'identity.txt' })).details.data.file.content).toContain('directory A');

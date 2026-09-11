@@ -29,8 +29,10 @@ To change the saved default on explicit user instruction, send:
 
 Use the inspected work-folder revision, not a guessed zero. `path: null` clears
 the saved folder to the application default even when Project membership remains.
-No extra confirmation is needed for this explicit setting change. If the saved
-folder is unavailable, use a valid explicit Bash `cwd` (for example the inspected
+Use only the invoking chat's ID from inspection. The Host rejects `setWorkFolder`
+for another conversation, including clearing its folder. No extra confirmation is
+needed for this explicit setting change in the invoking chat. If the saved folder
+is unavailable, use a valid explicit Bash `cwd` (for example the inspected
 application default) to execute the repair command.
 
 Project operations use the same `manage` envelope and a fresh `operationId`:

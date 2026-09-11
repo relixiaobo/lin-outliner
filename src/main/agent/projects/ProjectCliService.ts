@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { decodeProjectCliInput } from '../../../delegate/contract/projects';
-import type { DelegateCapabilityExecution } from '../delegation/DelegateCapabilityBroker';
+import { DelegateCapabilityRefusal, type DelegateCapabilityExecution } from '../delegation/DelegateCapabilityBroker';
 import type { ProjectService } from './ProjectService';
 import type { ProjectManageRequest } from '../../../core/agent/project';
 
@@ -45,6 +45,10 @@ export class ProjectCliService {
         : { outcome: this.pending.has(key) || this.projects.store.receiptPending(threadId, input.operationId) ? 'pending' : 'not_committed' };
     }
     const request = input.request;
+    // Only the invoking conversation authorizes a folder change without native review.
+    if (request.operation === 'setWorkFolder' && request.threadId !== threadId) {
+      throw new DelegateCapabilityRefusal('unauthorized', 'Work folder changes are limited to the invoking conversation');
+    }
     const receipt = { sourceThreadId: threadId, operationId: input.operationId, digest: digest(request) };
     const existing = this.projects.store.receipt(threadId, input.operationId, receipt.digest);
     if (existing) return { operationId: input.operationId, ...existing };

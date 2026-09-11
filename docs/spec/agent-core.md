@@ -380,8 +380,10 @@ broker binds the exact input to the active persistent user Thread/Turn/Item and
 supervised Bash Task. Project access is independent of the delegation experiment.
 The Host checks current tool/capability authority again immediately before commit.
 Project proposals require native confirmation of name, sources/primary, affected
-conversation and resulting folder; an explicit folder-only change needs no extra
-confirmation. Cancellation and stale revisions commit nothing. Durable operation
+conversation and resulting folder. An explicit folder-only change needs no extra
+confirmation only for the invoking conversation: the CLI rejects `setWorkFolder`
+when its target differs from the trusted source root Thread, before receipt replay
+or mutation. Cancellation and stale revisions commit nothing. Durable operation
 IDs bind the request digest to an atomic result receipt, permitting lost-response
 inspection and idempotent retry without duplicate creation. Deletion intent retains
 its operation identity for startup completion and truthful pending receipts.

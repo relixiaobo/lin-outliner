@@ -104,6 +104,8 @@ visible to the Agent and UI; context compaction or a restart cannot substitute a
 remembered textual promise for the saved value. The Agent can inspect the current
 value and must report conflict or failure instead of claiming a successful change.
 Explicit authorized setting changes require no additional product confirmation.
+This Agent operation is scoped to the invoking conversation; the Host rejects a
+different target using the trusted source root Thread before replay or mutation.
 No new dedicated model tool is introduced.
 
 **FR-3:** "New chat in Project" initializes the work folder from that

@@ -430,6 +430,36 @@ describe('Conversation work folders', () => {
 });
 
 describe('invocation-bound Project operations', () => {
+  test('rejects folder changes to another conversation while allowing own settings without confirmation', async () => {
+    const { ProjectCliService } = await import('../../src/main/agent/projects/ProjectCliService');
+    const host = catalog(), source = host.chat(), target = host.chat();
+    const original = await directory(), replacement = await directory();
+    await host.service.manage({ operation: 'setWorkFolder', threadId: target.id, path: original, expectedRevision: 0 });
+    let confirmations = 0;
+    const cli = new ProjectCliService(host.service, async () => {}, async () => { confirmations++; return true; });
+    const execute = (input: unknown) => cli.execute({
+      admission: { stdin: JSON.stringify(input), source: { rootThreadId: source.id } }, signal: new AbortController().signal,
+    } as Parameters<typeof cli.execute>[0]);
+    for (const [index, path] of [replacement, null].entries()) {
+      const operationId = `other-folder-${index}`;
+      await expect(execute({ action: 'manage', operationId, request: {
+        operation: 'setWorkFolder', threadId: target.id, path, expectedRevision: 1,
+      } })).rejects.toMatchObject({ code: 'unauthorized' });
+      expect(host.projects.workFolder(target.id)).toEqual({ threadId: target.id, path: original, revision: 1 });
+      expect(await execute({ action: 'receipt', operationId })).toEqual({ outcome: 'not_committed' });
+    }
+    for (const [revision, path] of [replacement, null].entries()) {
+      const input = { action: 'manage', operationId: `own-folder-${revision}`, request: {
+        operation: 'setWorkFolder', threadId: source.id, path, expectedRevision: revision,
+      } };
+      const result = await execute(input);
+      expect(result).toMatchObject({ outcome: 'applied', affectedThreadIds: [source.id] });
+      expect(await execute(input)).toEqual(result);
+      expect(host.projects.workFolder(source.id)).toEqual({ threadId: source.id, path, revision: revision + 1 });
+    }
+    expect(confirmations).toBe(0);
+  });
+
   test('paginates the catalog without dropping the selected Project and rejects a changed cursor', async () => {
     const { ProjectCliService } = await import('../../src/main/agent/projects/ProjectCliService');
     const host = catalog(), chat = host.chat();
