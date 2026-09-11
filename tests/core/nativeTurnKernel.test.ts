@@ -1,3 +1,4 @@
+import { TASK_CONTROL_INPUT_SCHEMA, decodeTaskControlToolInput } from '../../src/core/agent/taskContinuation';
 import { readFileSync } from 'node:fs';
 import { generateKeyPairSync } from 'node:crypto';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
@@ -962,6 +963,29 @@ describe('native turn kernel parity', () => {
       }),
     ]);
     expect(events.some((event) => event.type === 'tool_execution_start')).toBe(false);
+  });
+
+  test('rejects wrong Task action fields before execution and admits the corrected call', async () => {
+    const executions: unknown[] = [];
+    const control = parameterTool('task_control', TASK_CONTROL_INPUT_SCHEMA, async (_id, args) => {
+      executions.push(args); return toolResult('accepted');
+    });
+    control.prepareArguments = decodeTaskControlToolInput as never;
+    const request = { task_id: 'task', operation_id: 'operation', action: 'acknowledge', event_id: 'event' };
+    const gateway = new ScriptedGateway([
+      () => terminalStream(assistant([{ type: 'toolCall', id: 'bad', name: 'task_control', arguments: { request: { ...request, expected_revision: 0 } } }], 'toolUse')),
+      () => terminalStream(assistant([{ type: 'toolCall', id: 'good', name: 'task_control', arguments: { request } }], 'toolUse')),
+      () => terminalStream(assistant([{ type: 'text', text: 'done' }])),
+    ]);
+    const runtime = createRuntime(gateway, { tools: [control] });
+    const events: AgentEvent[] = [];
+    runtime.subscribe((event) => events.push(event));
+    await runtime.prompt(USER);
+    expect(executions).toEqual([{ request }]);
+    expect(events.filter((event) => event.type === 'tool_execution_start')).toHaveLength(1);
+    expect(events.find((event) => event.type === 'tool_execution_end' && event.isError)).toMatchObject({
+      result: { content: [{ text: expect.stringContaining('request/expected_revision') }] },
+    });
   });
 
   test('admits exact nested JSON values after preparing arguments exactly once', async () => {

@@ -78,8 +78,8 @@ setInterval(() => { if (fs.existsSync(${JSON.stringify(exitFile)})) process.exit
         else if (step === 2 && data?.backgroundTaskId) {
           taskId = data.backgroundTaskId;
           tool('bash', { command: `${quote(process.execPath)} ${quote(checkFile)}`, cwd: checkDirectory, description: 'Verify application readiness' });
-        } else if (step === 3 && data?.evidence) tool('task_control', { action: 'handoff', task_id: taskId,
-          operation_id: 'smoke-handoff', expected_revision: 0, readiness: [data.evidence] });
+        } else if (step === 3 && data?.evidence) tool('task_control', { request: { action: 'handoff', task_id: taskId,
+          operation_id: 'smoke-handoff', expected_revision: 0, readiness: [data.evidence] } });
         else {
           handoff = data;
           done('Application is ready.'); phase = 'idle';
