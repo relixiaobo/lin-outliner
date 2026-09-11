@@ -47,12 +47,12 @@ endpoint and exit code zero do not establish that relationship. Duplicate launch
 hitting the single-instance lock fits the observations, but the incident did not
 retain an explicit lock-refusal event: preserve that as a hypothesis.
 
-Consume the existing [tool contract](../spec/agent-tool-design.md),
-[Agent Core](../spec/agent-core.md) and
-[integration checklist](../spec/agent-integration.md). Task responsibility,
+Consume the existing [tool contract](../../spec/agent-tool-design.md),
+[Agent Core](../../spec/agent-core.md) and
+[integration checklist](../../spec/agent-integration.md). Task responsibility,
 immutable execution addresses, canonical Items, result envelopes, receipt replay
 and provider-visible historical arguments already have owners. The shipped
-[image and service design](archive/agent-evidence-and-service-readiness.md)
+[image and service design](agent-evidence-and-service-readiness.md)
 removed cwd equality as readiness identity; this plan must not restore it.
 
 ### Delivery shape and sequence
@@ -237,13 +237,13 @@ main-owned and its future entry/ordering is an integration action, not a dev edi
 
 | Existing design | Treatment |
 | --- | --- |
-| [Image/service repair](archive/agent-evidence-and-service-readiness.md), #675–677 | Shipped predecessor, not reopened. Preserve cwd-independent eligibility and immutable images. This plan addresses action-schema parity, recovery feedback and causal attribution beyond those repairs. |
-| [Project defaults](archive/composer-project-menu.md), #679 | Consume Project primary/application defaults and immutable admitted Task addresses; do not restore independent conversation folders or require Host/target projects to match. |
-| [Scheduled work](scheduled-work-redesign.md) | No design rewrite. Scheduling retains assignment/run ownership and consumes final Task receipts. Coordinate overlapping Task/Thread projections; whichever lands later verifies the earlier consumer. No new unconditional dependency blocks scheduling. |
-| [Targeted recovery](targeted-thread-recovery.md) | No rewrite. Preserve canonical receipt/evidence closure and unknown-ownership rules. New projections must not become reconstructable originals or authorize deletion. |
-| [Performance](performance-optimization.md) | No rewrite. Recovery call counts measure this plan's correctness, not its Core/search optimization units. |
-| [Settings working state](semantic-working-state.md) | No rewrite. Its Settings-only visual work does not own tool outcomes or Task state. |
-| [Computer Pilot](computer-pilot-managed-skill.md) | No rewrite. Existing stable target/observation and verified-action semantics remain its authority; consume those as positive attribution examples, not a competing automation layer. |
+| [Image/service repair](agent-evidence-and-service-readiness.md), #675–677 | Shipped predecessor, not reopened. Preserve cwd-independent eligibility and immutable images. This plan addresses action-schema parity, recovery feedback and causal attribution beyond those repairs. |
+| [Project defaults](composer-project-menu.md), #679 | Consume Project primary/application defaults and immutable admitted Task addresses; do not restore independent conversation folders or require Host/target projects to match. |
+| [Scheduled work](../scheduled-work-redesign.md) | No design rewrite. Scheduling retains assignment/run ownership and consumes final Task receipts. Coordinate overlapping Task/Thread projections; whichever lands later verifies the earlier consumer. No new unconditional dependency blocks scheduling. |
+| [Targeted recovery](../targeted-thread-recovery.md) | No rewrite. Preserve canonical receipt/evidence closure and unknown-ownership rules. New projections must not become reconstructable originals or authorize deletion. |
+| [Performance](../performance-optimization.md) | No rewrite. Recovery call counts measure this plan's correctness, not its Core/search optimization units. |
+| [Settings working state](../semantic-working-state.md) | No rewrite. Its Settings-only visual work does not own tool outcomes or Task state. |
+| [Computer Pilot](../computer-pilot-managed-skill.md) | No rewrite. Existing stable target/observation and verified-action semantics remain its authority; consume those as positive attribution examples, not a competing automation layer. |
 | Memory/profile, Office preview, URL reader, toolbar and dark-mode plans | No changed design premise identified. They retain their owners and independent acceptance. |
 
 No existing active plan needs an edit for this design. Update current specs in
