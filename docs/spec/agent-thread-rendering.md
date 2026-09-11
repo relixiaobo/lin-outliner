@@ -93,6 +93,10 @@ an icon/name field, and a large bordered Add folders button in its empty state.
 After adding folders it shows primary selection/removal and an Add folder action;
 Create project submits, and Cancel from direct creation closes the dialog.
 
+The Project chip stays beside Add in the bottom composer toolbar. Its leading
+folder icon switches in place to the remove button on hover or keyboard focus;
+neutral pill hover feedback groups the icon and name without changing geometry.
+
 The selected Project chip opens the same picker directly, without the Add menu.
 Its separate remove button clears only chat membership, preserving the Project
 catalog. Failed removal keeps the selection and displays its error in Project

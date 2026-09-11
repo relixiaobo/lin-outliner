@@ -62,6 +62,10 @@ Remove the retired conversation-folder reader and writer without a migration.
   deleting the Project. Failures keep the chip and report the error. Loading, missing paths, stale revisions,
   and failures cannot report successful selection or fall back silently.
 
+The Project chip stays beside Add in the bottom composer toolbar. Its leading
+folder icon switches in place to the remove button on hover or keyboard focus;
+neutral pill hover feedback groups the icon and name without changing geometry.
+
 The parent Project row displays the selected Project name, or Choose project when
 unselected. The child shows No Project only when there is a selection to clear.
 With an empty catalog, omit search and the deselection row: show one No Projects

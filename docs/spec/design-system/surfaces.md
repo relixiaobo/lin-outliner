@@ -313,7 +313,8 @@ icon entry for attachments and a searchable Project flyout with recent choices f
 catalog, and a fixed creation footer. Project creation uses an icon/name field and
 a bordered, fully clickable empty source-folder area.
 A selected Project adds one compact chip directly beside it: click its name to
-change selection or its separate remove icon to clear membership. Full paths remain in details;
+change selection. Its leading folder icon switches in place to a remove button on
+hover or keyboard focus, with neutral pill feedback and no geometry change. Full paths remain in details;
 no selection adds no status row. Project names truncate before the application-
 default qualifier. Flexible space precedes the compact model/effort button and
 Send/Stop. Full model and effort identity remains accessible from keyboard and

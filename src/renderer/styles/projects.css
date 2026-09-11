@@ -49,14 +49,15 @@
   gap: var(--space-1);
   border: 0;
   border-radius: var(--radius-pill);
-  padding: var(--space-1);
+  padding: var(--space-2) var(--space-3);
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
   font-size: var(--font-ui-sm);
   white-space: nowrap;
 }
-.thread-location-chip:hover { color: var(--text-primary); }
+.thread-location-chip:hover,
+.thread-location-chip:focus-within { background: var(--fill-2); color: var(--text-primary); }
 .thread-location-chip:focus-visible { outline: none; box-shadow: var(--focus-ring-shadow); }
 .thread-location-project { flex: 0 1 auto; min-width: 1ch; overflow: hidden; text-overflow: ellipsis; }
 .thread-location-folder { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
@@ -156,4 +157,29 @@
 }
 .thread-location-open:hover { color: var(--text-primary); }
 .thread-location-open:focus-visible { outline: none; box-shadow: var(--focus-ring-shadow); }
-.thread-location-chip > .icon-button { flex-shrink: 0; }
+
+
+.thread-location-icon {
+  position: relative;
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-8);
+  height: var(--space-8);
+}
+.thread-location-icon > .icon-button {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  border-radius: var(--radius-pill);
+}
+.thread-location-chip:hover .thread-location-icon:has(button) > .app-icon,
+.thread-location-chip:focus-within .thread-location-icon:has(button) > .app-icon { opacity: 0; }
+.thread-location-chip:hover .thread-location-icon > .icon-button,
+.thread-location-chip:focus-within .thread-location-icon > .icon-button { opacity: 1; }

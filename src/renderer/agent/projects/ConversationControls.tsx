@@ -2,7 +2,7 @@ import { useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ProjectCatalogView } from '../../../core/agent/project';
 import { useT } from '../../i18n/I18nProvider';
-import { AddIcon, CloseIcon, WarningIcon, ICON_SIZE } from '../../ui/icons';
+import { AddIcon, CloseIcon, FolderIcon, WarningIcon, ICON_SIZE } from '../../ui/icons';
 import { ComposerProjectMenu } from './ComposerProjectMenu';
 import { IconButton } from '../../ui/primitives/IconButton';
 import { Button } from '../../ui/primitives/Button';
@@ -54,6 +54,11 @@ export function ConversationControls({ threadId, context, attachmentDisabled, on
     <IconButton icon={AddIcon} label={t.add} title={t.add} variant="composerTool" ref={anchor}
       aria-expanded={menu} aria-haspopup="menu" onClick={() => { setPicker(false); setMenu((current) => !current); }} />
     {label?.text ? <div className="thread-location-chip" title={label.detail} aria-busy={context?.loading || removing}>
+      <span className="thread-location-icon">
+        <FolderIcon size={ICON_SIZE.compact} />
+        {membership?.projectId ? <IconButton icon={CloseIcon} label={t.removeFromChat} variant="tabClose"
+          disabled={removing || !context || context.loading || !!context.error} onClick={() => void removeProject()} /> : null}
+      </span>
       <button ref={projectAnchor} className="thread-location-open" type="button" aria-label={t.changeProject}
         title={t.changeProject} aria-expanded={picker} aria-haspopup="menu" disabled={removing}
         onClick={() => { setMenu(false); setPicker((current) => !current); }}>
@@ -62,8 +67,6 @@ export function ConversationControls({ threadId, context, attachmentDisabled, on
       {label.location ? <span className={`thread-location-folder${folder === null ? ' is-application-default' : ''}`}>{label.location}</span> : null}
       {label.unavailable ? <span className="thread-location-unavailable" role="img" aria-label={t.unavailable} title={t.unavailable}><WarningIcon size={ICON_SIZE.tiny} /></span> : null}
       </button>
-      {membership?.projectId ? <IconButton icon={CloseIcon} label={t.removeFromChat} variant="tabClose"
-        disabled={removing || !context || context.loading || !!context.error} onClick={() => void removeProject()} /> : null}
     </div> : null}
     {menu ? <ComposerProjectMenu anchorRef={anchor} context={context} threadId={threadId}
       attachmentDisabled={attachmentDisabled} onAttachment={onAttachment} onClose={() => setMenu(false)} /> : null}
