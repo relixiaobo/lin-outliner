@@ -214,7 +214,13 @@ The four retention classes are `external` for user/workspace-owned originals,
 `durable` for Tenon-owned user uploads, `tiered` for reclaimable generated originals,
 and `observationOnly` when no separate original exists. The observation is normalized
 at ingress to at most 2,000 px per edge and 4.5 MiB, then content-addressed before the
-image enters canonical history. Provider projection always reads that observation.
+image enters canonical history. Provider projection always reads that observation. Attachment, file-read and
+tool/generated image admission share one serialized bounded pixel decoder and
+encoder. The filename (including resource `.blob` storage) and OS file previews
+never choose model-visible content. Geometry describes the decoded canonical
+pixel orientation and final observation, preserving aspect ratio without
+upscaling. Existing observations remain immutable; an explicit new read can
+create a new observation from an available original.
 Missing original bytes fall back to the observation; missing observation bytes produce
 an unavailable-image identity and do not invalidate the surrounding Item, Turn, fork,
 or inherited context. A fork links the same canonical references and exact ContentStore
