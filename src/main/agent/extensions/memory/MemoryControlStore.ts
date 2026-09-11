@@ -30,7 +30,6 @@ interface SourceRow {
   thread_id: string;
   source_version: string;
   status: string;
-  polluted: number;
   updated_at: number;
 }
 interface PublicationRow {
@@ -69,7 +68,6 @@ export interface MemorySourceRecord {
   readonly threadId: ThreadId;
   readonly sourceVersion: string;
   readonly status: 'succeeded' | 'succeededNoOutput' | 'failed';
-  readonly polluted: boolean;
   readonly updatedAt: number;
 }
 
@@ -194,7 +192,6 @@ export class MemoryControlStore {
         thread_id TEXT PRIMARY KEY,
         source_version TEXT NOT NULL,
         status TEXT NOT NULL CHECK (status IN ('succeeded', 'succeededNoOutput', 'failed')),
-        polluted INTEGER NOT NULL DEFAULT 0 CHECK (polluted IN (0, 1)),
         updated_at INTEGER NOT NULL
       ) STRICT;
       CREATE TABLE IF NOT EXISTS origin_claims (
@@ -409,7 +406,6 @@ export class MemoryControlStore {
       threadId: row.thread_id,
       sourceVersion: row.source_version,
       status: row.status as MemorySourceRecord['status'],
-      polluted: row.polluted === 1,
       updatedAt: row.updated_at,
     } : null;
   }
@@ -418,12 +414,11 @@ export class MemoryControlStore {
     this.transaction(() => {
       this.acceptCoverage(threadId, coverage, now);
       this.db.prepare(`
-        INSERT INTO source_records(thread_id, source_version, status, polluted, updated_at)
-        VALUES (?, ?, 'succeededNoOutput', 0, ?)
+        INSERT INTO source_records(thread_id, source_version, status, updated_at)
+        VALUES (?, ?, 'succeededNoOutput', ?)
         ON CONFLICT(thread_id) DO UPDATE SET
           source_version = excluded.source_version,
           status = excluded.status,
-          polluted = 0,
           updated_at = excluded.updated_at
       `).run(threadId, sourceVersion, now);
       this.recordSuccess(now);
@@ -448,25 +443,6 @@ export class MemoryControlStore {
     if (coverage.hasMore) {
       this.enqueueJob(`phase1:continuation:${coverage.batchId}`, 'phase1', { threadId }, now);
     }
-  }
-
-  markThreadPolluted(threadId: ThreadId, now = Date.now()): void {
-    this.transaction(() => {
-      this.db.prepare(`
-        INSERT INTO source_records(thread_id, source_version, status, polluted, updated_at)
-        VALUES (?, '', 'succeededNoOutput', 1, ?)
-        ON CONFLICT(thread_id) DO UPDATE SET polluted = 1, updated_at = excluded.updated_at
-      `).run(threadId, now);
-      const origins = this.db.prepare(`
-        SELECT origin_item_id FROM origin_claims WHERE thread_id = ?
-      `).all(threadId) as Array<{ origin_item_id: string }>;
-      for (const origin of origins) {
-        this.db.prepare('DELETE FROM citation_usage WHERE origin_item_id = ?').run(origin.origin_item_id);
-      }
-      this.db.prepare('DELETE FROM origin_claims WHERE thread_id = ?').run(threadId);
-      this.enqueueJob(`phase2:pollution:${threadId}`, 'phase2', { threadId }, now);
-    });
-    this.invalidateMemoryVisibilityCache();
   }
 
   claimOrigin(
@@ -592,12 +568,11 @@ export class MemoryControlStore {
       this.acceptCoverage(input.threadId, input.coverage, now);
       this.writeGeneratedNodesAndLineage(input.nodes, input.lineage);
       this.db.prepare(`
-        INSERT INTO source_records(thread_id, source_version, status, polluted, updated_at)
-        VALUES (?, ?, 'succeeded', 0, ?)
+        INSERT INTO source_records(thread_id, source_version, status, updated_at)
+        VALUES (?, ?, 'succeeded', ?)
         ON CONFLICT(thread_id) DO UPDATE SET
           source_version = excluded.source_version,
           status = excluded.status,
-          polluted = 0,
           updated_at = excluded.updated_at
       `).run(input.threadId, input.sourceVersion, now);
       this.finalizePublicationInsideTransaction(input.publicationId);

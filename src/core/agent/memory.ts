@@ -50,7 +50,16 @@ export interface MemoryView {
   readonly thread: ThreadMemoryStatus | null;
 }
 
+export type MemoryEvidenceSource = 'reader' | 'host' | 'assistant' | 'tool' | 'web' | 'mcp';
+
+export interface MemoryEvidencePart {
+  readonly type: 'text' | 'attachment' | 'nodeReference' | 'threadReference';
+  readonly text: string;
+}
+
 export interface MemoryStage1EvidenceItem {
+  readonly source: MemoryEvidenceSource;
+  readonly parts?: readonly MemoryEvidencePart[];
   readonly threadId: ThreadId;
   readonly turnId: TurnId;
   readonly itemId: ThreadItemId;
@@ -62,6 +71,8 @@ export interface MemoryStage1EvidenceItem {
 }
 
 export interface MemoryStage1Statement {
+  /** Semantic routing, never permission or authorship authority. */
+  readonly subject: 'user' | 'context';
   readonly text: string;
   readonly originItemIds: readonly ThreadItemId[];
   readonly rationale: { readonly futureUse: string; readonly novelty: string };
@@ -175,13 +186,15 @@ export function decodeMemoryStage1Output(value: unknown): MemoryStage1Output {
 }
 
 function stage1Statement(value: unknown, field: string, charLimit: number): MemoryStage1Statement {
-  const record = exactRecord(value, ['text', 'originItemIds', 'rationale'], `Memory Stage 1 ${field}`);
+  const record = exactRecord(value, ['text', 'subject', 'originItemIds', 'rationale'], `Memory Stage 1 ${field}`);
   const originItemIds = stringList(record.originItemIds, `${field}.originItemIds`, 64, 200);
   if (originItemIds.length === 0 || new Set(originItemIds).size !== originItemIds.length) {
     throw new Error(`${field}.originItemIds must contain distinct evidence IDs`);
   }
   const rationale = exactRecord(record.rationale, ['futureUse', 'novelty'], `${field}.rationale`);
+  if (record.subject !== 'user' && record.subject !== 'context') throw new Error('Memory subject must be user or context');
   return Object.freeze({
+    subject: record.subject,
     rationale: Object.freeze({
       futureUse: boundedString(rationale.futureUse, 'rationale.futureUse', 600),
       novelty: boundedString(rationale.novelty, 'rationale.novelty', 600),

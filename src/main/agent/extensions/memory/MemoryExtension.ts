@@ -141,7 +141,7 @@ export class MemoryExtension implements AgentCoreExtension {
       const current = host.readThread({ threadId, includeTurns: true }).thread;
       if (current.status.type !== 'idle') return false;
       const evidence = collectMemoryEvidence(phase1Source(current, current.turns ?? []), this.control);
-      return !evidence.polluted && evidence.sourceVersion === sourceVersion;
+      return evidence.sourceVersion === sourceVersion;
     });
     const phase2 = new Phase2(
       this.control,

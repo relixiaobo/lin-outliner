@@ -110,7 +110,7 @@ A clear durable correction may qualify once. Repeated independent feedback may j
 
 A 30-second quiet debounce and an available-batch start target of two minutes are proposed tuning defaults, not completion SLAs or measured savings. A busy or failing worker keeps a durable pending job and does not claim success. More frequent learning may increase background cost and must be measured.
 
-**FR-8:** Direct user corrections remain eligible even when the conversation includes web/MCP content. External instructions, quotations, and recalled profile/Memory prose cannot establish user preferences by themselves. Preserve immutable enabled/disabled admission, source provenance, and excluded Thread origins. This source-aware rule is an explicit change to today's whole-Thread external-context exclusion.
+**FR-8:** Mixed-source conversations remain eligible for learning; web/MCP activity never excludes the entire Thread or withdraws its earlier accepted support. The Host identifies reader, Host, assistant, tool, web and MCP sources and preserves message-part boundaries. The model judges meaning and future usefulness: reader corrections/preferences need the reader's own attributable statement, while researched contextual knowledge can be retained with its actual source, scope and uncertainty. External instructions, quotations and recalled prose cannot establish user preferences by themselves. Preserve immutable enabled/disabled admission, source provenance and excluded Thread origins. This evidence contract belongs to the Node-quality unit and is consumed by direct profile learning.
 
 ### Context and access
 
@@ -191,7 +191,7 @@ Compare history-only, current Memory, and the proposed routing with equal tasks,
 
 | Unit | Complete result and acceptance scope | Dependency boundary |
 | --- | --- | --- |
-| Node retention quality | Select useful new signal, reject duplicates, preserve older unprocessed support, retain source dates, remove mandatory narrative wrappers, and preserve user edits. Covers the Node side of FR-5 through FR-7, FR-11, and FR-15; AC-4, AC-6, AC-13 through AC-15, AC-19, and AC-21. | Useful with the existing profile system. It does not depend on profile-file extraction. |
+| Node retention quality | Select useful new signal, reject duplicates, preserve older unprocessed support, retain source dates, remove mandatory narrative wrappers, and preserve user edits. Covers the Node side of FR-5 through FR-8, FR-11, and FR-15; AC-4, AC-6, source-aware admission in AC-7, AC-13 through AC-15, AC-19, and AC-21. | Useful with the existing profile system. It does not depend on profile-file extraction. |
 | Profile files and direct learning | Editable identity/style files, direct USER.md learning, destination routing, source-aware admission, protected edits, next-Turn context, profile forgetting/Reset/disable, and interruption recovery. Covers FR-1 through FR-9, profile inspection in FR-10, profile lifecycle in FR-12 through FR-15, and profile time semantics in FR-16/FR-17; AC-1, AC-3 through AC-12, profile portions of AC-16/AC-18/AC-19, AC-20, AC-23, and AC-24. | Complete without the Node-quality unit or additional views. Its routing must stop creating routine preference Nodes itself. It consumes existing admission, evidence, configuration, and Node mutation mechanisms. |
 | Additional views, temporal decisions, or narrower Node Reset | Each is a separate optional complete feature, with its own exact scope before implementation. Relevant criteria are AC-2, view behavior in AC-14, Node ownership in AC-16/AC-17, and AC-22. | No prerequisite for the two core units. Until selected, retain existing saved search and Node Reset ownership. |
 
@@ -201,8 +201,10 @@ For the Node-quality unit, process complete eligible Items in oldest-first bound
 batches and journal the exact accepted origin coverage. Only accepted coverage
 advances; new or duplicate evidence never replaces lineage outside that batch.
 Compare proposals with a bounded canonical Memory view, retain per-statement
-future-use and novelty rationales privately, and validate every cited origin before
-normalization. Publish a container initially called Memory, optional episodes,
+subject and future-use/novelty rationales privately, and validate every cited
+origin before normalization. Preserve Host-assigned source kinds and message
+parts for model judgment; personal proposals must cite reader-authored text.
+External context is eligible knowledge with attribution and never a Thread veto. Publish a container initially called Memory, optional episodes,
 and complete category records. Accepted extraction journals a local day-close job
 in the existing worker; consolidation names the completed day only after its
 source evidence is processed, from a complete source-day record view, with

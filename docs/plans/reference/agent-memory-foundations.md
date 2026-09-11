@@ -25,6 +25,9 @@ This separation is load-bearing:
 - raw Items remain canonical evidence;
 - generated Memory Nodes are a public, editable interpretation of that evidence;
 - exact `originItemId` lineage connects each generated statement to its support;
+- source-labelled reader speech, tool observations and external material can
+  contribute different kinds of knowledge; external activity does not exclude
+  the conversation, and external prose alone never establishes reader preferences;
 - private SQLite rows coordinate extraction, consolidation, ranking, rollback,
   and crash recovery, but contain no second public knowledge graph;
 - compaction summaries exist to continue a Turn under a context budget and are

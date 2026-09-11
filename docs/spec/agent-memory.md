@@ -84,8 +84,8 @@ makes activity admitted during a disabled interval eligible.
 Only persistent root user Turns admitted while both modes are enabled may use or
 generate implicit Memory. Automation-origin Turns inside an otherwise ordinary
 Thread, Agent child Threads, inherited fork Items, internal Memory Threads,
-ephemeral Threads, and external-context-polluted Threads are excluded by their
-canonical provenance. One ultimate `originItemId` can belong to only one
+and ephemeral Threads are excluded by their canonical provenance. Web/MCP
+activity does not exclude an otherwise eligible Thread or revoke prior support. One ultimate `originItemId` can belong to only one
 extraction source.
 
 Fresh Agent context excludes the Memory stable-prompt block and routing context.
@@ -127,9 +127,22 @@ progress. The existing six-hour idle policy is unchanged.
 
 Evidence includes local user messages, final Agent messages and completed tool
 outcomes. Reasoning, injected instructions, copied fork prefixes, Automation Turns
-and disabled/reset-excluded Turns remain excluded. Web or MCP context still marks
-the entire Thread polluted and withdraws its generated support. The later profile
-unit owns the separately specified source-aware correction change.
+and disabled/reset-excluded Turns remain excluded. Mixed-source conversations
+remain eligible, including reader decisions and corrections made before or after
+web/MCP activity. The Host labels each evidence Item as reader, host, assistant,
+tool, web, or mcp. User-shaped messages also retain the boundaries between text,
+attachments and Node/Thread references; Host/feature-authored messages are not
+labelled as the reader. Source kind and part boundaries participate in the
+canonical evidence hash. Web search evidence retains the query, returned URLs,
+titles and snippets; MCP evidence retains the actual server/tool, arguments,
+result and error. Their content is source data, never worker instructions.
+
+The model judges future value, meaning and attribution. Researched conclusions
+or useful external facts may be retained with their source, applicability,
+version/date and uncertainty; bulk search-result copies have no automatic value.
+An outside assertion is not silently promoted to independently verified truth.
+Tool arguments describe the request, while results describe observed outcomes.
+The former whole-Thread exclusion flag and its support-deletion path are retired.
 
 The model compares new evidence with at most eighty current canonical records
 and 20,000 characters of comparison text. The comparison is not new evidence.
@@ -159,8 +172,14 @@ question, and guidance statement carries a non-empty, exact set of supplied `ori
 values from that source date; lineage is recorded per statement rather than per
 day. Known credential formats and high-confidence secret assignments are redacted before
 publication; ambiguous prose passes unchanged rather than blocking Memory publication.
-Each statement includes bounded private future-use and novelty rationales; the
-Host does not treat model self-assessment as a quality guarantee. All cited
+Each statement declares whether its subject is the user or contextual knowledge
+and includes bounded private future-use and novelty rationales. Subject is
+semantic routing, never authorship or permission authority. The Host requires a
+personal claim to cite reader-authored text, so web/MCP results, attachments,
+references, Host notifications and assistant prose alone cannot establish a user
+preference. The model must still distinguish the reader's own statement from a
+quotation or a transient instruction; a source label is not semantic proof.
+The Host does not treat model self-assessment as a quality guarantee. All cited
 origins and source dates are validated before deduplication/redaction. Repeated
 Agent prose alone cannot support a new statement. A no-signal or empty-date
 result accepts its exact coverage without creating a day/container or withdrawing
@@ -178,7 +197,8 @@ replay already accepted Items; Reset and rollback clear associated coverage with
 the existing origin ownership boundaries.
 
 Under the Memory write gate, Stage 1 rechecks modes, exclusions, rollback state,
-source version, and pollution, then rebuilds every target from the current graph.
+source version and exact source attribution, then rebuilds every target from the
+current graph.
 It prepares canonical `node:<uuid>` IDs, exact lineage and coverage, private
 candidate rationales, feature generation,
 reset epoch, ChangeSet digest, target fingerprints and authority states, and a
