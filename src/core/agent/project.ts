@@ -2,7 +2,8 @@
 export interface Project {
   readonly id: string;
   readonly name: string;
-  readonly rootHint: string | null;
+  readonly folders: readonly string[];
+  readonly primaryFolder: string | null;
   readonly revision: number;
   readonly createdAt: number;
   readonly updatedAt: number;
@@ -14,17 +15,28 @@ export interface ProjectMembership {
   readonly revision: number;
 }
 
+export interface ConversationWorkFolder {
+  readonly threadId: string;
+  readonly path: string | null;
+  readonly revision: number;
+}
+
 export interface ProjectInspectRequest { readonly threadIds?: readonly string[] }
 export interface ProjectCatalogView {
   readonly projects: readonly Project[];
   readonly memberships: readonly ProjectMembership[];
+  readonly workFolders: readonly ConversationWorkFolder[];
+  readonly unavailableFolders: readonly string[];
+  readonly applicationDefault: { readonly path: string | null; readonly available: boolean };
 }
 export type ProjectManageRequest =
-  | { readonly operation: 'create'; readonly name: string; readonly rootHint: string | null }
+  | { readonly operation: 'create'; readonly name: string; readonly folders: readonly string[]; readonly primaryFolder: string | null }
   | { readonly operation: 'update'; readonly projectId: string; readonly expectedRevision: number;
-      readonly name: string; readonly rootHint: string | null }
+      readonly name: string; readonly folders: readonly string[]; readonly primaryFolder: string | null }
   | { readonly operation: 'bind'; readonly threadId: string; readonly projectId: string | null;
-      readonly expectedRevision: number | null; readonly expectedMembershipRevision: number }
+      readonly expectedRevision: number | null; readonly expectedMembershipRevision: number;
+      readonly workFolder?: { readonly path: string | null; readonly expectedRevision: number } }
+  | { readonly operation: 'setWorkFolder'; readonly threadId: string; readonly path: string | null; readonly expectedRevision: number }
   | { readonly operation: 'delete'; readonly projectId: string; readonly expectedRevision: number };
 export interface ProjectManageResult {
   readonly outcome: 'applied';
@@ -43,21 +55,25 @@ export function decodeProjectSelection(value: unknown): { projectId: string; exp
 }
 
 export function decodeProjectManageRequest(value: unknown): ProjectManageRequest {
-  const entry = record(value, ['operation', 'name', 'rootHint', 'projectId', 'threadId', 'expectedRevision', 'expectedMembershipRevision']);
+  const entry = record(value, ['operation', 'name', 'folders', 'primaryFolder', 'projectId', 'threadId', 'expectedRevision', 'expectedMembershipRevision', 'workFolder', 'path']);
   switch (entry.operation) {
     case 'create':
-      record(entry, ['operation', 'name', 'rootHint']);
-      return { operation: 'create', name: label(entry.name), rootHint: root(entry.rootHint) };
+      record(entry, ['operation', 'name', 'folders', 'primaryFolder']);
+      return { operation: 'create', name: label(entry.name), ...decodeFolders(entry) };
     case 'update':
-      record(entry, ['operation', 'name', 'rootHint', 'projectId', 'expectedRevision']);
+      record(entry, ['operation', 'name', 'folders', 'primaryFolder', 'projectId', 'expectedRevision']);
       return { operation: 'update', projectId: id(entry.projectId), expectedRevision: integer(entry.expectedRevision, 1),
-        name: label(entry.name), rootHint: root(entry.rootHint) };
+        name: label(entry.name), ...decodeFolders(entry) };
     case 'bind':
-      record(entry, ['operation', 'threadId', 'projectId', 'expectedRevision', 'expectedMembershipRevision']);
+      record(entry, ['operation', 'threadId', 'projectId', 'expectedRevision', 'expectedMembershipRevision', 'workFolder']);
       if ((entry.projectId === null) !== (entry.expectedRevision === null)) throw new Error('Project binding revision must match its identity');
       return { operation: 'bind', threadId: id(entry.threadId), projectId: entry.projectId === null ? null : id(entry.projectId),
         expectedRevision: entry.expectedRevision === null ? null : integer(entry.expectedRevision, 1),
-        expectedMembershipRevision: integer(entry.expectedMembershipRevision, 0) };
+        expectedMembershipRevision: integer(entry.expectedMembershipRevision, 0),
+        ...(entry.workFolder === undefined ? {} : { workFolder: decodeFolderChange(entry.workFolder) }) };
+    case 'setWorkFolder':
+      record(entry, ['operation', 'threadId', 'path', 'expectedRevision']);
+      return { operation: 'setWorkFolder', threadId: id(entry.threadId), ...decodeFolderChange({ path: entry.path, expectedRevision: entry.expectedRevision }) };
     case 'delete':
       record(entry, ['operation', 'projectId', 'expectedRevision']);
       return { operation: 'delete', projectId: id(entry.projectId), expectedRevision: integer(entry.expectedRevision, 1) };
@@ -66,18 +82,20 @@ export function decodeProjectManageRequest(value: unknown): ProjectManageRequest
 }
 
 export function decodeProject(value: unknown): Project {
-  const entry = record(value, ['id', 'name', 'rootHint', 'revision', 'createdAt', 'updatedAt']);
-  return Object.freeze({ id: id(entry.id), name: label(entry.name), rootHint: root(entry.rootHint),
+  const entry = record(value, ['id', 'name', 'folders', 'primaryFolder', 'revision', 'createdAt', 'updatedAt']);
+  return Object.freeze({ id: id(entry.id), name: label(entry.name), ...decodeFolders(entry),
     revision: integer(entry.revision, 1), createdAt: integer(entry.createdAt, 0), updatedAt: integer(entry.updatedAt, 0) });
 }
 
 export function decodeProjectCatalogView(value: unknown): ProjectCatalogView {
-  const entry = record(value, ['projects', 'memberships']);
+  const entry = record(value, ['projects', 'memberships', 'workFolders', 'unavailableFolders', 'applicationDefault']);
   return { projects: array(entry.projects, decodeProject, 1_000), memberships: array(entry.memberships, (value) => {
     const membership = record(value, ['threadId', 'projectId', 'revision']);
     return { threadId: id(membership.threadId), projectId: membership.projectId === null ? null : id(membership.projectId),
       revision: integer(membership.revision, 0) };
-  }, 200) };
+  }, 200), workFolders: array(entry.workFolders, decodeConversationWorkFolder, 200),
+    unavailableFolders: array(entry.unavailableFolders, requiredRoot, 20_200),
+    applicationDefault: decodeApplicationDefault(entry.applicationDefault) };
 }
 
 export function decodeProjectManageResult(value: unknown): ProjectManageResult {
@@ -102,7 +120,7 @@ function label(value: unknown): string {
 }
 function root(value: unknown): string | null {
   if (value === null) return null;
-  if (typeof value !== 'string' || !/^(?:\/|[A-Za-z]:[\\/])/u.test(value) || value.includes('\0') || value.length > 4_096) throw new Error('Project root hint must be an absolute directory');
+  if (typeof value !== 'string' || !/^(?:\/|[A-Za-z]:[\\/])/u.test(value) || value.includes('\0') || value.length > 4_096) throw new Error('Work folder must be an absolute directory');
   return value;
 }
 function integer(value: unknown, minimum: number): number {
@@ -112,4 +130,37 @@ function integer(value: unknown, minimum: number): number {
 function array<T>(value: unknown, decode: (entry: unknown) => T, limit: number): T[] {
   if (!Array.isArray(value) || value.length > limit) throw new Error('Invalid Project list');
   return value.map(decode);
+}
+
+export function decodeConversationWorkFolder(value: unknown): ConversationWorkFolder {
+  const entry = record(value, ['threadId', 'path', 'revision']);
+  return { threadId: id(entry.threadId), path: root(entry.path), revision: integer(entry.revision, 0) };
+}
+function decodeFolderChange(value: unknown): { path: string | null; expectedRevision: number } {
+  const entry = record(value, ['path', 'expectedRevision']);
+  return { path: root(entry.path), expectedRevision: integer(entry.expectedRevision, 0) };
+}
+function requiredRoot(value: unknown): string {
+  const path = root(value);
+  if (path === null) throw new Error('Folder path is required');
+  return path;
+}
+function decodeFolders(entry: Record<string, unknown>): { folders: readonly string[]; primaryFolder: string | null } {
+  const folders = array(entry.folders, requiredRoot, 20);
+  const primaryFolder = root(entry.primaryFolder);
+  if (new Set(folders).size !== folders.length) throw new Error('Duplicate Project folders');
+  if (folders.length ? primaryFolder === null || !folders.includes(primaryFolder) : primaryFolder !== null) {
+    throw new Error('A nonempty Project must have exactly one explicit primary folder');
+  }
+  return { folders: Object.freeze(folders), primaryFolder };
+}
+function decodeApplicationDefault(value: unknown): ProjectCatalogView['applicationDefault'] {
+  const entry = record(value, ['path', 'available']);
+  if (typeof entry.available !== 'boolean' || (entry.available && entry.path === null)) throw new Error('Invalid default folder availability');
+  return { path: root(entry.path), available: entry.available };
+}
+
+export function decodeProjectFolderPick(value: unknown): { path: string | null } {
+  const entry = record(value, ['path']);
+  return { path: root(entry.path) };
 }

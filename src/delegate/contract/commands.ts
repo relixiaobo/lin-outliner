@@ -1,6 +1,7 @@
 export type DelegateOutputMode = 'text' | 'json';
 
 export type DelegateStateCommand =
+  | { readonly name: 'project'; readonly input: '-'; readonly output: DelegateOutputMode }
   | { readonly name: 'run'; readonly input: '-'; readonly output: DelegateOutputMode }
   | {
     readonly name: 'send';
@@ -25,6 +26,7 @@ export interface DelegateCommandDefinition {
 }
 
 export const DELEGATE_COMMANDS: readonly DelegateCommandDefinition[] = Object.freeze([
+  command('project', 'delegate project --input - [--output text|json]', true, 'Inspect or manage Projects and conversation work folders through the Host.'),
   command('run', 'delegate run --input - [--output text|json]', true, 'Start one Agent Session and its first Turn.'),
   command('send', 'delegate send (--task TASK_ID | --session SESSION_ID) --input - [--output text|json]', true, 'Queue context or continue an owned Agent Session.'),
   command('close', 'delegate close --session SESSION_ID [--output text|json]', true, 'Close one idle owned Agent Session.'),
@@ -39,6 +41,7 @@ const RUNNER_ID_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;
 
 export function parseDelegateCommand(args: readonly string[]): DelegateCommand {
   const name = args[0];
+  if (name === 'project') return { name: 'project', input: '-', output: parseOptionalOutput(args.slice(1), ['--input', '-']) };
   if (name === 'run') return parseRun(args.slice(1));
   if (name === 'send') return parseSend(args.slice(1));
   if (name === 'close') return parseClose(args.slice(1));
@@ -65,6 +68,7 @@ export function parsePrivilegedDelegateCommand(commandSource: string): DelegateS
 }
 
 export function canonicalDelegateArgv(command: DelegateStateCommand): readonly string[] {
+  if (command.name === 'project') return ['project', '--input', '-', '--output', command.output];
   if (command.name === 'run') {
     return ['run', '--input', '-', '--output', command.output];
   }
@@ -87,7 +91,7 @@ export function canonicalDelegateCommand(command: DelegateStateCommand): string 
 }
 
 export function isDelegateStateCommand(command: DelegateCommand): command is DelegateStateCommand {
-  return command.name === 'run' || command.name === 'send' || command.name === 'close';
+  return command.name === 'project' || command.name === 'run' || command.name === 'send' || command.name === 'close';
 }
 
 export function delegateHelp(): string {

@@ -3,7 +3,7 @@ import type { ProjectCatalogView, ProjectManageRequest } from '../../../core/age
 import { api } from '../../api/client';
 
 const changed = new Set<() => void>();
-const EMPTY_CATALOG: ProjectCatalogView = { projects: [], memberships: [] };
+const EMPTY_CATALOG: ProjectCatalogView = { projects: [], memberships: [], workFolders: [], unavailableFolders: [], applicationDefault: { path: null, available: false } };
 export function invalidateProjectCatalog(): void { for (const listener of changed) listener(); }
 export async function manageProject(request: ProjectManageRequest) {
   const result = await api.agentCoreRequest('project/manage', request);
@@ -22,7 +22,7 @@ export function useProjectCatalog(threadIds: readonly string[] = []) {
     changed.add(refresh);
     window.addEventListener('focus', refresh);
     const unsubscribe = api.onAgentCoreNotification((notification) => {
-      if (notification.type === 'turn/completed' || notification.type === 'thread/started') refresh();
+      if (notification.type === 'turn/completed' || notification.type === 'thread/started' || notification.type === 'project/catalog/changed') refresh();
     });
     return () => { changed.delete(refresh); window.removeEventListener('focus', refresh); unsubscribe(); };
   }, [refresh]);
@@ -34,7 +34,9 @@ export function useProjectCatalog(threadIds: readonly string[] = []) {
     void Promise.all(pages.map((threadIds) => api.agentCoreRequest('project/inspect', { threadIds })))
       .then((views) => {
         if (!live) return;
-        setView({ projects: views[0]!.projects, memberships: views.flatMap((entry) => entry.memberships) });
+        setView({ ...views[0]!, memberships: views.flatMap((entry) => entry.memberships),
+          workFolders: views.flatMap((entry) => entry.workFolders),
+          unavailableFolders: [...new Set(views.flatMap((entry) => entry.unavailableFolders))] });
         setError(null);
       }).catch((error: unknown) => { if (live) setError(error instanceof Error ? error.message : String(error)); })
       .finally(() => { if (live) setLoading(false); });

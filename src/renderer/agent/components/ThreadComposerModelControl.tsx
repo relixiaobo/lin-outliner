@@ -1,3 +1,4 @@
+import { distinctCompactModelName, compactEffortLabel } from './composerModelLabel';
 import {
   memo,
   useEffect,
@@ -79,6 +80,9 @@ function ThreadComposerModelControlImpl({
   const supportsReasoning = reasoningLevels.some((level) => level !== 'off');
   const defaultLevel = defaultThinkingLevelFor(reasoningLevels);
   const effortLabel = reasoningLabel(configuration.reasoningEffort, effectiveModelOption, composer.reasoningLevels);
+  const compactName = distinctCompactModelName(modelName, effectiveModelId ?? '',
+    groups.filter((group) => group.providerId === effectiveProviderId).flatMap((group) => group.models.map((choice) => choice.option)));
+  const fullDetails = `${modelName} · ${formatProviderName(effectiveProviderId)} · ${effortLabel}`;
 
   const overlayStyle = useAnchoredOverlay(menuRef, {
     anchorRef,
@@ -233,16 +237,17 @@ function ThreadComposerModelControlImpl({
       <ButtonControl
         aria-expanded={open}
         aria-haspopup="menu"
-        aria-label={composer.modelControlLabel}
+        aria-label={`${composer.modelControlLabel}: ${fullDetails}`}
+        aria-description={fullDetails}
         className="thread-composer-model-button"
         disabled={disabled || !settings || saving}
         onClick={() => setOpen((value) => !value)}
         ref={anchorRef}
-        title={composer.modelControlLabel}
+        title={fullDetails}
       >
-        <span className="thread-composer-model-name">{modelName}</span>
+        <span className="thread-composer-model-name">{compactName}</span>
         {configuration.reasoningEffort !== 'off' ? (
-          <span className="thread-composer-reasoning-chip">{effortLabel}</span>
+          <span className="thread-composer-reasoning-chip">{compactEffortLabel(effortLabel, composer.compactReasoningLevels)}</span>
         ) : null}
         <ChevronDownIcon size={ICON_SIZE.tiny} />
       </ButtonControl>

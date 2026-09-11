@@ -308,7 +308,13 @@ unboxed dense controls. Tool and reasoning metadata uses
 **Composer.** The composer is a flush full-bleed input region at the rail bottom,
 not an inset card. It uses neutral fill (`--fill-1`, focus/drag `--fill-2`), top
 corners at the rail radius, and text inset to the shared agent content column. Its
-toolbar is visually unified with the textarea; attach/send controls are capsules.
+toolbar is visually unified with the textarea. Add (`+`) is a neutral unboxed
+icon entry for attachments and optional Project/work-folder controls. A saved
+location adds one compact chip directly beside it, with full paths in details;
+no selection adds no status row. Project names truncate before the application-
+default qualifier. Flexible space precedes the compact model/effort button and
+Send/Stop. Full model and effort identity remains accessible from keyboard and
+menus, and narrow layouts preserve these controls without hover reflow.
 The attachment carousel stays within that inset, hides its redundant visual scrollbar,
 and preserves touchpad scrolling, edge buttons, and keyboard navigation. Card hover keeps
 the existing 1 px boundary and changes only its neutral colour; its radius-aligned Remove

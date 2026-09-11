@@ -1,3 +1,4 @@
+import { ConversationControls, type ComposerProjectContext } from '../projects/ConversationControls';
 import { Button } from '../../ui/primitives/Button';
 import { UserInputRecovery } from './UserInputRecovery';
 import { recoveryText, type UserInputDraft } from '../store/userInputState';
@@ -186,7 +187,7 @@ import { classifyNewThreadCommand } from '../threadComposerCommands';
 import { parseNodeReferenceMarkers, parseThreadReferenceMarkers } from '../../../core/referenceMarkup';
 
 interface ThreadViewProps {
-  readonly projectControl?: ReactNode;
+  readonly projectContext?: ComposerProjectContext;
   readonly active: boolean;
   readonly composerEnabled: boolean;
   readonly composerFocusExpectedActiveElement: Element | null;
@@ -660,7 +661,7 @@ interface PendingComposerPasteRequest extends PendingComposerPaste {
 }
 
 export function ThreadView({
-  projectControl,
+  projectContext,
   active,
   composerEnabled,
   composerFocusExpectedActiveElement,
@@ -3255,7 +3256,6 @@ export function ThreadView({
         </div>
       ) : null}
       {composerEnabled ? <div className="thread-composer-region thread-composer" ref={composerRegionRef}>
-        {projectControl}
         {activePlan ? (
           <ThreadPlanProgress
             onClosed={() => composerRef.current?.focus()}
@@ -3361,18 +3361,11 @@ export function ThreadView({
                   ref={fileInputRef}
                   type="file"
                 />
-                <IconButton
-                  disabled={providerBlocksSend
-                    || Boolean(activeTurn)
+                <ConversationControls threadId={threadId} context={projectContext}
+                  attachmentDisabled={providerBlocksSend || Boolean(activeTurn)
                     || attachments.length + pendingPastes.length >= MAX_COMPOSER_ATTACHMENTS
-                    || sending
-                    || threadCreationPending}
-                  icon={AttachmentIcon}
-                  label={t.agent.thread.addAttachment}
-                  onClick={() => void addPickedFiles()}
-                  title={providerBlocksSend ? t.agent.thread.providerRequired : t.agent.thread.addAttachment}
-                  variant="composerTool"
-                />
+                    || sending || threadCreationPending}
+                  onAttachment={() => void addPickedFiles()} />
                 <span className="thread-composer-spacer" />
                 <span className="thread-composer-control-group">
                 {configuration ? (

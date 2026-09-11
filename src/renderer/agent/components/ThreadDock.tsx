@@ -115,8 +115,6 @@ export const ThreadDock = memo(function ThreadDock({
     [snapshot.threads],
   );
   const projects = useProjectCatalog(rootThreads.filter((candidate) => !candidate.ephemeral && candidate.threadSource === 'user').map((candidate) => candidate.id));
-  const selectedProjectId = projects.view.memberships.find((entry) => entry.threadId === thread?.id)?.projectId;
-  const selectedProject = projects.view.projects.find((project) => project.id === selectedProjectId);
   /**
    * "This conversation has background work running" — either the unselected
    * root itself is active, or one of its descendants is. The selected root's
@@ -452,9 +450,8 @@ export const ThreadDock = memo(function ThreadDock({
           <div className="thread-dock-body">
             <div className="thread-dock-conversation">
             <ThreadView
-              projectControl={selectedProject ? <Button className="thread-project-control" size="sm" variant="ghost"
-                disabled={projects.loading || !!projects.error} title={selectedProject.rootHint ?? undefined}
-                onClick={() => setProjectTarget(thread)}>{selectedProject.name}</Button> : null}
+              projectContext={{ view: projects.view, loading: projects.loading, error: projects.error,
+                onChooseProject: () => setProjectTarget(thread) }}
               active={open}
               composerEnabled={thread.parentThreadId === null && thread.threadSource === 'user'}
               composerFocusExpectedActiveElement={composerFocusRequest.expectedActiveElement}
@@ -523,6 +520,7 @@ export const ThreadDock = memo(function ThreadDock({
             startupThreads={startupThreads}
             projects={projects.view.projects}
             memberships={projects.view.memberships}
+            projectCatalog={projects.view}
             onManageProjects={() => { setListOpen(false); setProjectTarget('catalog'); }}
             onAssignProject={setProjectTarget}
             anchorRef={threadListAnchorRef}

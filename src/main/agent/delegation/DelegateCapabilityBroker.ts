@@ -45,6 +45,7 @@ export interface DelegateCapabilityPolicyBinding {
 }
 
 export type DelegateCapabilitySessionBinding =
+  | { readonly kind: 'project' }
   | { readonly kind: 'run'; readonly preallocatedSessionId: string }
   | {
     readonly kind: 'send';
@@ -74,7 +75,7 @@ export interface DelegateCapabilityExecution {
 
 export interface DelegateCapabilityBrokerOptions {
   readonly socketPath: string;
-  readonly currentConfigurationRevision: () => string | Promise<string>;
+  readonly currentConfigurationRevision: (command?: DelegateStateCommand) => string | Promise<string>;
   readonly execute: (execution: DelegateCapabilityExecution) => Promise<unknown>;
   readonly now?: () => number;
   readonly capabilityTtlMs?: number;
@@ -242,7 +243,7 @@ export class DelegateCapabilityBroker {
       this.capabilities.delete(record.capability.capabilityId);
       throw new DelegateCapabilityRefusal('unavailable', 'Delegate launch capability expired before use.');
     }
-    if (record.admission.policy.configurationRevision !== await this.options.currentConfigurationRevision()) {
+    if (record.admission.policy.configurationRevision !== await this.options.currentConfigurationRevision(record.admission.command)) {
       this.capabilities.delete(record.capability.capabilityId);
       throw new DelegateCapabilityRefusal('unavailable', 'Delegation configuration changed before admission.');
     }

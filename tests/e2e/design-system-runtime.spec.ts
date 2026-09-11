@@ -381,7 +381,8 @@ async function showComposerAttachmentError(page: Page) {
       }],
     });
   });
-  await page.getByRole('button', { name: 'Add attachment' }).click();
+  await page.locator('.thread-composer-toolbar').getByRole('button', { name: 'Add', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Add attachment' }).click();
   await expect(page.getByRole('status'))
     .toContainText('~$Report.docx is a temporary Office ownership file. Choose Report.docx instead.');
 }

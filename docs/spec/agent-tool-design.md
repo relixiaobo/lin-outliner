@@ -167,8 +167,14 @@ settlement contract.
 - `task_stop`, shared with Agent orchestration
 
 Every local file/process call uses its Tool Task's admitted `ExecutionAddress`.
-The Host resolves an optional task-scoped `cwd` against its documented default,
-then resolves relative file paths from that address's `cwd`. An explicit
+An explicit absolute `cwd` wins. A relative override resolves against the saved
+conversation folder, otherwise the application default (the user's home directory).
+Without an override, that selected base is the address. The saved path and revision
+are sampled before asynchronous admission work and retained with the task address;
+a later edit cannot redirect an admitted or running operation. A missing or
+redirected saved folder fails dependent calls without fallback, while a valid
+absolute override remains usable. Relative file paths resolve from that address's
+`cwd`. An explicit
 absolute file path is canonicalized as the task's target independently of cwd.
 File instruction collection follows that canonical target's parent and
 ancestors, with nested applicability retained per target. Directory searches
@@ -179,8 +185,8 @@ canonical parent plus suffix.
 Bash instruction scope remains its admitted cwd. Neither an unrelated cwd nor
 Project membership supplies the rules for an absolute file target.
 Full Access permits absolute host paths unless an explicit block removes the
-capability. Thread metadata, Project membership, and ancestor lookup supply no
-execution directory. Receipts retain the resolved address, canonical targets,
+capability. Project membership and ancestor lookup supply no execution directory;
+only the separately saved conversation preference supplies a default. Receipts retain the resolved address, canonical targets,
 `ExecutionPolicy`, and immutable `ContextSnapshot` reference used at admission.
 File tools return bounded content and persist oversized output in app-owned
 scratch space. Relative attachment paths resolve from the same Host default;
@@ -886,10 +892,25 @@ standing authorization are specified in
 
 ### Project Organization
 
-Project creation, editing, grouping and deletion are UI actions backed by the
-Host-owned `ProjectService`. Projects have no model-tool surface or Agent proposal
-confirmation route. The service retains canonical root/revision checks, lineage
-membership and Automation deletion fences. See [Project catalog](agent-core.md#optional-project-catalog).
+The Host-owned `ProjectService` owns Project sources/primary selection, lineage
+membership, independent revisioned conversation folders and Automation deletion
+fences. Both native UI operations and the built-in `projects` Skill use it.
+The Skill invokes foreground Bash with the exact packaged CLI command
+`delegate project --input - --output json` and separate literal JSON stdin.
+No Project model tool is added. This command requires current Bash authority and
+a live root user invocation; it remains available when delegation is disabled.
+
+The request-bound private broker checks the source Thread/Turn/Item, supervised
+Task/process identity, input digest and current capability before mutation. Project
+proposals use native confirmation with canonical paths and revision revalidation;
+folder-only explicit changes save directly only for the invoking conversation.
+The CLI rejects a `setWorkFolder` target that differs from the trusted source root
+Thread before receipt replay or mutation. Combined binds commit membership and
+folder together. Durable operation receipts report applied/pending/not_committed;
+retrying the same ID and digest returns the original result. Inspection pages 50
+Projects with a revision-bound cursor and separately includes the selected Project.
+Neither a lost response nor a successful create followed by a failed bind implies
+a completed combined change. See [Project catalog](agent-core.md#optional-project-catalog).
 
 ### Delegation And Tool Tasks
 

@@ -333,6 +333,7 @@ export class ThreadCore {
     }
   emitTransientNotification(notification: AgentCoreTransientNotification): void {
       const decoded = decodeAgentCoreTransientNotification(notification);
+      if (decoded.type === 'project/catalog/changed') { this.broadcastTransientNotification(decoded); return; }
       this.requireThread(decoded.threadId);
       this.enqueueDeferredNotification(decoded.threadId, async () => {
         await this.flushPendingItemDeltaBestEffort(decoded.threadId);
@@ -341,7 +342,7 @@ export class ThreadCore {
     }
 
   private broadcastTransientNotification(decoded: AgentCoreTransientNotification): void {
-      if (!this.hiddenEphemeralThreads.has(decoded.threadId)) {
+      if (decoded.type === 'project/catalog/changed' || !this.hiddenEphemeralThreads.has(decoded.threadId)) {
         for (const listener of this.listeners) {
           try {
             listener(decoded);

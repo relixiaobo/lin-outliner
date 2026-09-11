@@ -17,6 +17,15 @@ built in but enters the catalog only when experimental delegation and its
 configured launcher are enabled for a root Thread. Disabling the experiment
 removes the guidance; it does not restore any legacy Agent tool.
 
+The resource-backed `projects` Skill teaches inspection and persisted Project /
+conversation-folder operations through foreground `delegate project` with literal
+JSON stdin. Its invocation-bound Host transport is shared with the CLI but does
+not depend on experimental delegation. It explains native Project proposals,
+direct authorized folder changes, revision conflicts, atomic combined binding,
+canonical source-folder semantics, and durable operation receipts for ambiguous
+outcomes. Discovery and packaging follow the same built-in Skill resource owner;
+it adds no model tool or filesystem/configuration authority.
+
 The effective Thread configuration supplies a Skill ceiling. `*` admits all
 otherwise eligible discovered Skills, a name list admits only those identities,
 and an empty list disables Skills. `disabledSkills` is an additional user
