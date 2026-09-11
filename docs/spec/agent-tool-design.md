@@ -496,7 +496,7 @@ Bash returns `evidence` references for follow-up checks. Launch progress and
 ordering, successful completion and owning-Thread provenance. The exact Task ID
 and Item references associate the check with the service; cwd equality is not
 an eligibility rule and grants no authority. Independently admitted checks may
-run in another directory or after a saved-folder change without redirecting
+run in another directory or after a Project primary-folder change without redirecting
 either execution. Foreign/copied, missing, forbidden, unfinished, failed and
 pre-launch evidence rejects; live-target, revision, Stop and receipt replay rules
 remain with the Task owner. Expected rejections use `readiness_unavailable`,

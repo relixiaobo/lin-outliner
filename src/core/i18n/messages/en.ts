@@ -1482,7 +1482,7 @@ export const en = {
   agent: {
     projects: {
       operations: { create: 'Create Project', update: 'Edit Project', bind: 'Change conversation Project', delete: 'Delete Project' },
-      project: 'Project', allProjects: 'All Projects…', retrySelection: 'Retry selection', chooseFolder: 'Choose folder',
+      project: 'Project', create: 'Create project', projectName: 'Project name', addFoldersHint: 'Add folders to this project', noResults: 'No projects found.', retrySelection: 'Retry selection', chooseFolder: 'Choose folder',
       add: 'Add', chooseProject: 'Choose project', search: 'Search projects', sourceFolders: 'Source folders',
       primary: 'Primary', makePrimary: 'Make primary', addFolder: 'Add folder', removeFolder: 'Remove folder',
       duplicateFolder: 'This folder is already in the Project.', choosePrimary: 'Choose a replacement primary folder before saving.',

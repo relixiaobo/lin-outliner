@@ -7509,17 +7509,18 @@ describe('background Task responsibility authority', () => {
     expect(fixture.executor.contexts).toHaveLength(1);
   });
 
-  test('hands off actual Bash evidence across saved-folder changes without redirecting execution', async () => {
+  test('hands off actual Bash evidence across Project primary-folder changes without redirecting execution', async () => {
     const fixture = await admittedFixture();
     const { context, tasks, thread, service } = fixture;
     const a = join(fixture.root, 'application'), b = join(fixture.root, 'checks');
     await mkdir(a); await mkdir(b);
-    await service.projects.manage({ operation: 'setWorkFolder', threadId: thread.id, path: a, expectedRevision: 0 });
+    const project = (await service.projects.manage({ operation: 'create', name: 'Service', folders: [a, b], primaryFolder: a })).project!;
+    await service.projects.manage({ operation: 'bind', threadId: thread.id, projectId: project.id, expectedRevision: 1, expectedMembershipRevision: 0 });
     const runtime = new ToolRuntime(service, {
       capabilityConfig: { blocks: [] },
       capabilityTools: () => createLocalTools({
         workspace: { root: service.defaultExecutionDirectory(), scratchRoot: join(fixture.root, 'scratch'), readFileState: new Map(), threadId: thread.id,
-          resolveWorkFolder: () => service.projects.store.workFolder(thread.id) },
+          resolveProjectDefault: () => service.projects.store.executionDefault(thread.id) },
         toolTaskService: tasks, turnId: context.turn.id,
       }),
     });
@@ -7541,7 +7542,7 @@ describe('background Task responsibility authority', () => {
     await withTimeout(waitUntil(() => tasks.readOwned(taskId, thread.id)?.state === 'running'
       && tasks.readOwned(taskId, thread.id)?.childPid !== null), 3000);
     const original = tasks.readOwned(taskId, thread.id)!;
-    await service.projects.manage({ operation: 'setWorkFolder', threadId: thread.id, path: b, expectedRevision: 1 });
+    await service.projects.manage({ operation: 'update', projectId: project.id, expectedRevision: 1, name: project.name, folders: [a, b], primaryFolder: b });
     const failed = await execute('bash', { command: 'exit 7', description: 'Failed application check' });
     for (const [evidence, code] of [[before.data.evidence, 'readiness_before_launch'], [failed.data.evidence, 'readiness_unsuccessful'],
       [{ turnId: context.turn.id, itemId: 'missing' }, 'readiness_unavailable']] as const) {
@@ -7559,7 +7560,7 @@ describe('background Task responsibility authority', () => {
     const accepted = await execute('task_control', input);
     expect(accepted).toMatchObject({ ok: true, data: { receipt: { status: 'accepted', revision: 1 } } });
     expect((await execute('task_control', input)).data.receipt).toEqual(accepted.data.receipt);
-    expect(service.projects.store.workFolder(thread.id)).toMatchObject({ path: await realpath(b), revision: 2 });
+    expect(service.projects.store.executionDefault(thread.id)).toMatchObject({ path: await realpath(b), revision: 2 });
     expect(tasks.readOwned(taskId, thread.id)).toMatchObject({ cwd: await realpath(a), executionContext: { address: original.executionContext.address } });
     await tasks.stop(taskId, thread.id, context.turn.id, 'agent');
     expect(await execute('task_control', { ...input, operation_id: 'stopped', expected_revision: tasks.readOwned(taskId, thread.id)!.continuation.revision }))

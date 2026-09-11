@@ -4,7 +4,7 @@ import type { Project, ProjectCatalogView } from '../../../core/agent/project';
 import type { Thread } from '../projectionTypes';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
-import { AddIcon, TrashIcon } from '../../ui/icons';
+import { AddIcon, CloseIcon, FolderIcon, TrashIcon, ICON_SIZE } from '../../ui/icons';
 import { Dialog } from '../../ui/primitives/Dialog';
 import { Button } from '../../ui/primitives/Button';
 import { Input } from '../../ui/primitives/Input';
@@ -59,11 +59,24 @@ export function ProjectDialog({ initialMode, view, thread, unavailable, catalogE
     await selectConversationProject(thread.id, project, view);
     onClose();
   }
+  const addFolder = () => void run(async () => {
+    const { path } = await api.agentCoreRequest('project/pickFolder', {});
+    if (!path) return;
+    if (folders.includes(path)) throw new Error(t.duplicateFolder);
+    setFolders((current) => [...current, path]);
+    if (!folders.length) {
+      setPrimaryFolder(path);
+      if (!name.trim()) setName(path.split(/[\\/]/u).filter(Boolean).at(-1) ?? path);
+    }
+  });
   return createPortal(<Dialog backdropClassName="confirm-dialog-backdrop" surfaceClassName="confirm-dialog project-dialog"
     labelledBy={titleId} onBackdropMouseDown={close} onEscapeKeyDown={close}
     focusKey={editing === 'new' ? 'new' : editing?.id ?? deleting?.id ?? (selection ? 'selection' : 'list')}
     initialFocus={() => editing ? nameRef.current : null}>
-    <h2 className="confirm-dialog-title" id={titleId}>{deleting ? t.remove : editing ? editing === 'new' ? t.new : t.edit : thread ? t.chooseProject : t.title}</h2>
+    <div className="project-dialog-header">
+    <h2 className="confirm-dialog-title" id={titleId}>{deleting ? t.remove : editing ? editing === 'new' ? t.create : t.edit : thread ? t.chooseProject : t.title}</h2>
+    <IconButton icon={CloseIcon} label={t.close} disabled={busy} variant="message" onClick={close} />
+    </div>
     {deleting ? <>
       <p className="confirm-dialog-message">{deleting.name}</p>
       {deleting.folders.map((path) => <p key={path} className="project-path">{path}</p>)}
@@ -84,28 +97,25 @@ export function ProjectDialog({ initialMode, view, thread, unavailable, catalogE
         if (thread && result.project) await select(result.project);
       });
     }}>
-      <Field label={t.name}><Input ref={nameRef} label={t.name} value={name} disabled={busy} onChange={(event) => setName(event.target.value)} /></Field>
-      <Field label={t.sourceFolders}><ul className="project-list">
+      <div className="project-name-input"><FolderIcon size={ICON_SIZE.menu} /><Input variant="bare" ref={nameRef} label={t.name} placeholder={t.projectName} value={name} disabled={busy} onChange={(event) => setName(event.target.value)} /></div>
+      <Field label={t.sourceFolders}>{folders.length ? <div className="project-source-folders"><ul className="project-list">
         {folders.map((path) => <li className="project-list-row" key={path}>
-          <span className="project-folder-path">{path}{view.unavailableFolders.includes(path) ? ` · ${t.unavailable}` : ''}</span>
+          <FolderIcon size={ICON_SIZE.compact} /><span className="project-folder-path">{path}{view.unavailableFolders.includes(path) ? ` · ${t.unavailable}` : ''}</span>
           <Button size="sm" disabled={busy || primaryFolder === path} variant="ghost" onClick={() => setPrimaryFolder(path)}>{primaryFolder === path ? t.primary : t.makePrimary}</Button>
           <IconButton icon={TrashIcon} label={t.removeFolder} disabled={busy} variant="message" onClick={() => {
             setFolders((current) => current.filter((entry) => entry !== path));
             if (primaryFolder === path) setPrimaryFolder(null);
           }} />
         </li>)}
-      </ul></Field>
-      <Button disabled={busy || folders.length >= 20} variant="ghost" onClick={() => void run(async () => {
-        const { path } = await api.agentCoreRequest('project/pickFolder', {});
-        if (!path) return;
-        if (folders.includes(path)) throw new Error(t.duplicateFolder);
-        setFolders((current) => [...current, path]);
-        if (!folders.length) { setPrimaryFolder(path); if (!name.trim()) setName(path.split(/[\\/]/u).filter(Boolean).at(-1) ?? path); }
-      })}>{t.addFolder}</Button>
-      <p className="confirm-dialog-message">{folders.length ? primaryFolder ? t.rootHelp : t.choosePrimary : t.organizationOnly}</p>
+      </ul>
+      <Button disabled={busy || folders.length >= 20} variant="ghost" onClick={addFolder}><AddIcon size={ICON_SIZE.compact} />{t.addFolder}</Button>
+      </div> : <button type="button" className="project-add-folders" aria-label={t.addFolder} disabled={busy} onClick={addFolder}>
+        <FolderIcon size={ICON_SIZE.large} /><span>{t.addFoldersHint}</span>
+      </button>}</Field>
+      {folders.length ? <p className="confirm-dialog-message">{primaryFolder ? t.rootHelp : t.choosePrimary}</p> : null}
       <div className="confirm-dialog-actions">
-        <Button disabled={busy} onClick={() => setEditing(null)} variant="ghost">{t.cancel}</Button>
-        <Button disabled={busy || !name.trim() || (folders.length > 0 && primaryFolder === null)} type="submit" variant="primary">{t.save}</Button>
+        <Button disabled={busy} onClick={() => initialMode === 'new' ? close() : setEditing(null)} variant="ghost">{t.cancel}</Button>
+        <Button disabled={busy || !name.trim() || (folders.length > 0 && primaryFolder === null)} type="submit" variant="primary">{editing === 'new' ? t.create : t.save}</Button>
       </div>
     </form> : <>
       <Input label={t.search} placeholder={t.search} value={search} onChange={(event) => setSearch(event.target.value)} />

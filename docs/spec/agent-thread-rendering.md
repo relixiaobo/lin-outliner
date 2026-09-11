@@ -71,15 +71,21 @@ to the parent; Escape dismisses the menus and restores focus to Add. Attachment
 limits disable only the attachment action; paste/drop and attachment ownership
 remain unchanged.
 
-The flyout offers No Project, up to six recent successful choices with the current
-selection checked, All Projects… and New Project. Recent IDs are bounded local
-userData UI metadata, filtered against the catalog; Project edits are not usage.
-A current selection absent from recent history is included. Successful selection
-and explicit project-chat creation update recency; failed selection does not.
-The full picker provides search and the same direct selection rule. New Project
+The flyout includes inline search, No Project and the complete Project list with
+folder icons and the current selection checked. Up to six recent choices lead the
+remaining catalog. The list scrolls while New Project stays fixed below a separator;
+search filters the entire catalog without a second picker dialog. Recent IDs are
+bounded local userData UI metadata, filtered against the catalog; Project edits
+are not usage. Successful selection and explicit project-chat creation update
+recency; failed selection does not. Left/Right and Home/End retain their normal
+text-editing behavior inside search; Enter chooses the first filtered result.
+New Project
 opens the creation form directly, then creates and selects the Project. If creation
 succeeds but selection fails, the dialog retains the created Project and offers
-selection retry without another create. Cancellation changes no membership.
+selection retry without another create. Cancellation changes no membership. The creation form has a header close action,
+an icon/name field, and a large bordered Add folders button in its empty state.
+After adding folders it shows primary selection/removal and an Add folder action;
+Create project submits, and Cancel from direct creation closes the dialog.
 
 Project is the sole user-facing default-directory choice. Selection adopts its
 current primary for subsequent task admissions, including in existing chats;

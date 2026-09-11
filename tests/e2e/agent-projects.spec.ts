@@ -27,15 +27,18 @@ for (const theme of ['light', 'dark'] as const) {
     expect(addBox.y + addBox.height).toBeLessThanOrEqual(anchorBox.y);
     expect(flyoutBox.x).toBeGreaterThanOrEqual(addBox.x + addBox.width);
     await flyout.getByRole('menuitem', { name: 'New Project', exact: true }).click();
-    const form = page.getByRole('dialog', { name: 'New Project', exact: true });
+    const form = page.getByRole('dialog', { name: 'Create project', exact: true });
     await expect(form.getByRole('textbox', { name: 'Name', exact: true })).toBeFocused();
+    await form.screenshot({ path: testInfo.outputPath(`project-create-empty-${theme}.png`) });
+    expect((await form.getByRole('button', { name: 'Add folder', exact: true }).boundingBox())!.height).toBeGreaterThanOrEqual(100);
     await nextFolder(page, '/Users/developer/tenon');
     await form.getByRole('button', { name: 'Add folder', exact: true }).click();
     await expect(form.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('tenon');
     await form.getByRole('textbox', { name: 'Name', exact: true }).fill('Tenon');
     await nextFolder(page, '/Users/developer/reference');
     await form.getByRole('button', { name: 'Add folder', exact: true }).click();
-    await form.getByRole('button', { name: 'Save', exact: true }).click();
+    await form.screenshot({ path: testInfo.outputPath(`project-create-folders-${theme}.png`) });
+    await form.getByRole('button', { name: 'Create project', exact: true }).click();
     await expect(page.locator('.thread-location-chip')).toHaveText('Tenon');
     await expect(form).toHaveCount(0);
     await page.locator('.thread-location-chip').click();
@@ -67,15 +70,22 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(page.getByRole('menuitem', { name: 'Add attachment', exact: true })).toBeFocused();
     await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowRight');
     const flyout = page.getByRole('menu', { name: 'Choose project', exact: true });
+    await expect(flyout.getByRole('textbox', { name: 'Search projects' })).toBeFocused();
+    await page.keyboard.press('ArrowDown');
     await expect(flyout.getByRole('menuitemradio', { name: 'No Project', exact: true })).toBeFocused();
     await page.keyboard.press('ArrowLeft');
     await expect(page.getByRole('menuitem', { name: 'Project', exact: true })).toBeFocused();
     await page.keyboard.press('ArrowRight');
-    await flyout.getByRole('menuitem', { name: 'All Projects…', exact: true }).click();
-    const picker = page.getByRole('dialog', { name: 'Choose project', exact: true });
-    await picker.getByRole('textbox', { name: 'Search projects' }).fill('long');
-    await picker.getByRole('button', { name: /A long Project name/ }).click();
-    await expect(picker).toHaveCount(0);
+    const search = flyout.getByRole('textbox', { name: 'Search projects' });
+    await search.fill('missing project');
+    await expect(flyout.getByRole('status')).toHaveText('No projects found.');
+    await expect(flyout.getByRole('menuitem', { name: 'New Project', exact: true })).toBeVisible();
+    await search.fill('long');
+    await page.keyboard.press('ArrowLeft');
+    await expect(search).toBeFocused();
+    await expect(flyout).toBeVisible();
+    await page.keyboard.press('Enter');
+    await expect(flyout).toHaveCount(0);
     await expect(page.locator('.thread-location-chip')).toHaveText(project.name);
     await page.evaluate(async (project) => {
       await window.lin.agentCoreRequest('project/manage', { operation: 'update', projectId: project.id, expectedRevision: 1,
@@ -160,9 +170,9 @@ test('failed selection after creation retries the saved Project and never create
   });
   const flyout = await projectMenu(page);
   await flyout.getByRole('menuitem', { name: 'New Project', exact: true }).click();
-  const form = page.getByRole('dialog', { name: 'New Project', exact: true });
+  const form = page.getByRole('dialog', { name: 'Create project', exact: true });
   await form.getByRole('textbox', { name: 'Name', exact: true }).fill('Created once');
-  await form.getByRole('button', { name: 'Save', exact: true }).click();
+  await form.getByRole('button', { name: 'Create project', exact: true }).click();
   const picker = page.getByRole('dialog', { name: 'Choose project', exact: true });
   await expect(picker.getByRole('alert')).toHaveText('Selection interrupted');
   await expect(page.locator('.thread-location-chip')).toHaveCount(0);
@@ -174,7 +184,34 @@ test('failed selection after creation retries the saved Project and never create
   expect((await commandCalls(page)).filter((call) => call.cmd === 'project/manage' && call.args.operation === 'create')).toHaveLength(1);
   const menu = await projectMenu(page);
   await menu.getByRole('menuitem', { name: 'New Project', exact: true }).click();
-  await page.getByRole('dialog', { name: 'New Project', exact: true }).getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Create project', exact: true }).getByRole('button', { name: 'Cancel', exact: true }).click();
   await page.keyboard.press('Escape');
   await expect(page.locator('.thread-location-chip')).toHaveText('Created once · Application default');
+});
+
+
+test('Project flyout lists the whole catalog and keeps creation visible while scrolling', async ({ page }, testInfo) => {
+  await openMockedApp(page);
+  await page.evaluate(async () => {
+    localStorage.removeItem('tenon.recent-projects.v1');
+    for (let index = 0; index < 12; index++) {
+      await window.lin.agentCoreRequest('project/manage', {
+        operation: 'create', name: `Project ${String(index).padStart(2, '0')}`, folders: [], primaryFolder: null,
+      });
+    }
+    window.dispatchEvent(new Event('focus'));
+  });
+  const flyout = await projectMenu(page);
+  await expect(flyout.getByRole('menuitemradio')).toHaveCount(13);
+  await expect(flyout.getByRole('menuitem', { name: 'All Projects…' })).toHaveCount(0);
+  const create = flyout.getByRole('menuitem', { name: 'New Project', exact: true });
+  const before = (await create.boundingBox())!;
+  await flyout.getByRole('menuitemradio', { name: 'Project 11', exact: true }).scrollIntoViewIfNeeded();
+  await expect(create).toBeVisible();
+  expect((await create.boundingBox())!.y).toBe(before.y);
+  await flyout.screenshot({ path: testInfo.outputPath('project-catalog-scroll.png') });
+  await flyout.getByRole('textbox', { name: 'Search projects' }).fill('Project 11');
+  await expect(flyout.getByRole('menuitemradio')).toHaveCount(1);
+  await flyout.getByRole('menuitemradio', { name: 'Project 11', exact: true }).click();
+  await expect(page.locator('.thread-location-chip')).toHaveText('Project 11 · Application default');
 });

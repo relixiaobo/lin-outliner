@@ -87,3 +87,55 @@
 .project-menu-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .project-menu-separator { margin: var(--space-1) var(--space-2); border-top: 1px solid var(--separator); }
 .project-menu-status { margin: var(--space-2); color: var(--text-secondary); font-size: var(--font-ui-sm); overflow-wrap: anywhere; }
+
+.project-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-6);
+  margin-bottom: var(--space-8);
+}
+.project-name-input,
+.project-menu-search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-secondary);
+}
+.project-name-input {
+  padding: var(--space-2) var(--space-6);
+  border: 1px solid var(--input-border);
+  border-radius: var(--input-radius);
+  background: var(--input-bg);
+}
+.project-name-input:has(input:focus-visible) { box-shadow: var(--focus-ring-shadow); }
+.project-name-input input,
+.project-menu-search input { flex: 1; width: 0; color: var(--text-primary); }
+.project-source-folders,
+.project-add-folders {
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-sm);
+  padding: var(--space-6);
+}
+.project-source-folders .project-list { margin-top: 0; }
+.project-add-folders {
+  width: 100%;
+  min-height: calc(var(--space-8) * 7);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-ui-sm);
+}
+.project-add-folders:hover:not(:disabled) { background: var(--fill-2); color: var(--text-primary); }
+.project-add-folders:focus-visible { outline: none; box-shadow: var(--focus-ring-shadow); }
+.project-picker-menu { overflow: hidden; }
+.project-picker-menu > :not(.project-menu-list) { flex-shrink: 0; }
+.project-menu-search { padding: var(--space-1) var(--space-3); }
+.project-menu-search:has(input:focus-visible) { border-radius: var(--radius-sm); box-shadow: var(--focus-ring-shadow); }
+.project-menu-list { min-height: 0; max-height: calc(var(--space-8) * 12); overflow-y: auto; }
+.project-menu-list .thread-composer-model-item > svg { flex-shrink: 0; }

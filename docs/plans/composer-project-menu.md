@@ -18,9 +18,9 @@ Remove the retired conversation-folder reader and writer without a migration.
 - The supplied screenshot shows three flat Add actions and a menu displaced to
   the left of its trigger. `ConversationControls` uses `AnchoredActionMenu`'s
   trailing alignment and omits the item classes used by the composer model menu.
-- `ProjectDialog` currently preserves an existing conversation's folder unless
-  the user checks Use project primary folder. Membership and saved folder are
-  separate revisioned settings in the current
+- `ProjectDialog` previously preserved an existing conversation's folder unless
+  the user checks Use project primary folder. Membership and saved folder were
+  separate revisioned settings. The replacement lives in the
   [Core contract](../spec/agent-core.md#optional-project-catalog).
 - The catalog currently sorts by name; Project `updatedAt` measures edits, not
   use. Do not present that timestamp as recent usage.
@@ -34,17 +34,20 @@ Remove the retired conversation-folder reader and writer without a migration.
   flips it left. Clicking or Right Arrow also opens it. Moving into the flyout
   keeps it open; Left Arrow returns to the parent, Escape dismisses, and closing
   restores focus. Reuse the existing composer flyout and keyboard mechanisms.
-- **FR-3:** The flyout shows No Project, up to six recent projects with the current
-  choice checked, then All Projects… and New Project…. Empty history still offers
-  creation and the full searchable picker. Recent selection IDs persist per local
-  userData as UI preference metadata, are recorded only after successful selection
-  or explicit project-chat creation, and are filtered against the current catalog.
+- **FR-3:** The flyout contains inline search, No Project, and the complete
+  project list with folder icons and the current choice checked. Up to six recent
+  choices lead the remaining catalog; the list scrolls while New Project stays
+  fixed below a separator. Search filters the whole catalog without another dialog.
+  Recent IDs persist as local UI metadata and record only successful selections
+  or explicit project-chat creation; stale IDs are filtered against the catalog.
 - **BR-1:** An explicit composer Project selection binds the Project. Each subsequent task
   resolves its default from that Project's current primary folder, or Application
   default for No Project or a folderless Project. No independent conversation
   work-folder preference remains. The full conversation picker uses the same selection rule;
   remove its extra Use project primary folder confirmation step.
-- **BR-2:** New Project opens the existing creation form directly. Saving creates
+- **BR-2:** New Project opens a creation form directly with a close button, an icon/name input,
+  and a large bordered Add folders button when empty. Added folders expose primary
+  selection and removal. Create project submits; direct-entry Cancel closes. Saving creates
   the Project and selects it for the target conversation. If creation succeeds
   but binding fails, retain the created Project and offer selection retry without
   creating another Project. Cancel never changes the conversation selection.
@@ -67,11 +70,11 @@ catalogs, renderer tests, `tests/e2e/agent-projects.spec.ts`, and owning Agent s
 Project review and the built-in projects Skill; update their tests. No dependency
 or infrastructure-ownership file changes are planned.
 
-Open claims checked against the board: #675 is design-only; #676 and #677 touch
-`agent-core.md`, creating a documentation overlap. Their runtime scopes are image
-normalization and service readiness. #677 also has tests using the retired folder
-API: coordinate through this Draft PR scope and reconcile those fixtures at
-integration. Task readiness ownership itself is unchanged.
+The image and service-readiness repairs share owning Agent specification files.
+Reconcile their final contracts without changing image admission or Task readiness
+policy. Service-readiness fixtures that previously changed a conversation folder
+must instead select a Project and change its primary, preserving the original
+cross-directory evidence acceptance cases.
 
 ### Acceptance
 

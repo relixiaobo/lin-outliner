@@ -1400,7 +1400,7 @@ export const zhHans: PartialMessages = {
       save: '保存', cancel: '取消', close: '关闭', remove: '删除项目', move: '移动到项目',
       newChat: '在项目中新建对话', back: '返回', loading: '正在读取项目与位置…',
       operations: { create: '新建项目', update: '编辑项目', bind: '更改对话所属项目', delete: '删除项目' },
-      project: '项目', allProjects: '所有项目…', retrySelection: '重试选择', chooseFolder: '选择文件夹',
+      project: '项目', create: '创建项目', projectName: '项目名称', addFoldersHint: '添加文件夹到此项目', noResults: '未找到项目。', retrySelection: '重试选择', chooseFolder: '选择文件夹',
       add: '添加', chooseProject: '选择项目', search: '搜索项目', sourceFolders: '来源文件夹',
       primary: '主文件夹', makePrimary: '设为主文件夹', addFolder: '添加文件夹', removeFolder: '移除文件夹',
       duplicateFolder: '项目已包含此文件夹。', choosePrimary: '保存前请选择新的主文件夹。',

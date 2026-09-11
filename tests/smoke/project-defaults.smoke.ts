@@ -75,11 +75,11 @@ test('native Project picker and Agent primary-folder edit drive defaults across 
     await page.locator('.thread-composer-toolbar').getByRole('button', { name: 'Add', exact: true }).click();
     await page.getByRole('menuitem', { name: 'Project', exact: true }).hover();
     await page.getByRole('menuitem', { name: 'New Project', exact: true }).click();
-    const form = page.getByRole('dialog', { name: 'New Project', exact: true });
+    const form = page.getByRole('dialog', { name: 'Create project', exact: true });
     await form.getByRole('button', { name: 'Add folder', exact: true }).click();
     await expect(form.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('repository');
     await form.getByRole('textbox', { name: 'Name', exact: true }).fill('Native folder Project');
-    await form.getByRole('button', { name: 'Save', exact: true }).click();
+    await form.getByRole('button', { name: 'Create project', exact: true }).click();
     await expect(page.locator('.thread-location-chip')).toHaveText('Native folder Project');
     projectId = await page.evaluate(async () => (await window.lin!.agentCoreRequest('project/inspect', {})).projects[0]!.id);
     await page.getByRole('textbox', { name: 'Message this Thread', includeHidden: true }).fill('Add the worktree and make it the Project primary folder.');
