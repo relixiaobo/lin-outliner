@@ -513,6 +513,16 @@ Report partial startup and preserve evidence when application verification fails
 An authorized reset uses the existing process/managed-content owners and an
 absence check, then requires the same application verification after restart.
 
+`task_status.continuation` exposes revision, handoff, watch, Stop provenance, and
+event facts. Its optional `operation_id` reconciles an exact receipt read-only;
+`requestReference` identifies the latest reader request. After caller authorization,
+identical operation replay returns the persisted receipt before fresh preconditions.
+Different input under the same identity rejects. New stale operations return a
+bounded conflict receipt. An already handled/admitted event returns its existing
+handler. Receipts and responsibility commit atomically in the existing Task row;
+a failed write leaves work pending. Retain at most 256 distinct receipts per Task,
+reject new operations at that bound, and preserve old replay identities.
+
 Task status exposes bounded existing execution provenance: source Turn/Item,
 admitted cwd, start/completion times and recorded supervisor/child PIDs.
 `stateObservedAt` dates the Task snapshot separately from a running log observation.
@@ -523,16 +533,6 @@ paths/names/ports alone establish neither creation nor control authority. Equiva
 file/version and remote-receipt evidence follows the same attribution rule. Equal
 hashes cannot exclude a same-byte rewrite; missing receipts do not prove no write
 occurred, and a recovered receipt does not disprove earlier reply loss.
-
-`task_status.continuation` exposes revision, handoff, watch, Stop provenance, and
-event facts. Its optional `operation_id` reconciles an exact receipt read-only;
-`requestReference` identifies the latest reader request. After caller authorization,
-identical operation replay returns the persisted receipt before fresh preconditions.
-Different input under the same identity rejects. New stale operations return a
-bounded conflict receipt. An already handled/admitted event returns its existing
-handler. Receipts and responsibility commit atomically in the existing Task row;
-a failed write leaves work pending. Retain at most 256 distinct receipts per Task,
-reject new operations at that bound, and preserve old replay identities.
 
 Every terminal digest identifies exactly one event: `pending`, `silent` with
 `handed_off`/`watch_revoked`/`stopped`, `handled` with Turn/Item, or `admitted` with

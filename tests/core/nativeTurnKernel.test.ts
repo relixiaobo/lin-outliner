@@ -534,11 +534,6 @@ describe('native turn kernel parity', () => {
       const { gateway } = await executeToolWithArguments(status, { task_id: taskId });
       const result = gateway.requests[1]!.context.messages.find((message) => message.role === 'toolResult')!;
       const header = JSON.parse((result.content[0] as { text: string }).text);
-      expectToolOutputContract('task_status', header.data);
-      expect(header).toMatchObject({ ok: true, data: {
-        taskId, state: 'running', result: null,
-        observation: { observedAt: expect.any(Number), output: expect.any(String), outputTruncated: true },
-      } });
       expect(header.data.stateObservedAt).toBeGreaterThanOrEqual(store.read(taskId)!.startedAt);
       expect(header.data.execution).toMatchObject({
         source: { turnId: context.turn.id, itemId: 'start-server' },
@@ -546,6 +541,11 @@ describe('native turn kernel parity', () => {
         startedAt: store.read(taskId)!.startedAt,
         recordedProcess: { childPid: store.read(taskId)!.childPid },
       });
+      expectToolOutputContract('task_status', header.data);
+      expect(header).toMatchObject({ ok: true, data: {
+        taskId, state: 'running', result: null,
+        observation: { observedAt: expect.any(Number), output: expect.any(String), outputTruncated: true },
+      } });
       expect(store.read(taskId)?.state).toBe('running');
       expect((await tasks.stop(taskId, context.thread.id))?.state).toBe('cancelled');
       const timed = await bash.execute('timed-background', { command: 'sleep 30', run_in_background: true, timeout: 50 });

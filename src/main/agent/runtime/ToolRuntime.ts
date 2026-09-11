@@ -1,9 +1,9 @@
-import { taskExecutionObservation } from './taskExecutionObservation';
 import { createHash } from 'node:crypto';
 import { canonicalDelegateCommand } from '../../../delegate/contract';
 import { decodeTaskControlInput } from '../../../core/agent/taskContinuation';
 import { decodeRequestUserInputResult } from '../../../core/agent/codec';
 import type { TSchema } from 'typebox';
+import { taskExecutionObservation } from './taskExecutionObservation';
 import type { JsonValue } from '../../../core/agent/protocol';
 import {
 assembleModelToolRegistry,
