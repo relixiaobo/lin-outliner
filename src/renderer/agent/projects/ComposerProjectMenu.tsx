@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 're
 import { createPortal } from 'react-dom';
 import { useT } from '../../i18n/I18nProvider';
 import { AddIcon, AttachmentIcon, PencilIcon, CheckIcon, CloseIcon, ChevronRightIcon, FolderIcon, SearchIcon, ICON_SIZE } from '../../ui/icons';
+import { IconButton } from '../../ui/primitives/IconButton';
 import { Input } from '../../ui/primitives/Input';
 import { isImeComposingEvent } from '../../ui/interactions/imeKeyboard';
 import { MenuItem } from '../../ui/primitives/MenuItem';
@@ -104,15 +105,19 @@ export function ComposerProjectMenu({ anchorRef, context, threadId, attachmentDi
         <Input variant="bare" label={t.search} placeholder={t.search} value={search} onChange={(event) => setSearch(event.target.value)} />
       </div> : null}
       {projects.length > 0 ? <div className="project-menu-list">
-      {filtered.map((project) => <MenuItem key={project.id} role="menuitemradio" aria-checked={selected === project.id} className={itemClass} iconClassName="project-icon-slot"
+      {filtered.map((project) => <div className="project-picker-row" key={project.id}>
+        <MenuItem role="menuitemradio" aria-checked={selected === project.id} className={itemClass} iconClassName="project-icon-slot"
         icon={<FolderIcon size={ICON_SIZE.compact} />} label={project.name} labelClassName="project-menu-label" title={`${project.name}\n${project.primaryFolder ?? t.applicationDefault}`}
-        meta={selected === project.id ? <CheckIcon size={ICON_SIZE.compact} /> : null} disabled={busy || unavailable} onClick={() => void choose(project)} />)}
+        meta={selected === project.id ? <CheckIcon size={ICON_SIZE.compact} /> : null} disabled={busy || unavailable} onClick={() => void choose(project)} />
+        <IconButton role="menuitem" className="project-menu-edit" icon={PencilIcon} iconSize={ICON_SIZE.compact}
+          variant="message" label={`${t.edit}: ${project.name}`} disabled={busy || unavailable}
+          onClick={() => { close(); context?.onChooseProject(project); }} />
+      </div>)}
       {!unavailable && filtered.length === 0 ? <p className="project-menu-status" role="status">{t.noResults}</p> : null}
       </div> : null}
       {unavailable ? <p className="project-menu-status" role="status">{context?.error ?? t.loading}</p> : null}
       {error ? <p className="project-menu-status" role="alert">{error}</p> : null}
       {projects.length > 0 || unavailable || error ? <div role="separator" className="project-menu-separator" /> : null}
-      {selectedProject ? <MenuItem role="menuitem" className={itemClass} iconClassName="project-icon-slot" icon={<PencilIcon size={ICON_SIZE.compact} />} disabled={busy || unavailable} labelClassName="project-menu-label" label={t.edit} onClick={() => { close(); context?.onChooseProject(selectedProject); }} /> : null}
       <MenuItem role="menuitem" className={itemClass} iconClassName="project-icon-slot" icon={<AddIcon size={ICON_SIZE.compact} />} labelClassName="project-menu-label" label={t.new} disabled={busy || unavailable} onClick={() => { close(); context?.onChooseProject('new'); }} />
       {selected !== null ? <MenuItem role="menuitem" className={itemClass} iconClassName="project-icon-slot" icon={<CloseIcon size={ICON_SIZE.compact} />} labelClassName="project-menu-label" label={t.withoutProject}
         disabled={busy || unavailable} onClick={() => void choose(null)} /> : null}

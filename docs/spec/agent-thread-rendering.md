@@ -112,8 +112,10 @@ truncates inside the available content area.
 The selected Project chip opens the same picker directly, without the Add menu.
 Its separate remove button clears only chat membership, preserving the Project
 catalog. Failed removal keeps the selection and displays a focused error dialog
-with retry and close actions. When selected, the picker exposes Edit Project,
-opening the existing name, source folders and primary folder directly. Saving
+with retry and close actions. Each Project row has a trailing pencil action, shown on row hover or keyboard
+focus with its space reserved. It edits that row’s Project directly, including
+unselected Projects, without changing chat selection. Selection and editing
+are sibling buttons; the footer contains only New Project and deselection. Saving
 updates the Project without rebinding the conversation; Cancel discards changes.
 The editor includes Delete Project with a confirmation that explains retained
 chats, files and running tasks. Canceling deletion returns to the unsaved editor.

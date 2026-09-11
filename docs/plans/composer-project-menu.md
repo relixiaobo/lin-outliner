@@ -57,7 +57,9 @@ Remove the retired conversation-folder reader and writer without a migration.
   membership so subsequent admissions use Application default. Explicit task cwd
   remains; remove folder-only CLI mutations and their persistence.
 - **FR-4:** Show the selected Project in the location chip; Edit Project opens its
-  name, source folders and primary folder directly, with deletion confirmation.
+  name, source folders and primary folder directly through a trailing pencil
+  on that Project row, with deletion confirmation. The pencil appears on row
+  hover or keyboard focus in a reserved slot, including on unselected Projects.
   Saving edits updates the Project without rebinding the conversation. Clicking the
   chip opens the picker directly; a separate remove icon clears membership without
   deleting the Project. The composer owns all chat Project operations; the Thread

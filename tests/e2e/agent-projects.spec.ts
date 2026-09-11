@@ -117,7 +117,7 @@ for (const theme of ['light', 'dark'] as const) {
     await remove.focus();
     await expect(remove).toHaveCSS('opacity', '1');
     await page.getByRole('button', { name: 'Change project', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Edit Project', exact: true }).click();
+    await page.getByRole('menuitem', { name: /^Edit Project:/ }).click();
     const details = page.getByRole('dialog', { name: 'Edit Project', exact: true });
     await expect(details.locator('.project-folder-path').filter({ hasText: '/Users/developer/reference' })).toBeVisible();
     await expect(details.getByRole('button', { name: 'Set work folder', exact: true })).toHaveCount(0);
@@ -384,7 +384,7 @@ for (const theme of ['light', 'dark'] as const) {
     await change.click();
     const picker = page.getByRole('menu', { name: 'Choose project', exact: true });
     await expect(picker.getByRole('menuitem', { name: 'Project details', exact: true })).toHaveCount(0);
-    await picker.getByRole('menuitem', { name: 'Edit Project', exact: true }).click();
+    await picker.getByRole('menuitem', { name: /^Edit Project:/ }).click();
     const form = page.getByRole('dialog', { name: 'Edit Project', exact: true });
     const name = form.getByRole('textbox', { name: 'Name', exact: true });
     await expect(name).toBeFocused();
@@ -458,7 +458,7 @@ for (const theme of ['light', 'dark'] as const) {
     expect(saved.primaryFolder).toBe(longFolder);
     expect((await commandCalls(page)).filter((entry) => entry.cmd === 'project/manage' && entry.args.operation === 'bind')).toHaveLength(1);
     await change.click();
-    await picker.getByRole('menuitem', { name: 'Edit Project', exact: true }).click();
+    await picker.getByRole('menuitem', { name: /^Edit Project:/ }).click();
     await name.fill('Discard this name');
     await form.getByRole('button', { name: 'Delete Project', exact: true }).click();
     const deletion = page.getByRole('dialog', { name: 'Delete Project', exact: true });
@@ -470,7 +470,7 @@ for (const theme of ['light', 'dark'] as const) {
     await form.getByRole('button', { name: 'Cancel', exact: true }).click();
     await expect(page.locator('.thread-location-chip')).toHaveText('Renamed workspace');
     await change.click();
-    await picker.getByRole('menuitem', { name: 'Edit Project', exact: true }).click();
+    await picker.getByRole('menuitem', { name: /^Edit Project:/ }).click();
     await form.getByRole('button', { name: 'Delete Project', exact: true }).click();
     await page.evaluate(() => {
       const request = window.lin.agentCoreRequest.bind(window.lin);
@@ -523,4 +523,44 @@ test('Project folder multiselection appends unique folders and preserves existin
   const catalog = await page.evaluate(() => window.lin.agentCoreRequest('project/inspect', {}));
   expect(catalog.projects[0]).toMatchObject({ name: 'My workspace', primaryFolder: '/sources/docs',
     folders: ['/sources/app', '/sources/docs', '/sources/shared', '/sources/tests', '/sources/examples'] });
+});
+
+test('each Project row edits its own Project without changing chat selection', async ({ page }, testInfo) => {
+  await openMockedApp(page);
+  await page.evaluate(async () => {
+    for (const name of ['Current', 'Another']) await window.lin.agentCoreRequest('project/manage', {
+      operation: 'create', name, folders: [], primaryFolder: null,
+    });
+  });
+  await (await projectMenu(page)).getByRole('menuitemradio', { name: 'Current', exact: true }).click();
+  await page.getByRole('button', { name: 'Change project', exact: true }).click();
+  const menu = page.getByRole('menu', { name: 'Choose project', exact: true });
+  await expect(menu.getByRole('menuitem', { name: 'Edit Project', exact: true })).toHaveCount(0);
+  const row = menu.locator('.project-picker-row').filter({ has: page.getByRole('menuitemradio', { name: 'Another', exact: true }) });
+  const edit = row.getByRole('menuitem', { name: 'Edit Project: Another', exact: true });
+  await menu.getByRole('textbox').hover();
+  await expect(edit).toHaveCSS('opacity', '0');
+  const before = await row.boundingBox();
+  const label = await row.locator('.project-menu-label').boundingBox();
+  await row.hover();
+  await expect(edit).toHaveCSS('opacity', '1');
+  expect(await row.boundingBox()).toEqual(before);
+  expect(await row.locator('.project-menu-label').boundingBox()).toEqual(label);
+  await menu.screenshot({ path: testInfo.outputPath('project-row-edit.png') });
+  await menu.getByRole('textbox').hover();
+  await row.getByRole('menuitemradio').focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(edit).toBeFocused();
+  await expect(edit).toHaveCSS('opacity', '1');
+  await page.keyboard.press('Enter');
+  const form = page.getByRole('dialog', { name: 'Edit Project', exact: true });
+  await expect(form.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('Another');
+  await form.getByRole('textbox', { name: 'Name', exact: true }).fill('Renamed another');
+  await form.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(form).toHaveCount(0);
+  await expect(page.locator('.thread-location-chip')).toHaveText('Current · Application default');
+  expect((await commandCalls(page)).filter((entry) => entry.cmd === 'project/manage' && entry.args.operation === 'bind')).toHaveLength(1);
+  await page.getByRole('button', { name: 'Change project', exact: true }).click();
+  await expect(menu.getByRole('menuitemradio', { name: 'Renamed another', exact: true })).toBeVisible();
+  await expect(menu.getByRole('menuitemradio', { name: 'Current', exact: true })).toHaveAttribute('aria-checked', 'true');
 });

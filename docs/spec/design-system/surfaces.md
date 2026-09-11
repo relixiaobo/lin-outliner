@@ -314,8 +314,8 @@ catalog, and a fixed creation footer. An empty catalog contains only New Project
 without status text, search or separators. Project creation uses an icon/name field and
 a bordered, fully clickable empty source-folder area. Search and menu rows share
 a 16px icon slot, 4px label gap and 28px height; bare inputs do not add a second
-horizontal inset. Primary-folder state uses a readable label. Edit Project opens
-the same form with saved values and a separate deletion confirmation. All chat
+horizontal inset. Primary-folder state uses a readable label. Each Project row’s hover/focus pencil opens
+the same form with that Project’s saved values and a separate deletion confirmation. All chat
 Project operations live here; the Thread chooser only displays Project grouping.
 A selected Project adds one compact chip directly beside it: click its name to
 change selection. Its leading folder icon switches in place to a remove button on

@@ -193,3 +193,12 @@
 .project-delete-action { margin-right: auto; }
 
 .project-dialog .automation-error { margin: var(--space-3) 0 0; font-size: var(--font-ui-sm); line-height: var(--line-ui-sm); overflow-wrap: anywhere; }
+
+.project-picker-row { display: flex; align-items: center; min-width: 0; border-radius: var(--radius-sm); }
+.project-picker-row > .project-menu-item { flex: 1; min-width: 0; width: auto; }
+.project-picker-row:hover,
+.project-picker-row:focus-within { background: var(--control-hover); }
+.project-picker-row > .project-menu-item:hover { background: transparent; }
+.project-menu-edit { display: flex; flex: 0 0 var(--control-size-xl); width: var(--control-size-xl); height: var(--control-size-xl); align-items: center; justify-content: center; opacity: 0; }
+.project-picker-row:hover > .project-menu-edit,
+.project-picker-row:focus-within > .project-menu-edit { opacity: 1; }
