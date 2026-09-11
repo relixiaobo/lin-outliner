@@ -1,8 +1,10 @@
 import type { Thread, ThreadId, Turn } from '../../../../core/agent/protocol';
-import { MemoryControlStore, type MemoryDirtyJob, type MemoryPublicationRecord } from './MemoryControlStore';
+import { MemoryControlStore, type MemoryPublicationRecord } from './MemoryControlStore';
 import { Phase1, type Phase1Source } from './Phase1';
 import { Phase2 } from './Phase2';
 import { TimelineMemoryStore } from './TimelineMemoryStore';
+import { payloadString, type MemoryDirtyJob } from './MemoryJobs';
+import { CONSOLIDATION_RETRY_MS } from './ConsolidationPlan';
 
 const DEFAULT_MAX_THREAD_AGE_MS = 10 * 24 * 60 * 60 * 1_000;
 const DEFAULT_MIN_THREAD_IDLE_MS = 6 * 60 * 60 * 1_000;
@@ -91,7 +93,7 @@ export class MemoryPipeline {
   }
 
   wakeGlobal(reason: string): void {
-    this.control.enqueueJob('phase2:global', 'phase2', { reason }, this.now());
+    this.control.enqueueJob('phase2:global', 'phase2', { task: 'consolidate', reason }, this.now());
     this.wake();
   }
 
@@ -136,8 +138,8 @@ export class MemoryPipeline {
       const job = this.control.nextJob(this.now(), this.suspended);
       if (!job) return;
       try {
-        const deferred = await this.runJob(job);
-        if (deferred !== false) this.control.completeJob(job.key);
+        const outcome = await this.runJob(job);
+        if (outcome === 'completed') this.control.completeJob(job.key);
       } catch (error) {
         if (isAbortError(error) && (this.stopped || this.suspended)) return;
         this.control.failJob(job.key, errorMessage(error), this.now());
@@ -146,51 +148,46 @@ export class MemoryPipeline {
     }
   }
 
-  private async runJob(job: MemoryDirtyJob): Promise<void | false> {
+  private async runJob(job: MemoryDirtyJob): Promise<'completed' | 'deferred'> {
     if (job.kind !== 'reset') await this.recoverPublications();
     const controller = new AbortController();
     this.activeController = controller;
     if (this.stopped) controller.abort();
     try {
       if (job.kind === 'phase1') {
-        const threadId = payloadThreadId(job.payload);
+        const { threadId } = job.payload;
         const source = this.sources.readSource(threadId);
         if (!source) throw new Error('Memory source is unavailable; pending evidence has not been processed');
-        if (source.thread.status.type !== 'idle') return;
+        if (source.thread.status.type !== 'idle') return 'completed';
         await this.phase1.run(source, controller.signal);
-        return;
+        return 'completed';
       }
       if (job.kind === 'phase2') {
-        const sourceDate = pendingDayTitleDate(job.payload);
-        if (sourceDate && !this.phase2.needsDayTitle(sourceDate)) return;
-        if (sourceDate && !this.phase2.isDayReadyForTitle(sourceDate)) {
-          this.control.scheduleJob(job.key, job.kind, job.payload, this.now() + 60_000, this.now());
-          return false;
+        const outcome = await this.phase2.run(controller.signal, job.payload);
+        if (outcome === 'deferred') {
+          this.control.scheduleJob(job.key, job.kind, job.payload, this.now() + CONSOLIDATION_RETRY_MS, this.now());
+          return 'deferred';
         }
-        await this.phase2.run(controller.signal, sourceDate ?? undefined);
-        if (sourceDate && this.phase2.needsDayTitle(sourceDate)) {
-          this.control.scheduleJob(job.key, job.kind, job.payload, this.now() + 60_000, this.now());
-          return false;
-        }
-        return;
+        return 'completed';
       }
       if (job.kind === 'rollback') {
-        const rollbackId = payloadString(job.payload, 'rollbackId');
+        const { rollbackId } = job.payload;
         const rollback = this.control.rollback(rollbackId);
-        if (!rollback || rollback.status === 'aborted' || rollback.status === 'reconciled') return;
+        if (!rollback || rollback.status === 'aborted' || rollback.status === 'reconciled') return 'completed';
         this.control.enqueueJob(`phase1:${rollback.threadId}`, 'phase1', { threadId: rollback.threadId }, this.now());
-        this.control.enqueueJob('phase2:global', 'phase2', { reason: 'rollback', rollbackId }, this.now());
-        return;
+        this.control.enqueueJob('phase2:global', 'phase2', { task: 'consolidate', reason: 'rollback' }, this.now());
+        return 'completed';
       }
       if (job.kind === 'reset') {
-        const publicationId = payloadString(job.payload, 'publicationId');
+        const { publicationId } = job.payload;
         const publication = this.control.publication(publicationId);
-        if (!publication || publication.status !== 'prepared') return;
+        if (!publication || publication.status !== 'prepared') return 'completed';
         if (publication.kind !== 'reset') throw new Error(`Memory reset job targets ${publication.kind} publication`);
         await this.options.recoverResetPublication?.(publication, await this.timeline.hasPublication(publication.id, publication.digest));
-        return;
+        return 'completed';
       }
-      throw new Error(`Unknown Memory job kind: ${job.kind}`);
+      const unhandled: never = job;
+      throw new Error(`Unhandled Memory job: ${String(unhandled)}`);
     } finally {
       if (this.activeController === controller) this.activeController = null;
     }
@@ -214,7 +211,7 @@ export class MemoryPipeline {
         const threadId = payloadString(record.payload, 'threadId');
         this.control.enqueueJob(`phase1:${threadId}`, 'phase1', { threadId }, this.now());
       } else if (record.kind === 'stage2') {
-        this.control.enqueueJob('phase2:global', 'phase2', { reason: 'publication-recovery' }, this.now());
+        this.control.enqueueJob('phase2:global', 'phase2', { task: 'consolidate', reason: 'publication-recovery' }, this.now());
       }
     }
   }
@@ -237,17 +234,6 @@ function isEligibleRootThread(thread: Thread): boolean {
   return !thread.ephemeral && thread.parentThreadId === null && thread.threadSource === 'user';
 }
 
-function payloadThreadId(value: unknown): ThreadId {
-  return payloadString(value, 'threadId');
-}
-
-function payloadString(value: unknown, key: string): string {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`Memory job payload must contain ${key}`);
-  const result = (value as Record<string, unknown>)[key];
-  if (typeof result !== 'string' || !result.trim()) throw new Error(`Memory job payload must contain ${key}`);
-  return result;
-}
-
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === 'AbortError';
 }
@@ -258,9 +244,4 @@ function errorMessage(error: unknown): string {
 
 export function phase1Source(thread: Thread, turns: readonly Turn[]): Phase1Source {
   return { thread, turns };
-}
-
-function pendingDayTitleDate(payload: unknown): string | null {
-  if (!payload || typeof payload !== 'object' || !('reason' in payload) || payload.reason !== 'day-close') return null;
-  return payloadString(payload, 'sourceDate');
 }

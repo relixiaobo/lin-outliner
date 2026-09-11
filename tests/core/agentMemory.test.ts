@@ -1,3 +1,5 @@
+import { captureConsolidationSnapshot, selectConsolidationNodes } from '../../src/main/agent/extensions/memory/ConsolidationSnapshot';
+import { planConsolidation } from '../../src/main/agent/extensions/memory/ConsolidationPlan';
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { join } from 'node:path';
@@ -859,6 +861,211 @@ describe('Codex Memory contracts', () => {
     expect(store.lineageForNode(retained.node.id).map((edge) => edge.originItemId)).toEqual(['item:web']);
     expect(store.generatedNodeIdsWithoutCurrentSupport()).toEqual([]);
     expect(store.rollback('rollback:personal-episode')?.status).toBe('reconciled');
+  });
+
+  test.each([239, 240, 1000])('converges unsupported personal episodes with %i retained children', async (count) => {
+    const store = memoryStore();
+    const state = mutableTimelineHost(memoryProjection(count - 1));
+    const timeline = new TimelineMemoryStore(state.host);
+    seedGeneratedGraph(store, timeline);
+    store.claimOrigin('item:context-survivor', THREAD_ID, 'turn:context-survivor', '2026-07-24', 'context-hash', { source: 'web', hasReaderText: false });
+    const records = store.generatedNodes().map((node) => ({ ...node, subject: node.nodeId === EPISODE_NODE_ID ? 'user' as const : 'context' as const }));
+    store.replaceGeneratedNodes(THREAD_ID, records, records.map((node) => ({
+      nodeId: node.nodeId, threadId: THREAD_ID,
+      turnId: node.nodeId === EPISODE_NODE_ID ? TURN_ID : 'turn:context-survivor',
+      originItemId: node.nodeId === EPISODE_NODE_ID ? ITEM_ID : 'item:context-survivor',
+    })));
+    store.prepareRollback({ rollbackId: 'rollback:large-personal-episode', threadId: THREAD_ID, omittedTurnIds: [TURN_ID],
+      beforeVersion: 1, afterVersion: 2, suppressedNodeIds: [EPISODE_NODE_ID], suppressAllGenerated: false });
+    store.commitRollback('rollback:large-personal-episode');
+    let calls = 0;
+    const phase = new Phase2(store, timeline, { run: async () => { calls++; return '{"changes":[]}'; } }, () => rootThread([]));
+    const children = state.projection().nodes.find((node) => node.id === EPISODE_NODE_ID)!.children.slice();
+    let previous = count;
+    for (let round = 0; round < Math.ceil(count / 239); round++) {
+      await phase.run(new AbortController().signal);
+      const remaining = state.projection().nodes.find((node) => node.id === EPISODE_NODE_ID)?.children.length ?? 0;
+      expect(remaining).toBeLessThan(previous);
+      previous = remaining;
+    }
+    expect(calls).toBe(Math.ceil(count / 239));
+    const index = new Map(timeline.graph().nodes.map((entry) => [entry.node.id, entry]));
+    for (const id of children) {
+      expect(index.get(id)?.node.parentId).toBe(MEMORY_NODE_ID);
+      expect(store.lineageForNode(id).map((edge) => edge.originItemId)).toEqual(['item:context-survivor']);
+      expect(store.generatedNodesById().get(id)).toMatchObject({ subject: 'context', userAuthoritative: false,
+        fingerprint: timelineNodeFingerprint(index.get(id)!) });
+    }
+    expect(index.has(EPISODE_NODE_ID)).toBe(false);
+    expect(store.rollback('rollback:large-personal-episode')?.status).toBe('reconciled');
+  });
+
+  test('reads one graph and source snapshot per publication boundary for three day titles', async () => {
+    const store = memoryStore();
+    const projection = memoryProjection();
+    for (const suffix of ['25', '26']) {
+      const dayId = `day:${suffix}`;
+      const containerId = `memory:${suffix}`;
+      const childId = `belief:${suffix}`;
+      projection.nodes.find((node) => node.id === 'week')!.children.push(dayId);
+      projection.nodes.push(node(dayId, 'week', [containerId], [TAG_DAY_ID], `2026-07-${suffix}`),
+        node(containerId, dayId, [childId], ['tag:mem-day'], 'Memory'),
+        node(childId, containerId, [], ['tag:mem-belief'], `Useful topic ${suffix}`));
+    }
+    const timeline = new TimelineMemoryStore(mutableTimelineHost(projection).host);
+    const graph = timeline.graph();
+    for (const sourceDate of new Set(graph.nodes.map((entry) => entry.sourceDate))) {
+      store.claimOrigin(`origin:${sourceDate}`, THREAD_ID, `turn:${sourceDate}`, sourceDate, `hash:${sourceDate}`, { source: 'reader', hasReaderText: true });
+    }
+    store.replaceGeneratedNodes(THREAD_ID, graph.nodes.map((entry) => ({
+      nodeId: entry.node.id, category: entry.category, sourceDate: entry.sourceDate, subject: 'context',
+      fingerprint: timelineNodeFingerprint(entry), userAuthoritative: false, generatedAt: Date.now(),
+    })), graph.nodes.map((entry) => ({ nodeId: entry.node.id, threadId: THREAD_ID, turnId: `turn:${entry.sourceDate}`, originItemId: `origin:${entry.sourceDate}` })));
+    let graphScans = 0;
+    const originalGraph = timeline.graph.bind(timeline);
+    timeline.graph = (...args) => { graphScans++; return originalGraph(...args); };
+    let sourceChecks = 0;
+    const phase = new Phase2(store, timeline, { run: async ({ prompt }) => {
+      const input = JSON.parse(prompt);
+      return JSON.stringify({ changes: input.nodes.filter((node: { category: string }) => node.category === 'memory')
+        .map((node: { nodeId: string; titleSourceNodeIds: string[]; sourceDate: string }) => ({
+          action: 'update', nodeId: node.nodeId, text: `Topics for ${node.sourceDate}`, subject: 'context', sourceNodeIds: [node.titleSourceNodeIds[0]],
+        })) });
+    } }, () => rootThread([]), { sourceReadiness: () => { sourceChecks++; return { kind: 'known', pendingDates: new Set() }; } });
+    await phase.run(new AbortController().signal);
+    expect(sourceChecks).toBe(3);
+    expect(graphScans).toBe(3);
+  });
+
+  test('many unsupported parents leave selection room for the children that resolve them', async () => {
+    const projection = memoryProjection();
+    const container = projection.nodes.find((node) => node.id === MEMORY_NODE_ID)!;
+    for (let index = 1; index < 241; index++) {
+      const episodeId = `episode:parallel:${index}`;
+      const childId = `belief:parallel:${index}`;
+      container.children.push(episodeId);
+      projection.nodes.push(node(episodeId, MEMORY_NODE_ID, [childId], ['tag:mem-episode'], `Episode ${index}`),
+        node(childId, episodeId, [], ['tag:mem-belief'], `Context ${index}`));
+    }
+    const { store, state, timeline } = unsupportedPersonalEpisodeFixture(projection);
+    const phase = new Phase2(store, timeline, { run: async () => '{"changes":[]}' }, () => rootThread([]));
+    let remaining = 241;
+    for (let round = 0; round < 3; round++) {
+      await phase.run(new AbortController().signal);
+      const next = timeline.graph().nodes.filter((entry) => entry.category === 'episode').length;
+      expect(next).toBeLessThan(remaining);
+      remaining = next;
+    }
+    expect(remaining).toBe(0);
+    expect(state.projection().nodes.find((entry) => entry.id === MEMORY_NODE_ID)!.children).toHaveLength(241);
+    expect(store.rollback('rollback:fixture')?.status).toBe('reconciled');
+  });
+
+  test('flattens old nested contextual descendants in bounded batches without starving them', async () => {
+    const projection = memoryProjection(240);
+    const episode = projection.nodes.find((entry) => entry.id === EPISODE_NODE_ID)!;
+    const parent = projection.nodes.find((entry) => entry.id === BELIEF_NODE_ID)!;
+    parent.children = episode.children.slice(1);
+    for (const entry of projection.nodes) if (parent.children.includes(entry.id)) entry.parentId = parent.id;
+    episode.children = [parent.id];
+    const { store, timeline } = unsupportedPersonalEpisodeFixture(projection);
+    store.replaceGeneratedNodes(THREAD_ID, store.generatedNodes().map((record) => ({ ...record, generatedAt: 1 })),
+      store.generatedNodes().flatMap((record) => store.lineageForNode(record.nodeId)));
+    const phase = new Phase2(store, timeline, { run: async () => '{"changes":[]}' }, () => rootThread([]));
+    await phase.run(new AbortController().signal);
+    expect(store.rollback('rollback:fixture')?.status).toBe('committed');
+    await phase.run(new AbortController().signal);
+    expect(store.rollback('rollback:fixture')?.status).toBe('reconciled');
+    const leaves = timeline.graph().nodes.filter((entry) => entry.category === 'belief');
+    expect(leaves).toHaveLength(241);
+    expect(leaves.every((entry) => entry.node.parentId === MEMORY_NODE_ID)).toBe(true);
+  });
+
+  test('plans from detached inputs and marks an incomplete cleanup batch deferred without publication', () => {
+    const { store, state, timeline } = unsupportedPersonalEpisodeFixture(memoryProjection());
+    const snapshot = captureConsolidationSnapshot(timeline, store, 123);
+    const selection = selectConsolidationNodes(snapshot, { kind: 'unavailable' });
+    const partial = selection.filter((entry) => entry.nodeId === EPISODE_NODE_ID);
+    const plan = planConsolidation(snapshot, partial, [], new Map());
+    expect(plan).toMatchObject({ hasPublication: false, followUpAt: 60_123, changes: [], reconciledRollbackIds: [] });
+    state.projection().nodes.find((entry) => entry.id === BELIEF_NODE_ID)!.content.text = 'An authored correction';
+    state.projection().nodes.find((entry) => entry.id === EPISODE_NODE_ID)!.children = [];
+    store.markNodeUserAuthoritative(BELIEF_NODE_ID);
+    expect(snapshot.nodes.get(BELIEF_NODE_ID)!.content.text).toBe('Belief');
+    expect(planConsolidation(snapshot, partial, [], new Map())).toEqual(plan);
+    expect(store.preparedPublications()).toHaveLength(0);
+  });
+
+  test.each(['model', 'admission'] as const)('preserves independent support added during %s waiting', async (boundary) => {
+    const store = memoryStore();
+    const state = mutableTimelineHost(memoryProjection());
+    const timeline = new TimelineMemoryStore(state.host);
+    seedGeneratedGraph(store, timeline);
+    const addSupport = () => {
+      store.claimOrigin('item:confirmation-race', THREAD_ID, 'turn:confirmation-race', '2026-07-24', 'confirmation', { source: 'reader', hasReaderText: true });
+      store.replaceGeneratedNodes(THREAD_ID, store.generatedNodes(), [
+        ...store.generatedNodes().flatMap((node) => store.lineageForNode(node.nodeId)),
+        { nodeId: BELIEF_NODE_ID, threadId: THREAD_ID, turnId: 'turn:confirmation-race', originItemId: 'item:confirmation-race' },
+      ]);
+    };
+    const original = state.host.runPlannedChanges;
+    if (boundary === 'admission') state.host.runPlannedChanges = async (build, options) => { addSupport(); return original(build, options); };
+    const phase = new Phase2(store, timeline, { run: async () => {
+      if (boundary === 'model') addSupport();
+      return JSON.stringify({ changes: [{ action: 'update', nodeId: BELIEF_NODE_ID, subject: 'context',
+        text: 'A revised statement', sourceNodeIds: [BELIEF_NODE_ID] }] });
+    } }, () => rootThread([]));
+    await expect(phase.run(new AbortController().signal)).rejects.toThrow('changed during consolidation');
+    expect(store.lineageForNode(BELIEF_NODE_ID).map((edge) => edge.originItemId).sort()).toEqual([ITEM_ID, 'item:confirmation-race'].sort());
+    expect(timeline.graph().nodes.find((entry) => entry.node.id === BELIEF_NODE_ID)!.node.content.text).toBe('Belief');
+    expect(state.calls).toHaveLength(0);
+  });
+
+  test('waits for prepared rollback without publishing or calling the model', async () => {
+    const store = memoryStore();
+    const state = mutableTimelineHost(memoryProjection());
+    const timeline = new TimelineMemoryStore(state.host);
+    seedGeneratedGraph(store, timeline);
+    store.prepareRollback({ rollbackId: 'rollback:waiting', threadId: THREAD_ID, omittedTurnIds: [TURN_ID],
+      beforeVersion: 1, afterVersion: 2, suppressedNodeIds: [], suppressAllGenerated: false });
+    const phase = new Phase2(store, timeline, { run: async () => { throw new Error('Unexpected model call'); } }, () => rootThread([]),
+      { sourceReadiness: () => { throw new Error('Unexpected history scan'); } });
+    await expect(phase.run(new AbortController().signal)).resolves.toBe('deferred');
+    expect(state.calls).toHaveLength(0);
+    expect(store.preparedPublications()).toHaveLength(0);
+    expect(store.status().lastError).toBeNull();
+  });
+
+  test('recovers a delayed continuation exactly once and then finishes the retained subtree', async () => {
+    const projection = memoryProjection();
+    projection.nodes.find((entry) => entry.id === EPISODE_NODE_ID)!.children = [];
+    projection.nodes = projection.nodes.filter((entry) => entry.id !== BELIEF_NODE_ID);
+    const { store, state, timeline } = unsupportedPersonalEpisodeFixture(projection);
+    store.completeJob('rollback:rollback:fixture');
+    const now = 123;
+    const phase = new Phase2(store, timeline, { run: async () => JSON.stringify({ changes: [{
+      action: 'create', temporaryId: 'new:retained', parentId: EPISODE_NODE_ID, category: 'belief', subject: 'context',
+      text: 'A contextual result with independent evidence', sourceNodeIds: [MEMORY_NODE_ID],
+    }] }) }, () => rootThread([]), { now: () => now });
+    const finalize = store.finalizeStage2.bind(store);
+    store.finalizeStage2 = () => { throw new Error('Simulated lost settlement'); };
+    await expect(phase.run(new AbortController().signal)).rejects.toThrow('lost settlement');
+    store.finalizeStage2 = finalize;
+    const journal = store.preparedPublications()[0]!;
+    expect((journal.payload as { followUpAt: number }).followUpAt).toBe(60_123);
+    await phase.recoverPrepared(journal, true);
+    expect(store.nextJob(now)).toBeNull();
+    expect(store.nextJobAvailableAt()).toBe(60_123);
+    const continuation = store.nextJob(60_123)!;
+    expect(continuation.payload).toMatchObject({ task: 'consolidate' });
+    store.completeJob(continuation.key);
+    await phase.recoverPrepared(journal, true);
+    expect(store.nextJobAvailableAt()).toBeNull();
+    expect(state.calls).toHaveLength(1);
+    await new Phase2(store, timeline, { run: async () => '{"changes":[]}' }, () => rootThread([]), { now: () => 60_123 }).run(new AbortController().signal);
+    expect(store.rollback('rollback:fixture')?.status).toBe('reconciled');
+    expect(timeline.graph().nodes.some((entry) => entry.node.id === EPISODE_NODE_ID)).toBe(false);
+    expect(timeline.graph().nodes.find((entry) => entry.category === 'belief')!.node.parentId).toBe(MEMORY_NODE_ID);
   });
 
   test('fingerprints all eligible evidence while sending the oldest complete unprocessed batch', () => {
@@ -2055,18 +2262,40 @@ describe('Codex Memory contracts', () => {
       return JSON.stringify({ changes: [{ subject: 'context', nodeId: MEMORY_NODE_ID, action: 'update',
         text: 'A compass for clearer reports', sourceNodeIds: [BELIEF_NODE_ID] }] });
     } }, () => rootThread([]), { now: () => now });
-    expect(phase.needsDayTitle('2026-07-24')).toBe(true);
     await phase.run(new AbortController().signal);
     expect(timeline.graph().containers[0]!.node.content.text).toBe('Memory');
     expect(state.calls).toHaveLength(0);
     now = new Date(2026, 6, 25).getTime();
-    await phase.run(new AbortController().signal, '2026-07-24');
+    await phase.run(new AbortController().signal, { task: 'nameDay', sourceDate: '2026-07-24' });
     const day = timeline.graph().containers[0]!;
     expect(day.node.content.text).toBe('A compass for clearer reports');
     expect(day.node.id).toBe(MEMORY_NODE_ID);
     expect(store.generatedNodesById().get(day.node.id)?.fingerprint).toBe(timelineNodeFingerprint(day));
     expect(store.lineageForNode(day.node.id).map((edge) => edge.originItemId)).toEqual([ITEM_ID]);
-    expect(phase.needsDayTitle('2026-07-24')).toBe(false);
+    await expect(phase.run(new AbortController().signal, { task: 'nameDay', sourceDate: '2026-07-24' })).resolves.toBe('unchanged');
+  });
+
+  test('keeps naming pending until every generated Memory container on the date has a title', async () => {
+    const store = memoryStore();
+    const projection = memoryProjection();
+    projection.nodes.find((entry) => entry.id === MEMORY_NODE_ID)!.content.text = 'Memory';
+    projection.nodes.find((entry) => entry.id === 'day')!.children.push('memory:second');
+    projection.nodes.push(node('memory:second', 'day', ['belief:second'], ['tag:mem-day'], 'Memory'),
+      node('belief:second', 'memory:second', [], ['tag:mem-belief'], 'A separate retained topic'));
+    const timeline = new TimelineMemoryStore(mutableTimelineHost(projection).host);
+    seedGeneratedGraph(store, timeline);
+    let calls = 0;
+    const phase = new Phase2(store, timeline, { run: async () => {
+      calls++;
+      return JSON.stringify({ changes: [{ action: 'update', nodeId: calls === 1 ? MEMORY_NODE_ID : 'memory:second',
+        subject: 'context', text: calls === 1 ? 'First topic' : 'Second topic',
+        sourceNodeIds: [calls === 1 ? BELIEF_NODE_ID : 'belief:second'] }] });
+    } }, () => rootThread([]));
+    const request = { task: 'nameDay' as const, sourceDate: '2026-07-24' };
+    await expect(phase.run(new AbortController().signal, request)).resolves.toBe('deferred');
+    await expect(phase.run(new AbortController().signal, request)).resolves.toBe('published');
+    await expect(phase.run(new AbortController().signal, request)).resolves.toBe('unchanged');
+    expect(calls).toBe(2);
   });
 
   test('protects a manually edited day title from the naming model', async () => {
@@ -2087,6 +2316,7 @@ describe('Codex Memory contracts', () => {
   test('a bounded partial view cannot rename the day but a focused complete day can', async () => {
     const store = memoryStore();
     const state = mutableTimelineHost(memoryProjection());
+    state.projection().nodes.find((node) => node.id === MEMORY_NODE_ID)!.content.text = 'Memory';
     const timeline = new TimelineMemoryStore(state.host);
     seedGeneratedGraph(store, timeline);
     store.replaceGeneratedNodes(THREAD_ID, store.generatedNodes().map((node) => ({
@@ -2097,7 +2327,7 @@ describe('Codex Memory contracts', () => {
     }] }) }, () => rootThread([]));
     await expect(phase.run(new AbortController().signal)).rejects.toThrow('complete source-day');
     expect(state.calls).toHaveLength(0);
-    await phase.run(new AbortController().signal, '2026-07-24');
+    await phase.run(new AbortController().signal, { task: 'nameDay', sourceDate: '2026-07-24' });
     expect(timeline.graph().containers[0]!.node.content.text).toBe('Context before conclusions');
   });
 
@@ -2125,7 +2355,7 @@ describe('Codex Memory contracts', () => {
       ready = false;
       return JSON.stringify({ changes: [{ subject: 'context', nodeId: MEMORY_NODE_ID, action: 'update',
         text: 'Premature title', sourceNodeIds: [BELIEF_NODE_ID] }] });
-    } }, () => rootThread([]), { canTitleDay: () => ready });
+    } }, () => rootThread([]), { sourceReadiness: () => ({ kind: 'known', pendingDates: new Set(ready ? [] : ['2026-07-24']) }) });
     await expect(phase.run(new AbortController().signal)).rejects.toThrow('still receiving');
     expect(state.calls).toHaveLength(0);
     expect(store.preparedPublications()).toHaveLength(0);
@@ -2182,7 +2412,7 @@ describe('Codex Memory contracts', () => {
     expect(store.nextJob(now)).toBeNull();
     expect(store.nextJobAvailableAt()).toBe(new Date(2026, 6, 25).getTime());
     expect(store.nextJob(new Date(2026, 6, 25).getTime())).toMatchObject({
-      key: 'phase2:day-close:2026-07-24', kind: 'phase2', payload: { reason: 'day-close', sourceDate: '2026-07-24' },
+      key: 'phase2:day-close:2026-07-24', kind: 'phase2', payload: { task: 'nameDay', sourceDate: '2026-07-24' },
     });
   });
 
@@ -2191,9 +2421,13 @@ describe('Codex Memory contracts', () => {
     let now = new Date(2026, 6, 25).getTime();
     let ready = false;
     let calls = 0;
-    store.enqueueJob('phase2:day-close:2026-07-24', 'phase2', { reason: 'day-close', sourceDate: '2026-07-24' }, now);
-    const phase = { needsDayTitle: () => calls === 0, isDayReadyForTitle: () => ready,
-      run: async (_signal: AbortSignal, day: string) => { expect(day).toBe('2026-07-24'); calls++; } } as unknown as Phase2;
+    store.enqueueJob('phase2:day-close:2026-07-24', 'phase2', { task: 'nameDay', sourceDate: '2026-07-24' }, now);
+    const phase = { run: async (_signal: AbortSignal, request: { task: string; sourceDate: string }) => {
+      expect(request).toEqual({ task: 'nameDay', sourceDate: '2026-07-24' });
+      if (!ready) return 'deferred';
+      calls++;
+      return 'published';
+    } } as unknown as Phase2;
     const pipeline = new MemoryPipeline(store, new TimelineMemoryStore(readOnlyTimelineHost(memoryProjection())), {} as Phase1, phase,
       { persistentRootThreads: () => [], readSource: () => null }, { now: () => now });
     try {
@@ -2298,7 +2532,7 @@ describe('Codex Memory contracts', () => {
     releaseGate();
     await gate;
 
-    await expect(run).rejects.toThrow('retained descendants');
+    await expect(run).rejects.toThrow('changed during consolidation');
     expect(store.preparedPublications()).toEqual([]);
     expect(timelineState.deletedNodeIds).toEqual([]);
     expect(timelineState.projection().nodes.some((entry) => entry.id === 'ordinary:late-child')).toBe(true);
@@ -2616,7 +2850,7 @@ describe('Memory window-owned operations', () => {
     expect(store.status().resetEpoch).toBe(0);
     await expect(memory.reset(memory.reviewReset(), async () => {})).rejects.toMatchObject({ code: 'memory_reset_pending' });
     await waitFor(() => store.status().lastError !== null);
-    store.enqueueJob('phase2:global', 'phase2', { reason: 'test' });
+    store.enqueueJob('phase2:global', 'phase2', { task: 'consolidate', reason: 'test' });
     store.enqueueJob(`reset:${result.operationId}`, 'reset', { publicationId: result.operationId });
     state.host.log = readReceipt;
     await memory.setFeatureMode('disabled');
@@ -2761,6 +2995,23 @@ function generatedNode(): MemoryGeneratedNodeRecord {
     userAuthoritative: false,
     generatedAt: 1,
   };
+}
+
+function unsupportedPersonalEpisodeFixture(projection: DocumentProjection) {
+  const store = memoryStore();
+  const state = mutableTimelineHost(projection);
+  const timeline = new TimelineMemoryStore(state.host);
+  seedGeneratedGraph(store, timeline);
+  store.claimOrigin('item:fixture-web', THREAD_ID, 'turn:fixture-web', '2026-07-24', 'web', { source: 'web', hasReaderText: false });
+  const records = store.generatedNodes().map((record) => ({ ...record, subject: record.category === 'episode' ? 'user' as const : 'context' as const }));
+  store.replaceGeneratedNodes(THREAD_ID, records, records.map((record) => ({
+    nodeId: record.nodeId, threadId: THREAD_ID, turnId: record.subject === 'user' ? TURN_ID : 'turn:fixture-web',
+    originItemId: record.subject === 'user' ? ITEM_ID : 'item:fixture-web',
+  })));
+  store.prepareRollback({ rollbackId: 'rollback:fixture', threadId: THREAD_ID, omittedTurnIds: [TURN_ID],
+    beforeVersion: 1, afterVersion: 2, suppressedNodeIds: [], suppressAllGenerated: false });
+  store.commitRollback('rollback:fixture');
+  return { store, state, timeline };
 }
 
 function seedGeneratedGraph(store: MemoryControlStore, timeline: TimelineMemoryStore): void {

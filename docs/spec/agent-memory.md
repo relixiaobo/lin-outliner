@@ -273,34 +273,55 @@ host allocates real IDs, replaces the affected Node's complete lineage, and
 validates hierarchy, selection, authority, descendants, and evidence before
 producing the Runtime ChangeSet.
 
-Unsupported generated Nodes rank ahead of ordinary consolidation input and are
-cleaned in bounded deepest-first batches. A generated ancestor inherits current
-descendant evidence when possible. If an ordinary or user-authoritative
-descendant makes deletion structurally impossible, the ancestor relinquishes
-generated ownership and becomes authoritative rather than keeping rollback
-suppression open forever. Each partial batch journals a distinct follow-up job. An unsupported personal
-episode cannot inherit external-only support from generated contextual children.
-When its complete generated subtree is selected, cleanup reparents the surviving
-children directly under the same day container before purging the episode in the
-same transaction. Their subjects, current lineage and new parent fingerprints
-are journaled; this does not invent user authorship or add a model-facing move
-operation. Existing protection for ordinary/user-authoritative descendants and
-Reset subtree scope are unchanged.
+Consolidation has three owners: `ConsolidationSnapshot` detaches the graph and
+control evidence, `ConsolidationPlan` computes changes without live reads or
+writes, and `Phase2` coordinates model work, admission and durable publication.
+The worker reads one graph snapshot before the model, one under the Memory write
+gate after the model, and one at document admission. Each boundary collects
+source readiness once for all dates, using the same eligible-source collection
+as extraction. Prepared/committed rollbacks prevent day naming without scanning
+source history. Naming completion is evaluated from the resulting plan, including
+multiple containers on one date; it does not require another live scan.
 
-Deletion fails closed if any descendant is unselected, ordinary, or
-user-authoritative. User-authoritative Nodes cannot be updated or deleted by the
-model. Create operations cannot target a deleted or non-canonical parent.
+Unsupported generated Nodes and their descendants bypass unused-record aging.
+Selection reserves bounded space for an unsupported ancestor together with the
+descendants that can resolve it; many unsupported parents cannot crowd out all
+retained children. Cleanup processes selected Nodes deepest first against the
+planned final structure, including model creates and deletes. A generated
+ancestor inherits current retained descendant evidence when possible. If an
+ordinary or user-authoritative descendant makes deletion impossible, the
+ancestor relinquishes generated ownership and becomes authoritative.
 
-Phase 2 acquires the Memory write gate before preparing publication, then
-rechecks every structural input fingerprint, the complete identity of every
-deletion subtree including ordinary descendants, mode generation, reset epoch,
-and the exact ordered rollback set. It writes a durable journal containing
-canonical Changes, output fingerprints, deletion-subtree fingerprints, new
-generated records, complete lineage, and rollback IDs without releasing the
-gate. Runtime idempotency settlement is the matching receipt; finalization uses
-only journaled state, never mutable live Nodes. A rollback is reconciled only
-after every remaining
-canonical generated Node has current evidence or is deleted.
+An unsupported personal episode cannot inherit external-only support. Its
+selected, independently supported generated leaves move directly to the same
+day container, deepest first, while unprocessed children keep the episode alive.
+The episode is purged only after all retained descendants have left. This works
+across many batches and nested subtrees, without requiring a complete subtree
+inside one model input. Subjects, current lineage and new parent fingerprints
+are journaled; moving content invents no user authorship and adds no model-facing
+move operation. Reset subtree scope is unchanged.
+
+Deletion fails closed if the resulting structure still retains any descendant.
+User-authoritative Nodes cannot be updated or deleted by the model. Create and
+move operations cannot target a deleted or non-canonical parent.
+
+Selected inputs are rechecked after model work. The plan records every structural
+and evidence dependency it reads, including complete deletion subtrees, inherited
+lineage and destination parents. At document admission, it rechecks these detached
+fingerprints, mode generation, reset epoch and the exact rollback records, as well
+as title readiness and complete title subtrees. New independent support invalidates
+a stale replacement instead of being overwritten. Runtime idempotency settlement
+is the matching receipt; finalization uses only journaled state.
+
+A partial cleanup that advances publishes a distinct continuation with an explicit
+next-run time. No-progress batches defer for one minute without publishing an
+empty marker or immediately repeating model work. If other model changes publish
+without advancing cleanup, their journal preserves the deferred continuation
+time. Recovery finalizes that exact schedule once. A rollback is reconciled only
+after every remaining canonical generated Node has current evidence, has been
+released to user authority, or is deleted. Private job payloads distinguish
+consolidation from day naming explicitly; the pipeline consumes completed/deferred
+outcomes instead of inferring work from reason strings or boolean sentinels.
 
 ## Retrieval And Outline CLI
 

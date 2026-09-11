@@ -299,12 +299,16 @@ function collectMemoryCandidates(
   return { candidates, activeDates };
 }
 
-export function memorySourceDayPending(source: Phase1Source, control: MemoryControlStore, sourceDate: string): boolean {
-  if (control.threadMode(source.thread.id) !== 'enabled') return false;
+export function memorySourcePendingDates(source: Phase1Source, control: MemoryControlStore): ReadonlySet<string> {
+  if (control.threadMode(source.thread.id) !== 'enabled') return new Set();
   const evidence = collectMemoryCandidates(source, control);
-  if (evidence.activeDates.has(sourceDate)) return true;
   const processed = control.processedOrigins(source.thread.id);
-  return evidence.candidates.some((item) => item.sourceDate === sourceDate && !processed.has(item.originItemId));
+  return new Set([...evidence.activeDates, ...evidence.candidates
+    .filter((item) => !processed.has(item.originItemId)).map((item) => item.sourceDate)]);
+}
+
+export function memorySourceDayPending(source: Phase1Source, control: MemoryControlStore, sourceDate: string): boolean {
+  return memorySourcePendingDates(source, control).has(sourceDate);
 }
 
 export function collectMemoryEvidence(source: Phase1Source, control: MemoryControlStore): CollectedMemoryEvidence {

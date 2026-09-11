@@ -222,6 +222,17 @@ oversized batch remains pending, and existing receipt recovery settles accepted
 coverage exactly once. New containers use ordinary initially collapsed Outline
 state and subsequent background publication does not change that state.
 
+Consolidation reads a detached graph/control snapshot before model selection, after
+the model returns under the write gate, and at document admission. Each boundary
+collects source readiness once for all dates. A pure planner applies proposals,
+then reconciles unsupported Nodes against the resulting structure. Selected
+retained children can move out of an unsupported personal episode in bounded
+batches; the parent remains until no retained descendants would be lost. The
+journal carries structural and evidence preconditions plus an explicit next-run
+time. Progress continues immediately, while a blocked batch waits without an
+empty publication. Typed worker requests and completed/deferred outcomes keep
+naming, consolidation and retry ownership in one place.
+
 Expected implementation files and owners:
 
 - `src/core/agent/configuration.ts`, `AgentConfigurationLoader`, and `AgentConfigurationWriter`: file references, accepted revisions, edit/source status, and existing root configuration boundaries.

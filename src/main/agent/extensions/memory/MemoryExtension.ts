@@ -47,7 +47,7 @@ import {
 import {
   Phase1,
   collectMemoryEvidence,
-  memorySourceDayPending,
+  memorySourcePendingDates,
   type MemoryModelRunner,
 } from './Phase1';
 import { Phase2 } from './Phase2';
@@ -148,13 +148,14 @@ export class MemoryExtension implements AgentCoreExtension {
       this.timeline,
       model,
       () => this.consolidationSource(),
-      { canTitleDay: (sourceDate) => {
-        if (host.hasHiddenRootThreads()) return false;
+      { sourceReadiness: () => {
+        if (host.hasHiddenRootThreads()) return { kind: 'unavailable' };
+        const pendingDates = new Set<string>();
         for (const root of host.persistentRootThreads()) {
           const thread = host.readThread({ threadId: root.id, includeTurns: true }).thread;
-          if (memorySourceDayPending(phase1Source(thread, thread.turns ?? []), this.control, sourceDate)) return false;
+          for (const date of memorySourcePendingDates(phase1Source(thread, thread.turns ?? []), this.control)) pendingDates.add(date);
         }
-        return true;
+        return { kind: 'known', pendingDates };
       } },
     );
     const sources: MemoryPipelineSourceHost = {

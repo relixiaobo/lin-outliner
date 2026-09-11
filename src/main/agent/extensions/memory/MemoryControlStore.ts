@@ -13,6 +13,8 @@ import type {
 import type { ThreadId, ThreadItemId, TurnId } from '../../../../core/agent/protocol';
 import { redactSecretLikeContent } from '../../capabilities/agentSecretRedaction';
 import { closeSqliteAfterFailure, openSqlite, type SqliteDatabase, type SqliteValue } from '../../persistence/sqlite';
+import { decodeMemoryJob, type MemoryDirtyJob, type MemoryJobKind, type MemoryJobPayloads } from './MemoryJobs';
+import { sourcesSupportSubject } from './MemorySupport';
 
 type MemoryControlStatus = Omit<MemoryStatus, 'strayTaggedNodeCount'>;
 
@@ -116,13 +118,6 @@ export interface MemoryRollbackRecord {
   readonly createdAt: number;
 }
 
-export interface MemoryDirtyJob<T = unknown> {
-  readonly key: string;
-  readonly kind: string;
-  readonly payload: T;
-  readonly attempt: number;
-}
-
 export interface MemoryEvidenceCoverage {
   readonly originItemIds: readonly ThreadItemId[];
   readonly hasMore: boolean;
@@ -145,7 +140,7 @@ export interface MemoryStage2Finalization {
   readonly deletedNodeIds: readonly string[];
   readonly releasedNodeIds: readonly string[];
   readonly reconciledRollbackIds: readonly string[];
-  readonly needsFollowUp: boolean;
+  readonly followUpAt: number | null;
 }
 
 export class MemoryControlStore {
@@ -484,9 +479,7 @@ export class MemoryControlStore {
   }
 
   subjectHasCurrentSupport(subject: MemorySubject, originItemIds: readonly ThreadItemId[]): boolean {
-    const sources = originItemIds.map((id) => this.originSource(id));
-    return sources.length > 0 && sources.every((source) => source !== null)
-      && (subject === 'context' || sources.some((source) => source?.source === 'reader' && source.hasReaderText));
+    return sourcesSupportSubject(subject, originItemIds.map((id) => this.originSource(id)));
   }
 
   requireSubjectSupport(subject: MemorySubject, originItemIds: readonly ThreadItemId[]): void {
@@ -605,11 +598,11 @@ export class MemoryControlStore {
           updated_at = excluded.updated_at
       `).run(input.threadId, input.sourceVersion, now);
       this.finalizePublicationInsideTransaction(input.publicationId);
-      this.enqueueJob('phase2:global', 'phase2', { reason: 'stage1' }, now);
+      this.enqueueJob('phase2:global', 'phase2', { task: 'consolidate', reason: 'stage1' }, now);
       for (const sourceDate of new Set(input.nodes.map((node) => node.sourceDate))) {
         const dayEnd = dateFromIsoLocalDate(sourceDate);
         dayEnd.setDate(dayEnd.getDate() + 1);
-        this.scheduleJob(`phase2:day-close:${sourceDate}`, 'phase2', { reason: 'day-close', sourceDate }, Math.max(now, dayEnd.getTime()), now);
+        this.scheduleJob(`phase2:day-close:${sourceDate}`, 'phase2', { task: 'nameDay', sourceDate }, Math.max(now, dayEnd.getTime()), now);
       }
       this.recordSuccess(now);
     });
@@ -617,6 +610,7 @@ export class MemoryControlStore {
 
   finalizeStage2(input: MemoryStage2Finalization, now = Date.now()): void {
     this.transaction(() => {
+      if (this.publication(input.publicationId)?.status === 'finalized') return;
       for (const nodeId of input.deletedNodeIds) {
         this.db.prepare('DELETE FROM generated_nodes WHERE node_id = ?').run(nodeId);
       }
@@ -637,11 +631,12 @@ export class MemoryControlStore {
         this.db.prepare(`UPDATE rollback_invalidations SET status = 'reconciled' WHERE rollback_id = ?`).run(rollbackId);
         this.db.prepare('DELETE FROM dirty_jobs WHERE key = ?').run(`rollback:${rollbackId}`);
       }
-      if (input.needsFollowUp || this.activeRollbacks().some((rollback) => rollback.status === 'committed')) {
-        this.enqueueJob(
+      if (input.followUpAt !== null) {
+        this.scheduleJob(
           `phase2:rollback-continuation:${input.publicationId}`,
           'phase2',
-          { reason: 'rollback-continuation' },
+          { task: 'consolidate', reason: 'rollback-continuation' },
+          input.followUpAt,
           now,
         );
       }
@@ -843,7 +838,7 @@ export class MemoryControlStore {
     `).all() as RollbackRow[]).map(rollbackFromRow);
   }
 
-  enqueueJob(key: string, kind: string, payload: unknown, now = Date.now()): void {
+  enqueueJob<K extends MemoryJobKind>(key: string, kind: K, payload: MemoryJobPayloads[K], now = Date.now()): void {
     this.db.prepare(`
       INSERT INTO dirty_jobs(key, kind, payload_json, attempt, available_at, updated_at)
       VALUES (?, ?, ?, 0, ?, ?)
@@ -856,7 +851,7 @@ export class MemoryControlStore {
     this.changed();
   }
 
-  scheduleJob(key: string, kind: string, payload: unknown, availableAt: number, now = Date.now()): void {
+  scheduleJob<K extends MemoryJobKind>(key: string, kind: K, payload: MemoryJobPayloads[K], availableAt: number, now = Date.now()): void {
     this.db.prepare(`
       INSERT INTO dirty_jobs(key, kind, payload_json, attempt, available_at, updated_at)
       VALUES (?, ?, ?, 0, ?, ?)
@@ -874,7 +869,7 @@ export class MemoryControlStore {
       SELECT key, kind, payload_json, attempt, available_at
       FROM dirty_jobs WHERE available_at <= ? AND (? = 0 OR kind = 'reset') ORDER BY available_at, updated_at, key LIMIT 1
     `).get(now, resetOnly ? 1 : 0) as JobRow | undefined;
-    return row ? { key: row.key, kind: row.kind, payload: JSON.parse(row.payload_json), attempt: row.attempt } : null;
+    return row ? decodeMemoryJob(row) : null;
   }
 
   nextJobAvailableAt(resetOnly = false): number | null {
