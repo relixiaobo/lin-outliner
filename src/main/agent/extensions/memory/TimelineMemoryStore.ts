@@ -38,17 +38,13 @@ export interface TimelineMemoryHost {
 
 export interface PreparedTimelineDateOutput {
   readonly sourceDate: string;
-  readonly headline: string;
-  readonly episode: string;
-  readonly beliefs: readonly string[];
-  readonly questions: readonly string[];
-  readonly guidance: readonly string[];
   readonly containerId: string;
-  readonly containerGenerated: boolean;
-  readonly episodeId: string;
-  readonly beliefIds: readonly string[];
-  readonly questionIds: readonly string[];
-  readonly guidanceIds: readonly string[];
+  readonly records: readonly {
+    readonly nodeId: string;
+    readonly parentId: string;
+    readonly category: Exclude<MemoryCategory, 'memory'>;
+    readonly text: string;
+  }[];
 }
 
 export interface TimelinePublication {
@@ -82,6 +78,7 @@ export type TimelineConsolidationChange =
   | { readonly nodeId: string; readonly action: 'keep' }
   | { readonly nodeId: string; readonly action: 'update'; readonly text: string }
   | { readonly nodeId: string; readonly action: 'delete' }
+  | { readonly nodeId: string; readonly action: 'move'; readonly parentId: string }
   | {
       readonly nodeId: string;
       readonly action: 'create';
@@ -162,40 +159,19 @@ export class TimelineMemoryStore {
             operations.push(createTaggedChange(
               date.containerId,
               binding(dateBinding),
-              date.headline,
+              'Memory',
               memoryTagId('memory'),
               containerBinding,
             ));
-          } else if (date.containerGenerated && container.content.text !== date.headline) {
-            operations.push(updateTextChange(container.id, date.headline));
           }
-          const episodeBinding = `memoryEpisode${dateIndex + 1}`;
-          const episodeRef = planUpsertTaggedNode(
-            operations,
-            index,
-            containerRef,
-            date.episodeId,
-            date.episode,
-            'episode',
-            episodeBinding,
-          );
-          for (const [position, text] of date.beliefs.entries()) {
-            planUpsertTaggedNode(
-              operations, index, episodeRef, date.beliefIds[position]!, text, 'belief',
-              `memoryBelief${dateIndex + 1}_${position + 1}`,
-            );
-          }
-          for (const [position, text] of date.questions.entries()) {
-            planUpsertTaggedNode(
-              operations, index, episodeRef, date.questionIds[position]!, text, 'question',
-              `memoryQuestion${dateIndex + 1}_${position + 1}`,
-            );
-          }
-          for (const [position, text] of date.guidance.entries()) {
-            planUpsertTaggedNode(
-              operations, index, episodeRef, date.guidanceIds[position]!, text, 'guidance',
-              `memoryGuidance${dateIndex + 1}_${position + 1}`,
-            );
+          const refs = new Map<string, TargetRef>([[date.containerId, containerRef]]);
+          for (const [position, record] of date.records.entries()) {
+            const parent = refs.get(record.parentId);
+            if (!parent) throw new Error('Memory record has no prepared parent');
+            refs.set(record.nodeId, planUpsertTaggedNode(
+              operations, index, parent, record.nodeId, record.text, record.category,
+              `memoryRecord${dateIndex + 1}_${position + 1}`,
+            ));
           }
         }
         return operations;
@@ -256,6 +232,11 @@ export class TimelineMemoryStore {
         if (change.action === 'update' && index.has(change.nodeId)) {
           operations.push(updateTextChange(change.nodeId, change.text));
         }
+      }
+      for (const change of changes) {
+        if (change.action === 'move') operations.push({
+          op: 'move', targets: oneId(change.nodeId), placement: { kind: 'last', parent: oneId(change.parentId) },
+        });
       }
       const deletes = changes
         .filter((change) => change.action === 'delete' && index.has(change.nodeId))
@@ -342,6 +323,16 @@ export function canonicalMemoryGraph(projection: DocumentProjection): CanonicalM
     nodes.push(container);
     canonicalIds.add(node.id);
 
+    for (const childId of node.children) {
+      const child = index.get(childId);
+      if (!child || !isContentBearingNode(child)) continue;
+      const entry = canonicalMemoryNodeFromIndex(child, index);
+      if (entry && isLeafMemoryCategory(entry.category) && entry.containerId === container.node.id && entry.episodeId === null) {
+        nodes.push(entry);
+        canonicalIds.add(child.id);
+      }
+    }
+
     for (const episodeId of node.children) {
       const episode = index.get(episodeId);
       if (!episode || !isContentBearingNode(episode)) continue;
@@ -401,7 +392,16 @@ export function canonicalMemoryNodeFromIndex(
     const container = canonicalMemoryContainer(current, index);
     if (container) {
       const episode = path.at(-2);
-      if (!episode || !episode.tags.includes(memoryTagId('episode'))) return null;
+      if (!episode || !episode.tags.includes(memoryTagId('episode'))) {
+        const category = node.tags.map(memoryCategoryForTagId).find(isLeafMemoryCategory);
+        return category && node.parentId === container.node.id ? {
+          node,
+          category,
+          sourceDate: container.sourceDate,
+          containerId: container.node.id,
+          episodeId: null,
+        } : null;
+      }
       if (node.id === episode.id) {
         return {
           node,

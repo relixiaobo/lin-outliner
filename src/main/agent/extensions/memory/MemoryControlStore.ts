@@ -1,14 +1,20 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { dateFromIsoLocalDate } from '../../../../core/localDate';
 import type {
   MemoryAdmissionSnapshot,
   MemoryFeatureMode,
   MemoryStatus,
+  MemoryEvidenceSource,
+  MemoryOriginSource,
+  MemorySubject,
   ThreadMemoryMode,
 } from '../../../../core/agent/memory';
 import type { ThreadId, ThreadItemId, TurnId } from '../../../../core/agent/protocol';
 import { redactSecretLikeContent } from '../../capabilities/agentSecretRedaction';
 import { closeSqliteAfterFailure, openSqlite, type SqliteDatabase, type SqliteValue } from '../../persistence/sqlite';
+import { decodeMemoryJob, type MemoryDirtyJob, type MemoryJobKind, type MemoryJobPayloads } from './MemoryJobs';
+import { sourcesSupportSubject } from './MemorySupport';
 
 type MemoryControlStatus = Omit<MemoryStatus, 'strayTaggedNodeCount'>;
 
@@ -29,7 +35,6 @@ interface SourceRow {
   thread_id: string;
   source_version: string;
   status: string;
-  polluted: number;
   updated_at: number;
 }
 interface PublicationRow {
@@ -55,6 +60,7 @@ interface RollbackRow {
   created_at: number;
 }
 interface GeneratedNodeRow {
+  subject: MemorySubject;
   node_id: string;
   category: string;
   source_date: string;
@@ -68,7 +74,6 @@ export interface MemorySourceRecord {
   readonly threadId: ThreadId;
   readonly sourceVersion: string;
   readonly status: 'succeeded' | 'succeededNoOutput' | 'failed';
-  readonly polluted: boolean;
   readonly updatedAt: number;
 }
 
@@ -85,6 +90,7 @@ export interface MemoryPublicationRecord<T = unknown> {
 }
 
 export interface MemoryGeneratedNodeRecord {
+  readonly subject: MemorySubject;
   readonly nodeId: string;
   readonly category: string;
   readonly sourceDate: string;
@@ -112,14 +118,14 @@ export interface MemoryRollbackRecord {
   readonly createdAt: number;
 }
 
-export interface MemoryDirtyJob<T = unknown> {
-  readonly key: string;
-  readonly kind: string;
-  readonly payload: T;
-  readonly attempt: number;
+export interface MemoryEvidenceCoverage {
+  readonly originItemIds: readonly ThreadItemId[];
+  readonly hasMore: boolean;
+  readonly batchId: string;
 }
 
 export interface MemoryStage1Finalization {
+  readonly coverage: MemoryEvidenceCoverage;
   readonly publicationId: string;
   readonly threadId: ThreadId;
   readonly sourceVersion: string;
@@ -134,7 +140,7 @@ export interface MemoryStage2Finalization {
   readonly deletedNodeIds: readonly string[];
   readonly releasedNodeIds: readonly string[];
   readonly reconciledRollbackIds: readonly string[];
-  readonly needsFollowUp: boolean;
+  readonly followUpAt: number | null;
 }
 
 export class MemoryControlStore {
@@ -186,7 +192,6 @@ export class MemoryControlStore {
         thread_id TEXT PRIMARY KEY,
         source_version TEXT NOT NULL,
         status TEXT NOT NULL CHECK (status IN ('succeeded', 'succeededNoOutput', 'failed')),
-        polluted INTEGER NOT NULL DEFAULT 0 CHECK (polluted IN (0, 1)),
         updated_at INTEGER NOT NULL
       ) STRICT;
       CREATE TABLE IF NOT EXISTS origin_claims (
@@ -194,9 +199,15 @@ export class MemoryControlStore {
         thread_id TEXT NOT NULL,
         turn_id TEXT NOT NULL,
         source_date TEXT NOT NULL,
-        content_hash TEXT NOT NULL
+        content_hash TEXT NOT NULL,
+        source TEXT NOT NULL CHECK (source IN ('reader', 'host', 'assistant', 'tool', 'web', 'mcp')),
+        has_reader_text INTEGER NOT NULL CHECK (has_reader_text IN (0, 1) AND (has_reader_text = 0 OR source = 'reader'))
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS processed_origins (
+        origin_item_id TEXT PRIMARY KEY REFERENCES origin_claims(origin_item_id) ON DELETE CASCADE
       ) STRICT;
       CREATE TABLE IF NOT EXISTS generated_nodes (
+        subject TEXT NOT NULL CHECK (subject IN ('user', 'context')),
         node_id TEXT PRIMARY KEY,
         category TEXT NOT NULL,
         source_date TEXT NOT NULL,
@@ -398,46 +409,43 @@ export class MemoryControlStore {
       threadId: row.thread_id,
       sourceVersion: row.source_version,
       status: row.status as MemorySourceRecord['status'],
-      polluted: row.polluted === 1,
       updatedAt: row.updated_at,
     } : null;
   }
 
-  finalizeStage1NoOutput(threadId: ThreadId, sourceVersion: string, now = Date.now()): void {
+  finalizeStage1NoOutput(threadId: ThreadId, sourceVersion: string, coverage: MemoryEvidenceCoverage, now = Date.now()): void {
     this.transaction(() => {
-      this.db.prepare('DELETE FROM node_lineage WHERE thread_id = ?').run(threadId);
+      this.acceptCoverage(threadId, coverage, now);
       this.db.prepare(`
-        INSERT INTO source_records(thread_id, source_version, status, polluted, updated_at)
-        VALUES (?, ?, 'succeededNoOutput', 0, ?)
+        INSERT INTO source_records(thread_id, source_version, status, updated_at)
+        VALUES (?, ?, 'succeededNoOutput', ?)
         ON CONFLICT(thread_id) DO UPDATE SET
           source_version = excluded.source_version,
           status = excluded.status,
-          polluted = 0,
           updated_at = excluded.updated_at
       `).run(threadId, sourceVersion, now);
-      this.enqueueJob('phase2:global', 'phase2', { reason: 'stage1-no-output' }, now);
       this.recordSuccess(now);
     });
     this.invalidateMemoryVisibilityCache();
   }
 
-  markThreadPolluted(threadId: ThreadId, now = Date.now()): void {
-    this.transaction(() => {
-      this.db.prepare(`
-        INSERT INTO source_records(thread_id, source_version, status, polluted, updated_at)
-        VALUES (?, '', 'succeededNoOutput', 1, ?)
-        ON CONFLICT(thread_id) DO UPDATE SET polluted = 1, updated_at = excluded.updated_at
-      `).run(threadId, now);
-      const origins = this.db.prepare(`
-        SELECT origin_item_id FROM origin_claims WHERE thread_id = ?
-      `).all(threadId) as Array<{ origin_item_id: string }>;
-      for (const origin of origins) {
-        this.db.prepare('DELETE FROM citation_usage WHERE origin_item_id = ?').run(origin.origin_item_id);
-      }
-      this.db.prepare('DELETE FROM origin_claims WHERE thread_id = ?').run(threadId);
-      this.enqueueJob(`phase2:pollution:${threadId}`, 'phase2', { threadId }, now);
-    });
-    this.invalidateMemoryVisibilityCache();
+  processedOrigins(threadId: ThreadId): ReadonlySet<ThreadItemId> {
+    return new Set((this.db.prepare(`
+      SELECT p.origin_item_id FROM processed_origins p
+      JOIN origin_claims o ON o.origin_item_id = p.origin_item_id WHERE o.thread_id = ?
+    `).all(threadId) as Array<{ origin_item_id: string }>).map((row) => row.origin_item_id));
+  }
+
+  private acceptCoverage(threadId: ThreadId, coverage: MemoryEvidenceCoverage, now: number): void {
+    for (const originItemId of coverage.originItemIds) {
+      const claim = this.db.prepare('SELECT thread_id FROM origin_claims WHERE origin_item_id = ?').get(originItemId) as
+        { thread_id: string } | undefined;
+      if (claim?.thread_id !== threadId) throw new Error('Memory coverage has no matching source claim');
+      this.db.prepare('INSERT OR IGNORE INTO processed_origins(origin_item_id) VALUES (?)').run(originItemId);
+    }
+    if (coverage.hasMore) {
+      this.enqueueJob(`phase1:continuation:${coverage.batchId}`, 'phase1', { threadId }, now);
+    }
   }
 
   claimOrigin(
@@ -446,20 +454,38 @@ export class MemoryControlStore {
     turnId: TurnId,
     sourceDate: string,
     contentHash: string,
+    source: Omit<MemoryOriginSource, 'originItemId'>,
   ): boolean {
     const result = this.db.prepare(`
-      INSERT OR IGNORE INTO origin_claims(origin_item_id, thread_id, turn_id, source_date, content_hash)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(originItemId, threadId, turnId, sourceDate, contentHash);
+      INSERT OR IGNORE INTO origin_claims(origin_item_id, thread_id, turn_id, source_date, content_hash, source, has_reader_text)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(originItemId, threadId, turnId, sourceDate, contentHash, source.source, source.hasReaderText ? 1 : 0);
     if (Number(result.changes) === 1) {
       this.invalidateMemoryVisibilityCache();
       return true;
     }
     const row = this.db.prepare('SELECT * FROM origin_claims WHERE origin_item_id = ?').get(originItemId) as {
-      thread_id: string; turn_id: string; source_date: string; content_hash: string;
+      thread_id: string; turn_id: string; source_date: string; content_hash: string; source: MemoryEvidenceSource; has_reader_text: number;
     };
     return row.thread_id === threadId && row.turn_id === turnId
-      && row.source_date === sourceDate && row.content_hash === contentHash;
+      && row.source_date === sourceDate && row.content_hash === contentHash
+      && row.source === source.source && row.has_reader_text === Number(source.hasReaderText);
+  }
+
+  originSource(originItemId: ThreadItemId): MemoryOriginSource | null {
+    const row = this.db.prepare('SELECT source, has_reader_text FROM origin_claims WHERE origin_item_id = ?').get(originItemId) as
+      { source: MemoryEvidenceSource; has_reader_text: number } | undefined;
+    return row ? { originItemId, source: row.source, hasReaderText: row.has_reader_text === 1 } : null;
+  }
+
+  subjectHasCurrentSupport(subject: MemorySubject, originItemIds: readonly ThreadItemId[]): boolean {
+    return sourcesSupportSubject(subject, originItemIds.map((id) => this.originSource(id)));
+  }
+
+  requireSubjectSupport(subject: MemorySubject, originItemIds: readonly ThreadItemId[]): void {
+    if (!this.subjectHasCurrentSupport(subject, originItemIds)) {
+      throw new Error(subject === 'user' ? 'Personal Memory requires current reader-authored text' : 'Memory has no current evidence');
+    }
   }
 
   originSourceDate(originItemId: ThreadItemId): string | null {
@@ -483,6 +509,7 @@ export class MemoryControlStore {
       WHERE generated.user_authoritative = 0
       GROUP BY generated.node_id, generated.generated_at
       HAVING COUNT(origin.origin_item_id) = 0
+        OR (generated.subject = 'user' AND SUM(CASE WHEN origin.source = 'reader' AND origin.has_reader_text = 1 THEN 1 ELSE 0 END) = 0)
       ORDER BY generated.generated_at, generated.node_id
     `).all() as Array<{ node_id: string }>).map((row) => row.node_id));
     return this.unsupportedGeneratedNodeIdsCache;
@@ -559,25 +586,31 @@ export class MemoryControlStore {
 
   finalizeStage1(input: MemoryStage1Finalization, now = Date.now()): void {
     this.transaction(() => {
-      this.db.prepare('DELETE FROM node_lineage WHERE thread_id = ?').run(input.threadId);
+      if (this.publication(input.publicationId)?.status === 'finalized') return;
+      this.acceptCoverage(input.threadId, input.coverage, now);
       this.writeGeneratedNodesAndLineage(input.nodes, input.lineage);
       this.db.prepare(`
-        INSERT INTO source_records(thread_id, source_version, status, polluted, updated_at)
-        VALUES (?, ?, 'succeeded', 0, ?)
+        INSERT INTO source_records(thread_id, source_version, status, updated_at)
+        VALUES (?, ?, 'succeeded', ?)
         ON CONFLICT(thread_id) DO UPDATE SET
           source_version = excluded.source_version,
           status = excluded.status,
-          polluted = 0,
           updated_at = excluded.updated_at
       `).run(input.threadId, input.sourceVersion, now);
       this.finalizePublicationInsideTransaction(input.publicationId);
-      this.enqueueJob('phase2:global', 'phase2', { reason: 'stage1' }, now);
+      this.enqueueJob('phase2:global', 'phase2', { task: 'consolidate', reason: 'stage1' }, now);
+      for (const sourceDate of new Set(input.nodes.map((node) => node.sourceDate))) {
+        const dayEnd = dateFromIsoLocalDate(sourceDate);
+        dayEnd.setDate(dayEnd.getDate() + 1);
+        this.scheduleJob(`phase2:day-close:${sourceDate}`, 'phase2', { task: 'nameDay', sourceDate }, Math.max(now, dayEnd.getTime()), now);
+      }
       this.recordSuccess(now);
     });
   }
 
   finalizeStage2(input: MemoryStage2Finalization, now = Date.now()): void {
     this.transaction(() => {
+      if (this.publication(input.publicationId)?.status === 'finalized') return;
       for (const nodeId of input.deletedNodeIds) {
         this.db.prepare('DELETE FROM generated_nodes WHERE node_id = ?').run(nodeId);
       }
@@ -598,11 +631,12 @@ export class MemoryControlStore {
         this.db.prepare(`UPDATE rollback_invalidations SET status = 'reconciled' WHERE rollback_id = ?`).run(rollbackId);
         this.db.prepare('DELETE FROM dirty_jobs WHERE key = ?').run(`rollback:${rollbackId}`);
       }
-      if (input.needsFollowUp || this.activeRollbacks().some((rollback) => rollback.status === 'committed')) {
-        this.enqueueJob(
+      if (input.followUpAt !== null) {
+        this.scheduleJob(
           `phase2:rollback-continuation:${input.publicationId}`,
           'phase2',
-          { reason: 'rollback-continuation' },
+          { task: 'consolidate', reason: 'rollback-continuation' },
+          input.followUpAt,
           now,
         );
       }
@@ -628,6 +662,7 @@ export class MemoryControlStore {
       (this.db.prepare('SELECT * FROM generated_nodes ORDER BY generated_at, node_id').all() as GeneratedNodeRow[])
         .map((row) => Object.freeze({
           nodeId: row.node_id,
+          subject: row.subject,
           category: row.category,
           sourceDate: row.source_date,
           fingerprint: row.fingerprint,
@@ -661,6 +696,7 @@ export class MemoryControlStore {
       ORDER BY generated_nodes.source_date, generated_nodes.category, generated_nodes.node_id
     `).all(threadId) as GeneratedNodeRow[]).map((row) => ({
       nodeId: row.node_id,
+      subject: row.subject,
       category: row.category,
       sourceDate: row.source_date,
       fingerprint: row.fingerprint,
@@ -802,7 +838,7 @@ export class MemoryControlStore {
     `).all() as RollbackRow[]).map(rollbackFromRow);
   }
 
-  enqueueJob(key: string, kind: string, payload: unknown, now = Date.now()): void {
+  enqueueJob<K extends MemoryJobKind>(key: string, kind: K, payload: MemoryJobPayloads[K], now = Date.now()): void {
     this.db.prepare(`
       INSERT INTO dirty_jobs(key, kind, payload_json, attempt, available_at, updated_at)
       VALUES (?, ?, ?, 0, ?, ?)
@@ -815,7 +851,7 @@ export class MemoryControlStore {
     this.changed();
   }
 
-  scheduleJob(key: string, kind: string, payload: unknown, availableAt: number, now = Date.now()): void {
+  scheduleJob<K extends MemoryJobKind>(key: string, kind: K, payload: MemoryJobPayloads[K], availableAt: number, now = Date.now()): void {
     this.db.prepare(`
       INSERT INTO dirty_jobs(key, kind, payload_json, attempt, available_at, updated_at)
       VALUES (?, ?, ?, 0, ?, ?)
@@ -833,7 +869,7 @@ export class MemoryControlStore {
       SELECT key, kind, payload_json, attempt, available_at
       FROM dirty_jobs WHERE available_at <= ? AND (? = 0 OR kind = 'reset') ORDER BY available_at, updated_at, key LIMIT 1
     `).get(now, resetOnly ? 1 : 0) as JobRow | undefined;
-    return row ? { key: row.key, kind: row.kind, payload: JSON.parse(row.payload_json), attempt: row.attempt } : null;
+    return row ? decodeMemoryJob(row) : null;
   }
 
   nextJobAvailableAt(resetOnly = false): number | null {
@@ -963,9 +999,10 @@ export class MemoryControlStore {
   ): void {
     for (const node of nodes) {
       this.db.prepare(`
-        INSERT INTO generated_nodes(node_id, category, source_date, fingerprint, user_authoritative, generated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO generated_nodes(node_id, category, source_date, fingerprint, user_authoritative, generated_at, subject)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(node_id) DO UPDATE SET
+          subject = CASE WHEN generated_nodes.subject = 'user' THEN 'user' ELSE excluded.subject END,
           category = excluded.category,
           source_date = excluded.source_date,
           fingerprint = excluded.fingerprint,
@@ -978,6 +1015,7 @@ export class MemoryControlStore {
         node.fingerprint,
         node.userAuthoritative ? 1 : 0,
         node.generatedAt,
+        node.subject,
       );
     }
     for (const edge of lineage) {

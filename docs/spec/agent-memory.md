@@ -9,15 +9,17 @@ crash recovery.
 
 ## Daily Timeline Model
 
-The host owns five deterministic protected tag definitions:
+The host owns five deterministic protected tag definitions. The `mem-` prefix
+identifies their system ownership and leaves ordinary names such as `memory`,
+`episode`, `belief`, `question`, and `guidance` available for user tags:
 
 | Category | Tag | Definition ID |
 | --- | --- | --- |
-| Memory day | `#d-memory` | `tag:d-memory` |
-| Episode | `#d-episode` | `tag:d-episode` |
-| Belief | `#d-belief` | `tag:d-belief` |
-| Question | `#d-question` | `tag:d-question` |
-| Guidance | `#d-guidance` | `tag:d-guidance` |
+| Memory day | `#mem-day` | `tag:mem-day` |
+| Episode | `#mem-episode` | `tag:mem-episode` |
+| Belief | `#mem-belief` | `tag:mem-belief` |
+| Question | `#mem-question` | `tag:mem-question` |
+| Guidance | `#mem-guidance` | `tag:mem-guidance` |
 
 Their identities, names, definition type, lock state, and Schema ownership are
 host-controlled. Public commands may apply or remove these tags from content
@@ -32,22 +34,30 @@ A canonical generated graph has this shape:
 ```text
 Daily Notes
   YYYY-MM-DD  #day
-    generated daily headline  #d-memory
-      episode                  #d-episode
-        stable fact            #d-belief
-        unresolved question    #d-question
-        future handling        #d-guidance
+    Memory                    #mem-day
+      optional episode        #mem-episode
+        stable fact            #mem-belief
+      unresolved question      #mem-question
 ```
 
 Generation reuses the existing canonical container for a source date and creates
-at most one generated container for that date. Category Nodes are descendants of
-an episode and remain ordinary RichText Nodes with ordinary tags, references,
-navigation, editing, move, and Trash behavior. The source date is frozen from
+at most one container for that date, and it is created only when at least one
+useful record exists. It initially displays `Memory`. After that local source day
+has ended and its eligible evidence has finished processing, consolidation names
+it with a short, vivid, memorable title grounded in the day's records, in their
+language and within 160 characters. A concrete image or light wordplay may help;
+it must not invent events or force humor. The final title is navigation, not an
+extra episode or independent evidence. New containers use the normal initially
+collapsed Outline state; later publication does not change the user's fold state,
+editing selection, focus, or scroll anchor. An episode is optional;
+category Nodes may be direct children of the container or descendants of an episode.
+All remain ordinary RichText Nodes with ordinary tags, references, navigation,
+editing, move, and Trash behavior. The source date is frozen from
 the origin Turn's local calendar date when evidence is first claimed; later
 timezone changes do not move it.
 
 A reserved-tag placement outside a source-date Daily Node and canonical
-`#d-memory` container is ordinary non-Memory content. Memory status reports the
+`#mem-day` container is ordinary non-Memory content. Memory status reports the
 current stray-node count without exposing Node IDs; the pipeline does not
 ingest, relocate, or delete that content. A canonical container is the Reset
 ownership boundary, including malformed or untagged descendants that the user
@@ -74,8 +84,8 @@ makes activity admitted during a disabled interval eligible.
 Only persistent root user Turns admitted while both modes are enabled may use or
 generate implicit Memory. Automation-origin Turns inside an otherwise ordinary
 Thread, Agent child Threads, inherited fork Items, internal Memory Threads,
-ephemeral Threads, and external-context-polluted Threads are excluded by their
-canonical provenance. One ultimate `originItemId` can belong to only one
+and ephemeral Threads are excluded by their canonical provenance. Web/MCP
+activity does not exclude an otherwise eligible Thread or revoke prior support. One ultimate `originItemId` can belong to only one
 extraction source.
 
 Fresh Agent context excludes the Memory stable-prompt block and routing context.
@@ -106,17 +116,46 @@ startup, within a ten-day age window and after six hours of idle time. Later
 eligible idle transitions enqueue the same durable per-Thread job rather than a
 timer per Thread.
 
-Phase 1 builds a deterministic source version from every ordered, locally
-originated, eligible Item and canonical content hash. The version covers the
-complete eligible stream even when model input is limited to the latest 500
-Items and 120,000 characters, so a long Thread never stops becoming dirty. It
-includes user messages, final agent messages, completed tool evidence,
-verification, corrections, stable
-preferences, decisions, workflow facts, and reusable failure prevention. It
-excludes reasoning, injected instructions, transient status, copied fork
-prefixes, Automation Turns, disabled/reset-excluded Turns, and unbounded document
-scans. Web or other external context marks the Thread polluted and withdraws its
-generated support.
+Phase 1 fingerprints the complete ordered eligible stream, then reads the oldest
+unprocessed complete Items in a batch of at most 500 Items, 120,000 evidence-text
+characters, and fourteen source dates. The character count uses the exact text
+sent to the model: all original message-part text, including leading/trailing
+whitespace and extracted attachment text, or the content string for other Items.
+The trimmed comparison string never stands in for the transmitted parts. Accepted origin coverage is private control state,
+transactionally committed with source/lineage finalization. Failed batches advance
+nothing. Oversized individual Items remain pending with an explicit error rather
+than admitting a misleading prefix. A distinct durable continuation job handles
+the remaining batch, including after receipt recovery; no in-memory cursor owns
+progress. The existing six-hour idle policy is unchanged.
+
+Evidence includes local user messages, final Agent messages and completed tool
+outcomes. Reasoning, injected instructions, copied fork prefixes, Automation Turns
+and disabled/reset-excluded Turns remain excluded. Mixed-source conversations
+remain eligible, including reader decisions and corrections made before or after
+web/MCP activity. The Host labels each evidence Item as reader, host, assistant,
+tool, web, or mcp. User-shaped messages also retain the boundaries between text,
+attachments and Node/Thread references; Host/feature-authored messages are not
+labelled as the reader. Source kind and part boundaries participate in the
+canonical evidence hash. Web search evidence retains the query, returned URLs,
+titles and snippets; MCP evidence retains the actual server/tool, arguments,
+result and error. Their content is source data, never worker instructions.
+
+The model judges future value, meaning and attribution. Researched conclusions
+or useful external facts may be retained with their source, applicability,
+version/date and uncertainty; bulk search-result copies have no automatic value.
+An outside assertion is not silently promoted to independently verified truth.
+Tool arguments describe the request, while results describe observed outcomes.
+The former whole-Thread exclusion flag and its support-deletion path are retired.
+
+The model compares new evidence with at most eighty current canonical records
+and 20,000 characters of comparison text. The comparison is not new evidence.
+Candidates must name a concrete future use and novel signal, a necessary
+correction, or additional independent support for retained content, with narrow
+applicability and sufficient context. One-off requests,
+routine completion, generic advice, silence, and repeated Agent prose do not
+establish useful durable knowledge. Existing project documents, configuration,
+and Skills retain their own facts. The Node-only unit still allows supported
+stable preferences; direct USER.md routing belongs to the profile unit.
 
 Completed tool evidence keeps enough bounded attribution to interpret an outcome:
 command evidence includes the canonical tool label, command, host `cwd`, output, and
@@ -131,17 +170,52 @@ and Memory disabled. Hidden internal Threads do not publish renderer notificatio
 or invoke ordinary extension admission, context, Item, lifecycle, or tool hooks;
 the model receives the exact Memory system prompt without Skill preparation or
 the general interactive-agent prompt. Strict bounded JSON produces zero or more
-source-date episode groups. Every headline, episode, belief, question, and
-guidance statement carries a non-empty, exact set of supplied `originItemId`
+source-date record groups. Extraction creates new day containers as `Memory`
+and preserves existing titles; it does not generate titles. Episodes are optional; every emitted episode, belief,
+question, and guidance statement carries a non-empty, exact set of supplied `originItemId`
 values from that source date; lineage is recorded per statement rather than per
 day. Known credential formats and high-confidence secret assignments are redacted before
 publication; ambiguous prose passes unchanged rather than blocking Memory publication.
-A no-signal result withdraws that source's old generated lineage and schedules
-global cleanup.
+Each statement declares whether its subject is the user or contextual knowledge
+and includes bounded private future-use and novelty rationales. Subject is
+semantic routing, never authorship or permission authority. The Host requires a
+personal claim to cite reader-authored text, so web/MCP results, attachments,
+references, Host notifications and assistant prose alone cannot establish a user
+preference. The model must still distinguish the reader's own statement from a
+quotation or a transient instruction; a source label is not semantic proof.
+Origin kind and the presence of reader-authored text are immutable private claim
+metadata. Each generated Node retains its subject in the control store and
+publication journal. These fields survive restart and are supplied to the
+consolidation model with its selected Nodes. The Host does not treat model
+self-assessment as a quality guarantee. All cited
+origins and source dates are validated before deduplication/redaction. Repeated
+Agent prose alone cannot support a new statement. A no-signal or empty-date
+result accepts its exact coverage without creating a day/container or withdrawing
+any previously accepted support. Unknown source availability never acknowledges
+an unread batch.
+
+No new wording is required for new support: when the current evidence independently
+confirms an existing statement, extraction emits its exact retained text and
+category with the new supporting Item IDs and their source date. A no-output
+result is reserved for no useful signal or repetition without independent
+support. Recalled Memory, copied assistant prose, or a different Item ID alone
+does not establish independent support.
+
+Exact repeated canonical statements are reused, across Threads and source dates,
+with independent support added only to untouched generated records. Identity
+comparison preserves case and normalizes Unicode and whitespace. User edits and
+previous independent lineage survive. New records keep their own source dates;
+a reused historical episode never becomes a parent for newly dated facts.
+Semantic corrections and duplicate reconciliation use the existing consolidation
+owner rather than whole-Thread replacement. Ordinary manual deletion cannot
+replay already accepted Items; Reset and rollback clear associated coverage with
+the existing origin ownership boundaries.
 
 Under the Memory write gate, Stage 1 rechecks modes, exclusions, rollback state,
-source version, and pollution, then rebuilds every target from the current graph.
-It prepares canonical `node:<uuid>` IDs, exact lineage, feature generation,
+source version and exact source attribution, then rebuilds every target from the
+current graph.
+It prepares canonical `node:<uuid>` IDs, exact lineage and coverage, private
+candidate rationales, feature generation,
 reset epoch, ChangeSet digest, target fingerprints and authority states, and a
 unique publication generation in `memories.sqlite` without releasing the gate.
 It then applies one ordinary Runtime ChangeSet with that publication ID as its
@@ -158,37 +232,96 @@ user-edited Nodes always remain input. Untouched generated Nodes rank by citatio
 usage and recency and may age out of selection after ninety unused days, while
 unsupported Nodes remain eligible for cleanup.
 
-The internal model receives an isolated bounded graph snapshot and returns an
-exact change set. It may keep or update generated headlines and categories,
+The internal model receives an isolated bounded graph snapshot, including each
+Node's retained subject and current origin/source metadata, and returns an exact
+change set. Every create/update declares its subject. Personal creates and
+updates require current reader-text evidence at preparation and again at document
+admission. Existing personal Nodes cannot be downgraded to contextual knowledge
+to evade this rule. Day titles remain contextual navigation. The same rule
+covers extraction-time reuse/promotion of existing records; subject changes are
+part of the publication precondition. A generated personal Node with no current
+reader support is unsupported even if external origins remain, and cannot supply
+derived evidence to another proposal. Model judgment still owns whether the
+meaning of a new statement is personal or contextual.
+
+The model may keep or update generated episodes and categories,
 delete a complete generated subtree, merge duplicate generated episodes by
 updating one and deleting the other complete subtree, or create an episode or
-category beneath an existing or newly created canonical parent. Every created
+category beneath a container or episode. For a generated day container, a title
+update is admitted only when all of its canonical records are selected. The model
+sees that exact same-day source list; it cannot cite another day, the container
+itself, or a partial newest batch to rename it. Day titles retain the union of
+current support from the complete source-day record set. The full subtree
+fingerprint is checked after model work and again at document admission, so
+concurrent child additions, removal or edits invalidate a stale title proposal.
+A manually edited title is authoritative and cannot be overwritten.
+
+Accepted extraction also journals a day-close job for the next local midnight
+(or immediately for delayed extraction of a past day). This uses the existing
+Phase 2 worker. At execution, the job waits until every eligible source Turn for
+that day has completed and all its Items have accepted extraction coverage.
+Quarantined or unreadable sources prevent a false completion claim. Disabled or
+excluded evidence remains ineligible. A still-pending day is rescheduled without
+reporting a learning error; resume/restart uses the durable job. A completed day
+is selected as a whole within the existing 240-Node bound; an oversized day keeps
+its pending job and placeholder instead of being named from a partial view.
+Already named or manually titled containers need no additional naming call. Later
+eligible additions can still be reconciled by ordinary consolidation, with the
+same completeness and manual-edit gates. Every created
 or updated Node names selected source Nodes with current terminal evidence. The
 host allocates real IDs, replaces the affected Node's complete lineage, and
 validates hierarchy, selection, authority, descendants, and evidence before
 producing the Runtime ChangeSet.
 
-Unsupported generated Nodes rank ahead of ordinary consolidation input and are
-cleaned in bounded deepest-first batches. A generated ancestor inherits current
-descendant evidence when possible. If an ordinary or user-authoritative
-descendant makes deletion structurally impossible, the ancestor relinquishes
-generated ownership and becomes authoritative rather than keeping rollback
-suppression open forever. Each partial batch journals a distinct follow-up job.
+Consolidation has three owners: `ConsolidationSnapshot` detaches the graph and
+control evidence, `ConsolidationPlan` computes changes without live reads or
+writes, and `Phase2` coordinates model work, admission and durable publication.
+The worker reads one graph snapshot before the model, one under the Memory write
+gate after the model, and one at document admission. Each boundary collects
+source readiness once for all dates, using the same eligible-source collection
+as extraction. Prepared/committed rollbacks prevent day naming without scanning
+source history. Naming completion is evaluated from the resulting plan, including
+multiple containers on one date; it does not require another live scan.
 
-Deletion fails closed if any descendant is unselected, ordinary, or
-user-authoritative. User-authoritative Nodes cannot be updated or deleted by the
-model. Create operations cannot target a deleted or non-canonical parent.
+Unsupported generated Nodes and their descendants bypass unused-record aging.
+Selection reserves bounded space for an unsupported ancestor together with the
+descendants that can resolve it; many unsupported parents cannot crowd out all
+retained children. Cleanup processes selected Nodes deepest first against the
+planned final structure, including model creates and deletes. A generated
+ancestor inherits current retained descendant evidence when possible. If an
+ordinary or user-authoritative descendant makes deletion impossible, the
+ancestor relinquishes generated ownership and becomes authoritative.
 
-Phase 2 acquires the Memory write gate before preparing publication, then
-rechecks every structural input fingerprint, the complete identity of every
-deletion subtree including ordinary descendants, mode generation, reset epoch,
-and the exact ordered rollback set. It writes a durable journal containing
-canonical Changes, output fingerprints, deletion-subtree fingerprints, new
-generated records, complete lineage, and rollback IDs without releasing the
-gate. Runtime idempotency settlement is the matching receipt; finalization uses
-only journaled state, never mutable live Nodes. A rollback is reconciled only
-after every remaining
-canonical generated Node has current evidence or is deleted.
+An unsupported personal episode cannot inherit external-only support. Its
+selected, independently supported generated leaves move directly to the same
+day container, deepest first, while unprocessed children keep the episode alive.
+The episode is purged only after all retained descendants have left. This works
+across many batches and nested subtrees, without requiring a complete subtree
+inside one model input. Subjects, current lineage and new parent fingerprints
+are journaled; moving content invents no user authorship and adds no model-facing
+move operation. Reset subtree scope is unchanged.
+
+Deletion fails closed if the resulting structure still retains any descendant.
+User-authoritative Nodes cannot be updated or deleted by the model. Create and
+move operations cannot target a deleted or non-canonical parent.
+
+Selected inputs are rechecked after model work. The plan records every structural
+and evidence dependency it reads, including complete deletion subtrees, inherited
+lineage and destination parents. At document admission, it rechecks these detached
+fingerprints, mode generation, reset epoch and the exact rollback records, as well
+as title readiness and complete title subtrees. New independent support invalidates
+a stale replacement instead of being overwritten. Runtime idempotency settlement
+is the matching receipt; finalization uses only journaled state.
+
+A partial cleanup that advances publishes a distinct continuation with an explicit
+next-run time. No-progress batches defer for one minute without publishing an
+empty marker or immediately repeating model work. If other model changes publish
+without advancing cleanup, their journal preserves the deferred continuation
+time. Recovery finalizes that exact schedule once. A rollback is reconciled only
+after every remaining canonical generated Node has current evidence, has been
+released to user authority, or is deleted. Private job payloads distinguish
+consolidation from day naming explicitly; the pipeline consumes completed/deferred
+outcomes instead of inferring work from reason strings or boolean sentinels.
 
 ## Retrieval And Outline CLI
 
@@ -277,7 +410,7 @@ Under the host admission barrier and Memory write gate it advances the reset epo
 retains every active Turn ID as an indivisible exclusion. Phase 1 accepts only
 Turns whose immutable admission snapshot carries the current epoch, so rollback
 or replacement cannot move an Item across a positional boundary. One destructive
-Runtime ChangeSet purges the snapshotted canonical `#d-memory` containers and
+Runtime ChangeSet purges the snapshotted canonical `#mem-day` containers and
 every descendant inside them, including untagged ordinary notes. Its idempotency
 key is the Reset receipt. Notes outside those containers and stray tagged
 subtrees survive. SQLite finalization clears generated content indexes, lineage,
@@ -331,7 +464,7 @@ finalization.
 
 Settings exposes the global privacy switch, live worker freshness/error state,
 Open Memory, and confirmed Reset. Open Memory reuses the canonical saved tag
-search for `#d-memory`, so selecting a result opens the real Daily Notes context.
+search for `#mem-day`, so selecting a result opens the real Daily Notes context.
 The Thread Details dialog exposes the per-Thread switch only for persistent root
 user Threads.
 
@@ -372,3 +505,14 @@ the claims they support. Outline shell calls remain inspectable in the process
 and Trajectory; there is no separate Memory disclosure, card view, artifact
 path, internal Thread, SQLite row, job, fingerprint, or publication state in the
 transcript.
+
+## Node Quality Validation
+
+Deterministic tests cover exact evidence attribution, incremental coverage,
+no-output batches, source dates, duplicate reuse, author edits, invalidation and
+receipt recovery. Electron smoke uses the real publication builder and Outline
+transport to verify default folds, retained user folds, focus, selection and
+scroll in light and dark themes. These checks establish ownership and publication
+behavior, not a measured improvement in model judgment, token use or cost. The
+[frozen bilingual retention corpus](../../tests/fixtures/memoryRetentionCorpus.json) is a comparison fixture for later equal-model
+history-only/current/routed evaluation; no quality or cost gain is claimed here.

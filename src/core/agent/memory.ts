@@ -50,7 +50,24 @@ export interface MemoryView {
   readonly thread: ThreadMemoryStatus | null;
 }
 
+export type MemorySubject = 'user' | 'context';
+
+export interface MemoryOriginSource {
+  readonly originItemId: ThreadItemId;
+  readonly source: MemoryEvidenceSource;
+  readonly hasReaderText: boolean;
+}
+
+export type MemoryEvidenceSource = 'reader' | 'host' | 'assistant' | 'tool' | 'web' | 'mcp';
+
+export interface MemoryEvidencePart {
+  readonly type: 'text' | 'attachment' | 'nodeReference' | 'threadReference';
+  readonly text: string;
+}
+
 export interface MemoryStage1EvidenceItem {
+  readonly source: MemoryEvidenceSource;
+  readonly parts?: readonly MemoryEvidencePart[];
   readonly threadId: ThreadId;
   readonly turnId: TurnId;
   readonly itemId: ThreadItemId;
@@ -62,8 +79,11 @@ export interface MemoryStage1EvidenceItem {
 }
 
 export interface MemoryStage1Statement {
+  /** Semantic routing, never permission or authorship authority. */
+  readonly subject: MemorySubject;
   readonly text: string;
   readonly originItemIds: readonly ThreadItemId[];
+  readonly rationale: { readonly futureUse: string; readonly novelty: string };
 }
 
 export interface MemoryStage1CategoryOutput {
@@ -74,8 +94,7 @@ export interface MemoryStage1CategoryOutput {
 
 export interface MemoryStage1DateOutput extends MemoryStage1CategoryOutput {
   readonly sourceDate: string;
-  readonly headline: MemoryStage1Statement;
-  readonly episode: MemoryStage1Statement;
+  readonly episode: MemoryStage1Statement | null;
 }
 
 export interface MemoryStage1Output {
@@ -83,6 +102,8 @@ export interface MemoryStage1Output {
 }
 
 export interface MemoryConsolidationNode {
+  readonly subject: MemorySubject | null;
+  readonly supportingSources: readonly MemoryOriginSource[];
   readonly nodeId: string;
   readonly parentId: string | null;
   readonly category: MemoryCategory;
@@ -91,6 +112,9 @@ export interface MemoryConsolidationNode {
   readonly generated: boolean;
   readonly fingerprint: string;
   readonly supportingOriginItemIds: readonly ThreadItemId[];
+  /** Present only when every canonical record in the day is selected. */
+  readonly titleSourceNodeIds?: readonly string[];
+  readonly titleSubtreeFingerprint?: string;
 }
 
 export interface MemoryConsolidationKeepChange {
@@ -99,6 +123,7 @@ export interface MemoryConsolidationKeepChange {
 }
 
 export interface MemoryConsolidationUpdateChange {
+  readonly subject: MemorySubject;
   readonly nodeId: string;
   readonly action: 'update';
   readonly text: string;
@@ -111,6 +136,7 @@ export interface MemoryConsolidationDeleteChange {
 }
 
 export interface MemoryConsolidationCreateChange {
+  readonly subject: MemorySubject;
   readonly temporaryId: string;
   readonly action: 'create';
   readonly parentId: string;
@@ -152,17 +178,13 @@ export function decodeThreadMemoryMode(value: unknown): ThreadMemoryMode {
 export function decodeMemoryStage1Output(value: unknown): MemoryStage1Output {
   const record = exactRecord(value, ['dates'], 'Memory Stage 1 output');
   const dates = array(record.dates, 'Memory Stage 1 dates').map((entry, index) => {
-    const item = exactRecord(
-      entry,
-      ['sourceDate', 'headline', 'episode', 'beliefs', 'questions', 'guidance'],
-      `Memory Stage 1 dates[${index}]`,
-    );
+    const item = recordValue(entry, `Memory Stage 1 dates[${index}]`);
+    assertKnownKeys(item, ['sourceDate', 'episode', 'beliefs', 'questions', 'guidance'], `Memory Stage 1 dates[${index}]`);
     const sourceDate = string(item.sourceDate, 'sourceDate');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(sourceDate)) throw new Error(`Invalid Memory source date: ${sourceDate}`);
     return Object.freeze({
       sourceDate,
-      headline: stage1Statement(item.headline, 'headline', 160),
-      episode: stage1Statement(item.episode, 'episode', 2_000),
+      episode: optionalStage1Statement(item.episode, 'episode', 2_000),
       beliefs: stage1StatementList(item.beliefs, 'beliefs', 12, 800),
       questions: stage1StatementList(item.questions, 'questions', 8, 800),
       guidance: stage1StatementList(item.guidance, 'guidance', 12, 800),
@@ -176,15 +198,25 @@ export function decodeMemoryStage1Output(value: unknown): MemoryStage1Output {
 }
 
 function stage1Statement(value: unknown, field: string, charLimit: number): MemoryStage1Statement {
-  const record = exactRecord(value, ['text', 'originItemIds'], `Memory Stage 1 ${field}`);
+  const record = exactRecord(value, ['text', 'subject', 'originItemIds', 'rationale'], `Memory Stage 1 ${field}`);
   const originItemIds = stringList(record.originItemIds, `${field}.originItemIds`, 64, 200);
   if (originItemIds.length === 0 || new Set(originItemIds).size !== originItemIds.length) {
     throw new Error(`${field}.originItemIds must contain distinct evidence IDs`);
   }
+  const rationale = exactRecord(record.rationale, ['futureUse', 'novelty'], `${field}.rationale`);
   return Object.freeze({
+    subject: decodeMemorySubject(record.subject),
+    rationale: Object.freeze({
+      futureUse: boundedString(rationale.futureUse, 'rationale.futureUse', 600),
+      novelty: boundedString(rationale.novelty, 'rationale.novelty', 600),
+    }),
     text: boundedString(record.text, `${field}.text`, charLimit),
     originItemIds: originItemIds as readonly ThreadItemId[],
   });
+}
+
+function optionalStage1Statement(value: unknown, field: string, charLimit: number): MemoryStage1Statement | null {
+  return value === null || value === undefined ? null : stage1Statement(value, field, charLimit);
 }
 
 function stage1StatementList(
@@ -209,7 +241,7 @@ export function decodeMemoryConsolidationOutput(value: unknown): MemoryConsolida
     if (action === 'create') {
       assertExactKeys(
         item,
-        ['temporaryId', 'action', 'parentId', 'category', 'text', 'sourceNodeIds'],
+        ['temporaryId', 'action', 'parentId', 'category', 'text', 'subject', 'sourceNodeIds'],
         `Memory consolidation changes[${index}]`,
       );
       const temporaryId = string(item.temporaryId, 'temporaryId');
@@ -226,12 +258,13 @@ export function decodeMemoryConsolidationOutput(value: unknown): MemoryConsolida
         action,
         parentId: string(item.parentId, 'parentId'),
         category,
+        subject: decodeMemorySubject(item.subject),
         text: boundedString(item.text, 'text', 2_000),
         sourceNodeIds,
       });
     }
     const allowed = action === 'update'
-      ? ['nodeId', 'action', 'text', 'sourceNodeIds']
+      ? ['nodeId', 'action', 'text', 'subject', 'sourceNodeIds']
       : ['nodeId', 'action'];
     assertExactKeys(item, allowed, `Memory consolidation changes[${index}]`);
     const nodeId = string(item.nodeId, 'nodeId');
@@ -240,6 +273,7 @@ export function decodeMemoryConsolidationOutput(value: unknown): MemoryConsolida
       return Object.freeze({
         nodeId,
         action,
+        subject: decodeMemorySubject(item.subject),
         text: boundedString(item.text, 'text', 2_000),
         sourceNodeIds,
       });
@@ -304,4 +338,19 @@ function assertExactKeys(record: Record<string, unknown>, keys: readonly string[
   if (unknown) throw new Error(`${field} contains unknown field: ${unknown}`);
   const missing = keys.find((key) => !(key in record));
   if (missing) throw new Error(`${field} is missing field: ${missing}`);
+}
+
+function assertKnownKeys(record: Record<string, unknown>, keys: readonly string[], field: string): void {
+  const allowed = new Set(keys);
+  const unknown = Object.keys(record).find((key) => !allowed.has(key));
+  if (unknown) throw new Error(`${field} contains unknown field: ${unknown}`);
+}
+
+export function decodeMemorySubject(value: unknown): MemorySubject {
+  if (value !== 'user' && value !== 'context') throw new Error('Memory subject must be user or context');
+  return value;
+}
+
+export function memoryEvidenceHasReaderText(item: MemoryStage1EvidenceItem): boolean {
+  return item.source === 'reader' && Boolean(item.parts?.some((part) => part.type === 'text' && part.text.trim()));
 }
