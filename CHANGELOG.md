@@ -733,6 +733,14 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Internal
 
+- **Execution advice refreshed after Project/folder delivery** - the board
+  distinguishes shipped #669/#672/#673/#674 behavior from the sole open design
+  claim, #675. It recommends image/evidence correctness repairs before their
+  selected consumers, keeps Memory Node quality independently eligible, records
+  the stale work-folder link and Unit B acceptance ownership to reconcile at the
+  design gate, and retains the source CLI cleanup failure as a bounded reliability
+  tail. No pending design was merged, product choice ratified, or runtime changed.
+
 - **Post-record execution advice clarified** - the board recommends question
   recovery and independent Memory Node quality as the next complete claims, with
   background Task policy following the shared lifecycle changes. Office and

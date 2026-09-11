@@ -13,15 +13,25 @@ starting or integrating work; the audit below is a dated snapshot, not a lock.
 
 ## In Flight
 
-Integration refresh: 2026-09-11, main `ab3c1440`. PR #674 is merged after
-review of `16c80ab4`; the cross-conversation folder authorization finding is
-resolved. Its design is folded into current specs and archived, leaving 10
-active designs. PR #675 is an open design claim for Agent image evidence and
-service readiness repairs; it is not yet an integrated board plan. The PM
-requested merge with the source CLI cleanup failure recorded in the PR; remote
-E2E samples were still pending. Scheduling consumes the delivered Project/folder,
-Task responsibility, structured input and published record contracts. This merge
-does not complete the scheduling redesign.
+Status refresh: 2026-09-11, main `9b4ccd65`. The published record, question,
+Task-continuation and Project/folder features are integrated in #669/#672/#673/#674;
+their plans are archived, leaving 10 active designs on main. The only open claim
+is [PR #675](https://github.com/relixiaobo/lin-outliner/pull/675), a design-only
+change at `38e82f57`, not an implementation claim or an integrated plan. No open
+runtime implementation PR was visible at this refresh; that does not establish
+whether an unclaimed dev branch has begun work.
+
+#674's cross-conversation folder authorization finding is resolved. Its accepted
+merge retains a source CLI fixture-cleanup failure (`EBADF`) as a separate tail;
+at this status query, four final-head E2E samples were queued and one was running.
+Do not describe these pending samples or the source CLI case as passing, or infer
+a production defect solely from the cleanup trace.
+
+The #675 correctness premises remain on main: `prepareBoundedAgentImageUnlocked`
+still uses `createThumbnailFromPath`, and `validateTaskReadiness` still rejects
+`check.cwd !== task.cwd`. #674 makes the directory owner available; it does not
+implement the later cross-directory handoff correction. Scheduling has its
+required existing owners but remains unimplemented.
 
 #665, #668, #670 and #671 integrated designs rather than their runtime features;
 #672 and #673 now deliver question recovery and Task continuation policy. Verified
@@ -33,8 +43,8 @@ Hosts (#598/#599/#603), generic Agent resources (#607), Tool Tasks/delegation/na
 launchers (#623/#628/#637), file-first Settings through #656, simplified workbench
 and isolation (#658/#660/#663), startup fault isolation (#664), unified
 session records (#669), bounded question recovery (#672), and Task responsibility
-(#673), and conversation work folders (#674). Consume the current specifications; these completed series do not reserve
-future work.
+(#673), and conversation work folders (#674). Consume the current specifications;
+these completed series do not reserve future work.
 
 The delegation closure audit confirms its three runtime units in #623/#628/#637
 and current Task/delegation specs. The original plan's no-runner-override and
@@ -86,11 +96,21 @@ not separately releasable scaffolding. The PM reviews at most two significant
 changes at once. Planning, fixtures and disjoint implementation can proceed in
 parallel; shared-owner mutations need an explicit integration order.
 
-After #674, **scheduled work** is next in the selected shared Agent lane,
-subject to its remaining local product decisions; **Node retention quality**
-remains eligible on Memory-local owners. Profile learning follows the selected
-Node-quality changes. Refresh open claims and exact context/configuration overlap
-before running it beside the Agent lane.
+Next integration preparation is **#675's correctness design**, followed by its
+two independent complete repair units when ratified. Prefer the service-evidence
+unit before scheduling on shared Task/Thread owners; image repair is independent
+and precedes Computer Pilot's final screenshot acceptance. Node retention quality
+remains eligible on Memory-local owners, especially while a repair unit awaits a
+product decision. Profile learning follows the selected Node-quality changes.
+Keep at most two significant changes awaiting PM review; preparing fixtures or
+an independent branch does not reserve shared owners.
+
+Before integrating #675, refresh its references against shipped #674: the clean
+textual merge still links to the removed top-level work-folder plan. Link to the
+current contract or archived design and update its open-claim wording. State that
+cross-directory handoff acceptance belongs to #675 Unit B, not #674's already
+completed gate. Unit B's OQ-1 still needs ratification; Unit A does not depend on
+it. This board does not merge the PR or ratify the product choice.
 
 ### Contract dependencies and selected order
 
@@ -113,8 +133,13 @@ Required contract consumption:
 
 Preferred shared Agent/Host integration lane:
   conversation-work-folders (#674, available)
+    ~> #675 Unit B: service evidence (pending design integration/ratification)
     ~> scheduled-work-redesign
     ~> targeted-thread-recovery
+
+Independent correctness lane:
+  #675 Unit A: image observations (pending design integration)
+    -> Computer Pilot final screenshot/provider acceptance
 
 Memory lane:
   Node retention quality ~> profile files/direct learning
@@ -126,7 +151,10 @@ Preview lane:
 ```
 
 Question recovery, Task responsibility and Project location/CLI are available.
-Scheduling consumes those final owners. Recovery is
+Scheduling consumes those final owners. Inserting Unit B before it is selected
+integration order for a current correctness defect, not a new prerequisite for
+all scheduling preparation. If the pending decision stalls, select other eligible
+work and explicitly reconcile whichever Task validator lands later. Recovery is
 preferably integrated after the selected new state owners so its deletion/rebuild
 closure is verified once against them. The records/profile prerequisites for
 recovery remain mandatory; scheduling and work folders are selected collision
@@ -141,13 +169,13 @@ extend these prerequisites.
 
 | Priority | Plan / PR claim | Status | Next action / eligibility |
 | --- | --- | --- | --- |
-| P2 | [scheduled-work-redesign](plans/scheduled-work-redesign.md) | `draft` | Record, input, Task and Project/folder contracts are available; OQ-1/OQ-2 remain. One complete UI/CLI feature consuming their final owners. |
+| P2 | [scheduled-work-redesign](plans/scheduled-work-redesign.md) | `draft` | Record, input, Task and Project/folder contracts are available; OQ-1/OQ-2 remain. Prefer after #675 Unit B on Task/Thread validation; preparation can proceed. One complete UI/CLI feature consuming final owners. |
 | P2 | [memory-agent-profile: Node retention quality](plans/memory-agent-profile.md#implementation-ownership-and-complete-delivery-units) | `draft` | Eligible now on Memory-local files; preserve the delivered source interface. Freeze quality/coverage fixtures before implementation. |
 | P2 | [memory-agent-profile: Profile files and direct learning](plans/memory-agent-profile.md#implementation-ownership-and-complete-delivery-units) | `draft` | Record prerequisite is available; follow selected Node-quality changes. Demonstrate edit/source/activation contracts before consumers; parallel with the Agent lane only where shared context/configuration owners remain settled. |
 | P2 | [targeted-thread-recovery](plans/targeted-thread-recovery.md) | `draft` | Record, input and Task prerequisites are available; final profile owners remain required. Prefer after other selected lifecycle consumers; verify exact question, Task, Project and scheduled-run closure through their actual owners. |
 | P2 | [file-preview-office](plans/file-preview-office.md) | `draft` | Prove no-Python DOCX/XLSX extraction and archive policy first; cut over Agent and preview in the same feature. Preserve #669's delivered file-tool contract; take the first preview-shell claim and ship all three readers together. |
 | P2 | [url-static-reader](plans/url-static-reader.md) | `draft` | Network/image-policy and existing Agent-mode fixtures can start now. Prefer after Office on preview shell/extraction wiring; preserve each caller's acquisition authority without a renderer fetch path. |
-| P3 | [computer-pilot-managed-skill](plans/computer-pilot-managed-skill.md) | `draft` | Prove both Skill and CLI acquisition plus packaged/TCC behavior. Refresh live Host/resource claims; use current file-backed admission and per-execution output ownership. |
+| P3 | [computer-pilot-managed-skill](plans/computer-pilot-managed-skill.md) | `draft` | Prove Skill/CLI acquisition and packaged/TCC behavior independently. Final screenshot/provider acceptance consumes #675 Unit A when integrated; use one normalizer, current file-backed admission and per-execution output ownership. |
 
 ### Decisions and implementation preparation
 
@@ -156,6 +184,7 @@ open question. Reuse existing PM decisions instead of requesting them again.
 
 | Scope | Decision / preparation still to resolve | Effect on execution |
 | --- | --- | --- |
+| #675 Unit B OQ-1 | Ratify Task/Item evidence association with independent admitted checks and Agent judgment of application readiness; remove cwd equality without changing owner, permission, liveness or receipt rules. | Gates this repair unit only. #674 is delivered; image repair and Memory Node quality do not wait for this decision. |
 | Scheduled work OQ-1/OQ-2 | Confirm local current-state catch-up/missed-once behavior and the task/result workspace with one primary work location. | Gates the scheduling feature; it is not a prerequisite for profile learning or targeted recovery. |
 | Profile core unit | Show direct edit, scoped correction, source removal, interrupted save and next-Turn activation examples. | Internal contract work before consumers in the same complete feature, not an extra proposal phase or mandatory approval inbox. |
 | Office / URL / Computer Pilot | Resolve parser/archive policy, shared remote-image policy, and reproducible CLI acquisition respectively. | Bounded technical preparation inside each feature; dependency/build ownership still requires coordination. |
@@ -188,6 +217,11 @@ open question. Reuse existing PM decisions instead of requesting them again.
   resource owners after its exact Host overlap is resolved. Settings WorkingText
   and the heading toggle have separate renderer entry points; they do not depend
   on completion of the Agent queue.
+- **Pending image/evidence repairs:** #675 Unit A owns common model-image
+  normalization, not UI-only thumbnails, Office parsing or URL acquisition.
+  Unit B owns readiness validation and development guidance, not a new health
+  registry, Task relationship or recovery schema. Targeted recovery preserves
+  immutable historical observations and current receipts through existing owners.
 
 ## Other Active Plans
 
@@ -246,7 +280,12 @@ into a blanket dependency for every PR.
 
 ### Reliability and maintenance tails
 
-- **Source CLI integration cleanup (#674):** the focused source CLI case fails with `EBADF` in `RolloutStore.closeOpenFile` during fixture cleanup on two gate runs; bundled CLI passes and the preceding PR head passes both cases. Diagnose the failure without treating the suite as green.
+- **Source CLI integration cleanup (#674, P2):** the focused source CLI case
+  fails with `EBADF` in `RolloutStore.closeOpenFile` during fixture cleanup on two
+  gate runs; bundled CLI passes and the preceding PR head passes both cases.
+  Diagnose the exact close/cleanup owner as a separate bounded reliability change;
+  coordinate any overlapping Thread/Rollout edits. Do not treat the case as green
+  or fold an unproven cause into #675's image/readiness repairs.
 
 - **delegation-graduation-evidence** (P3, `draft`) — preserve FR-9/AC-17 from
   the [archived runtime design](plans/archive/agent-delegation-runtime.md): freeze
