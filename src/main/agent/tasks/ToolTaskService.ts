@@ -674,7 +674,9 @@ export class ToolTaskService {
           TENON_TOOL_TASK_PROGRESS_FILE: paths.progress,
         },
         detached: process.platform !== 'win32',
-        stdio: prepared.privateControlInput ? ['ignore', 'ignore', 'ignore', 'pipe'] : 'ignore',
+        // The supervisor has no user stdin; it opens the Task's saved stdin separately.
+        // Use the standard pipe here to avoid Bun's extra-pipe duplicate descriptor owner.
+        stdio: prepared.privateControlInput ? ['pipe', 'ignore', 'ignore'] : 'ignore',
         windowsHide: true,
       });
       if (!supervisor.pid) throw new Error('Tool Task supervisor did not receive a process identity');
@@ -1648,7 +1650,7 @@ function validatePreparedProcess(input: PreparedToolTaskProcess): void {
 }
 
 async function writePrivateControl(supervisor: ChildProcess, input: Uint8Array): Promise<void> {
-  const stream = supervisor.stdio[3];
+  const stream = supervisor.stdin;
   if (!stream || typeof (stream as NodeJS.WritableStream).write !== 'function') {
     throw new Error('Tool Task supervisor private control pipe is unavailable');
   }

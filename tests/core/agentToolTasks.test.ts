@@ -4,7 +4,7 @@ import { Database } from 'bun:sqlite';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, realpathSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, stat, truncate, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, readFile, rm, stat, truncate, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type {
@@ -353,6 +353,31 @@ describe('ToolTaskService', () => {
     });
     expect(await readFile(path.join(terminal.detailPath, 'producer.json'), 'utf8'))
       .not.toContain('private capability');
+  });
+
+  test('keeps newly opened Host files valid after private-control process cleanup', async () => {
+    const fixture = await createFixture();
+    const service = await createService(fixture, passiveHost());
+    const started = await startHidden(service, 'private-control fixture', {
+      process: {
+        kind: 'exec', executable: process.execPath,
+        args: ['-e', "require('node:fs').readFileSync(3)"], env: {}, privateControl: true,
+      },
+      privateControlInput: Buffer.from('private capability'),
+    });
+    expect((await waitForTerminal(service, started.taskId)).state).toBe('succeeded');
+    const filePath = path.join(fixture.root, 'live-host-file');
+    const file = await open(filePath, 'a');
+    try {
+      await file.write('before cleanup\n');
+      // A collected extra-pipe wrapper must not close a descriptor reused by a Host file.
+      Bun.gc(true);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      Bun.gc(true);
+      await file.write('after cleanup\n');
+      await file.sync();
+      expect(await readFile(filePath, 'utf8')).toBe('before cleanup\nafter cleanup\n');
+    } finally { await file.close(); }
   });
 
   test('prepares a direct process only after allocating its durable task identity', async () => {

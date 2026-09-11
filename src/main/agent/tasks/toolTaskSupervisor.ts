@@ -32,7 +32,7 @@ async function main(): Promise<void> {
   const stdout = openSync(config.stdoutPath, 'a');
   const stderr = openSync(config.stderrPath, 'a');
   const privateControl = config.process.kind === 'exec' && config.process.privateControl
-    ? readPrivateControl(3)
+    ? readPrivateControl(0)
     : null;
   const target = resolveProcess(config);
   const acknowledgement = JSON.stringify({ taskId: config.taskId, nonce: config.nonce, profileDigest: config.isolation.profileDigest });
