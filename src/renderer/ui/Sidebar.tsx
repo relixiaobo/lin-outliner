@@ -23,7 +23,6 @@ import {
   RecentsIcon,
   SearchIcon,
   SettingsIcon,
-  ScheduledIcon,
   SupertagIcon,
 } from './icons';
 import { ButtonControl } from './primitives/ButtonControl';
@@ -56,7 +55,6 @@ interface SidebarProps {
   /** Opens the command surface — the mouse-reachable entry point to search. */
   onOpenSearch: () => void;
   onOpenSettings: () => void;
-  onOpenScheduledTasks?: () => void;
   onResizeKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
   onResizeReset: () => void;
   onResizeStart: (event: ReactPointerEvent<HTMLButtonElement>) => void;
@@ -338,10 +336,6 @@ export function Sidebar(props: SidebarProps) {
             <span aria-hidden="true" className="sidebar-nav-hint">{searchShortcutHint}</span>
           ) : null}
         </ButtonControl>
-        {props.onOpenScheduledTasks ? <ButtonControl className="sidebar-nav-item" onClick={props.onOpenScheduledTasks}>
-          <ScheduledIcon className="sidebar-nav-icon" size={ICON_SIZE.toolbar} />
-          <span>{t.agent.automations.work.workspace}</span>
-        </ButtonControl> : null}
         {primaryNavItems.map((item) => {
           const target = navTargets[item.key];
           const active = target === props.rootId;

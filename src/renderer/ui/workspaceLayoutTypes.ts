@@ -37,17 +37,7 @@ export interface FilePreviewNavigationOptions {
   presentation?: FilePreviewPresentation;
 }
 
-export interface ScheduledTasksPanelView {
-  kind: 'scheduled-tasks';
-  filter?: 'all' | 'attention' | 'archived';
-  search?: string;
-  automationId?: string;
-  automationRunId?: string;
-  listScrollTop?: number;
-  detailScrollTop?: number;
-  detailVisible?: boolean;
-}
-export type PanelView = OutlinerPanelView | FilePreviewPanelView | ThreadTrajectoryPanelView | ScheduledTasksPanelView;
+export type PanelView = OutlinerPanelView | FilePreviewPanelView | ThreadTrajectoryPanelView;
 
 export interface WorkspaceContentPanelState extends WorkspacePanelBase {
   type: 'workspace';

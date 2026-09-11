@@ -1,9 +1,7 @@
-import type { ScheduledTasksPanelView } from '../../ui/workspaceLayoutTypes';
-import { PanelStickyBreadcrumb, type PanelDragHandle } from '../../ui/PanelShared';
 import type { ToolTaskProjection } from '../../../core/agent/protocol';
 import { ToolTaskStrip } from '../components/ToolTaskStrip';
-import { requestSendContextToThreadComposer } from '../agentReveal';
-import type { DocumentIndex } from '../../state/document';
+import type { PendingComposerContext } from '../agentReveal';
+import { useDocumentIndexSnapshot, type DocumentIndexStore } from '../../state/documentIndexStore';
 import { textOf } from '../../ui/shared';
 import { useCallback, useEffect, useMemo, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { Automation } from '../../../core/agent/automation';
@@ -24,26 +22,36 @@ import { automationStore, useAutomationStore } from './automationStore';
 
 const subscribeToInputs = (listener: () => void) => threadStore.subscribe(listener);
 const readInputs = () => threadStore.userInputs.getSnapshot();
+const noSubscription = () => () => undefined;
 
-export interface ScheduledTasksWorkspaceProps {
-  readonly index?: DocumentIndex;
-  readonly view: ScheduledTasksPanelView;
-  readonly onViewChange: (view: ScheduledTasksPanelView) => void;
-  readonly onOpenNode?: import("../threadReferences").ThreadNodeReferenceOpenHandler;
-  readonly panelDragHandle?: PanelDragHandle;
-  readonly showClose?: boolean;
-  readonly onClose?: () => void;
-  readonly onOpenProcess: (threadId: string, turnId: string) => void;
-  readonly onBack?: () => void;
+/** Session-local Agent navigation; never part of the Outline layout or task data. */
+export interface ScheduledTasksViewState {
+  filter?: 'all' | 'attention' | 'archived';
+  search?: string;
+  automationId?: string;
+  automationRunId?: string;
+  listScrollTop?: number;
+  detailScrollTop?: number;
+  detailVisible?: boolean;
 }
 
-export function ScheduledTasksWorkspace({ onOpenProcess, onBack, index, panelDragHandle, showClose, onClose, onOpenNode, view, onViewChange }: ScheduledTasksWorkspaceProps) {
+export interface ScheduledTasksViewProps {
+  readonly indexStore: DocumentIndexStore;
+  readonly active: boolean;
+  readonly view: ScheduledTasksViewState;
+  readonly onViewChange: (view: ScheduledTasksViewState) => void;
+  readonly onOpenNode: import('../threadReferences').ThreadNodeReferenceOpenHandler;
+  readonly onOpenProcess: (threadId: string, turnId: string) => void;
+  readonly onDiscussResult: (name: string, context: PendingComposerContext) => Promise<void>;
+}
+
+export function ScheduledTasksView({ onOpenProcess, onDiscussResult, indexStore, onOpenNode, view, onViewChange, active }: ScheduledTasksViewProps) {
+  const index = useDocumentIndexSnapshot(indexStore, null, active);
   const messages = useT();
   const t = messages.agent.automations;
-  const stickyRef = useRef<HTMLDivElement | null>(null);
   const w = t.work;
-  const snapshot = useAutomationStore();
-  const threadSnapshot = useSyncExternalStore(subscribeToInputs, readInputs, readInputs);
+  const snapshot = useAutomationStore(active);
+  const threadSnapshot = useSyncExternalStore(active ? subscribeToInputs : noSubscription, readInputs, readInputs);
   const notes = useMemo(() => index?.projection.nodes.map((node) => ({ id: node.id, title: textOf(node) || t.name })), [index, t.name]);
   const [filter, setFilter] = useState<'all' | 'attention' | 'archived'>(view.filter ?? 'all');
   const [search, setSearch] = useState(view.search ?? '');
@@ -83,12 +91,13 @@ export function ScheduledTasksWorkspace({ onOpenProcess, onBack, index, panelDra
   }, [view.automationId, view.automationRunId, view.detailVisible]);
 
   useLayoutEffect(() => {
+    if (!active) return;
     if (listRef.current && !detailVisible) listRef.current.scrollTop = view.listScrollTop ?? 0;
     if (detailRef.current && detailVisible && loadedTask === selected?.id) detailRef.current.scrollTop = view.detailScrollTop ?? 0;
-  }, [view.automationId, view.automationRunId, detailVisible, loadedTask]);
+  }, [active, view.automationId, view.automationRunId, detailVisible, loadedTask]);
 
   function remember(automationId = selected?.id, automationRunId = selectedRunId, detail = detailVisible, preserveScroll = false): void {
-    onViewChange({ kind: 'scheduled-tasks', filter, search, ...(automationId ? { automationId } : {}), ...(automationRunId ? { automationRunId } : {}),
+    onViewChange({ filter, search, ...(automationId ? { automationId } : {}), ...(automationRunId ? { automationRunId } : {}),
       detailVisible: detail,
       listScrollTop: listRef.current?.offsetParent ? listRef.current.scrollTop : view.listScrollTop,
       detailScrollTop: !preserveScroll && (automationId !== selected?.id || automationRunId !== selectedRunId) ? 0
@@ -101,6 +110,7 @@ export function ScheduledTasksWorkspace({ onOpenProcess, onBack, index, panelDra
   function openProcess(threadId: string, turnId: string): void { remember(selected?.id, result?.run.id ?? selectedRunId, detailVisible, true); onOpenProcess(threadId, turnId); }
 
   useEffect(() => {
+    if (!active) return;
     const subscription = automationStore.acquire();
     void subscription.ready.catch((reason) => setError(String(reason)));
     void api.agentGetProviderSettings().then(setProvider).catch((reason) => setError(String(reason)));
@@ -109,17 +119,19 @@ export function ScheduledTasksWorkspace({ onOpenProcess, onBack, index, panelDra
         || event.type === 'userInput/requested' || event.type === 'userInput/resolved' || event.type === 'toolTask/changed') setRefresh((value) => value + 1);
     });
     return () => { unsubscribe(); subscription.release(); };
-  }, []);
+  }, [active]);
 
   useEffect(() => {
+    if (!active) return;
     let stale = false;
     void Promise.all(snapshot.automations.map(async (task) => [task.id, await api.automationRequest('summary', { id: task.id })] as const))
       .then((entries) => { if (!stale) setSummaries(new Map(entries)); })
       .catch((reason) => { if (!stale) setError(String(reason)); });
     return () => { stale = true; };
-  }, [snapshot.automations, snapshot.runs, refresh, threadSnapshot.userInputByThread]);
+  }, [active, snapshot.automations, snapshot.runs, refresh, threadSnapshot.userInputByThread]);
 
   useEffect(() => {
+    if (!active) return;
     if (!selected) { setResults([]); setMissed([]); return; }
     let stale = false;
     const id = selected.id;
@@ -143,21 +155,22 @@ export function ScheduledTasksWorkspace({ onOpenProcess, onBack, index, panelDra
       }
     }).catch((reason) => { if (!stale) setError(String(reason)); });
     return () => { stale = true; };
-  }, [selected?.id, selected?.revision, view.automationRunId, snapshot.runs, refresh]);
+  }, [active, selected?.id, selected?.revision, view.automationRunId, snapshot.runs, refresh]);
 
   useEffect(() => {
+    if (!active) return;
     if (!result) { setProcesses([]); return; }
     let stale = false;
     void api.automationRequest('processes', { id: result.run.id }).then(({ data }) => { if (!stale) setProcesses(data); })
       .catch((reason) => { if (!stale) setError(String(reason)); });
     return () => { stale = true; };
-  }, [result?.run.id, refresh]);
+  }, [active, result?.run.id, refresh]);
 
   useEffect(() => {
-    if (detailVisible && result && result.run.readAt === null && !['waiting', 'running', 'stopping'].includes(result.state)) {
+    if (active && detailVisible && result && result.run.readAt === null && !['waiting', 'running', 'stopping'].includes(result.state)) {
       void api.automationRequest('runMarkRead', { id: result.run.id }).catch((reason) => setError(String(reason)));
     }
-  }, [detailVisible, result?.run.id, result?.state, result?.run.readAt]);
+  }, [active, detailVisible, result?.run.id, result?.state, result?.run.readAt]);
 
   const perform = useCallback(async <T,>(operation: () => Promise<T>): Promise<T> => {
     if (busyRef.current) throw new Error(t.busy);
@@ -176,15 +189,8 @@ export function ScheduledTasksWorkspace({ onOpenProcess, onBack, index, panelDra
     return filter !== 'attention' || (summaries.get(task.id)?.attentionCount ?? 0) > 0;
   });
 
-  return <main className="main-panel scheduled-panel">
-    <PanelStickyBreadcrumb breadcrumbAriaLabel={messages.nodePanel.breadcrumbAriaLabel} canGoBack={!!onBack}
-      closeLabel={messages.nodePanel.closePanel} currentTitle={w.workspace} dragHandle={panelDragHandle} origin={null}
-      onBack={() => onBack?.()} onClose={() => onClose?.()} previousPageLabel={messages.nodePanel.previousPage}
-      showClose={showClose ?? false} stickyRef={stickyRef} titleDocked={false}>
-      <span className="panel-breadcrumb-segment panel-breadcrumb-current"><span className="panel-breadcrumb-current-label" data-current-page-title>{w.workspace}</span></span>
-    </PanelStickyBreadcrumb>
-    <section className={`scheduled-workspace${detailVisible ? ' is-detail' : ''}`}>
-    <div className="scheduled-task-list" ref={listRef}>
+  return <section aria-label={w.workspace} className={`scheduled-workspace${detailVisible ? ' is-detail' : ''}`}>
+    <div className="scheduled-task-list" ref={listRef} onScroll={() => { if (active) remember(selected?.id, selectedRunId, detailVisible, true); }}>
       <header className="scheduled-task-heading"><h2>{w.workspace}</h2>
         <Button size="sm" onClick={(event) => openEditor('create', event.currentTarget)}>{t.new}</Button></header>
       <input aria-label={t.search} className="scheduled-search" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t.searchPlaceholder} />
@@ -202,7 +208,7 @@ export function ScheduledTasksWorkspace({ onOpenProcess, onBack, index, panelDra
         {!snapshot.loading && visible.length === 0 ? <p>{t.noMatches}</p> : null}
       </div>
     </div>
-    <div className="scheduled-task-detail" ref={detailRef}>
+    <div className="scheduled-task-detail" ref={detailRef} onScroll={() => { if (active) remember(selected?.id, selectedRunId, detailVisible, true); }}>
       <Button className="scheduled-list-back" size="sm" variant="ghost" onClick={() => { remember(selected?.id, selectedRunId, false); setDetailVisible(false); }}>{w.back}</Button>
       {selected ? <>
         <header className="scheduled-task-heading"><div><h2>{selected.name}</h2>
@@ -249,15 +255,14 @@ export function ScheduledTasksWorkspace({ onOpenProcess, onBack, index, panelDra
             }))}>{w.acknowledge}</Button> : null}
           </section>)}
           {result.answer ? <>{result.parts.map((part) => <ThreadMarkdown key={`${part.turnId}:${part.itemId}`} text={part.text} finalCitations={part.finalCitations}
-            index={index} onNodeReferenceOpen={onOpenNode ? openNode : undefined} threadId={result.run.threadId ?? undefined} />)}</> : <p>{w.noAnswer}</p>}
+            index={index} onNodeReferenceOpen={openNode} threadId={result.run.threadId ?? undefined} />)}</> : <p>{w.noAnswer}</p>}
           {result.answerTruncated ? <p>{w.clipped}</p> : null}
           {result.run.threadId && processes.length ? <ToolTaskStrip ownerThreadId={result.run.threadId} tasks={processes}
             onRead={(_threadId, taskId) => api.automationRequest('processRead', { id: result.run.id, taskId })}
             onStop={(_threadId, taskId) => perform(() => api.automationRequest('runStop', { id: result.run.id, taskId, requestId: crypto.randomUUID() })).then(() => undefined)} /> : null}
           <div className="scheduled-actions">
             <Button disabled={busy} size="sm" variant="ghost" onClick={() => act(async () => {
-              await threadStore.createThread({ name: selected.name });
-              requestSendContextToThreadComposer({ key: `scheduled-result:${result.run.id}`, label: `${selected.name} · ${formatTime(result.run.scheduledFor, selected.schedule.timezone)}`,
+              await onDiscussResult(selected.name, { key: `scheduled-result:${result.run.id}`, label: `${selected.name} · ${formatTime(result.run.scheduledFor, selected.schedule.timezone)}`,
                 value: JSON.stringify({ taskId: selected.id, automationRunId: result.run.id, threadId: result.run.threadId, turnId: result.resultTurnId,
                   recordPath: result.recordPath, availability: result.state === 'unavailable' ? 'unavailable' : 'available',
                   instructionScope: 'Discuss this exact result. Future assignment instructions are unchanged unless the user explicitly requests a task edit.' }) });
@@ -271,7 +276,7 @@ export function ScheduledTasksWorkspace({ onOpenProcess, onBack, index, panelDra
         {result && !result.answer && lastDelivery?.answer && lastDelivery.run.id !== result.run.id ? <section className="scheduled-previous-delivery">
           <h3>{w.latestResult}</h3>
           {lastDelivery.parts.map((part) => <ThreadMarkdown key={`${part.turnId}:${part.itemId}`} text={part.text} finalCitations={part.finalCitations}
-            index={index} onNodeReferenceOpen={onOpenNode ? openNode : undefined} threadId={lastDelivery.run.threadId ?? undefined} />)}
+            index={index} onNodeReferenceOpen={openNode} threadId={lastDelivery.run.threadId ?? undefined} />)}
         </section> : null}
         <h3>{t.previousRuns}</h3>
         <div className="scheduled-earlier-runs">{taskResults.map((item) => <Button key={item.run.id} size="sm" variant="ghost" aria-pressed={result?.run.id === item.run.id}
@@ -287,7 +292,7 @@ export function ScheduledTasksWorkspace({ onOpenProcess, onBack, index, panelDra
       </> : <p>{t.emptyDescription}</p>}
       {error || snapshot.error ? <div role="alert"><p>{error ?? snapshot.error}</p><Button size="sm" variant="ghost" onClick={() => act(() => automationStore.reload())}>{w.reloadTasks}</Button></div> : null}
     </div>
-    {editor !== null ? <Dialog backdropClassName="confirm-dialog-backdrop" surfaceClassName="scheduled-editor-sheet" label={editor === 'create' ? t.new : w.edit}
+    {editor !== null ? <Dialog backdropClassName="confirm-dialog-backdrop" surfaceClassName="scheduled-editor-sheet" label={editor === 'create' ? t.new : w.edit} focusKey={Number(active)}
       onEscapeKeyDown={closeEditor} onBackdropMouseDown={closeEditor} restoreFocus={() => opener.current}>
       <header className="scheduled-task-heading"><h2>{editor === 'create' ? t.new : w.edit}</h2></header>
       <AutomationEditor notes={notes} onPause={edited ? (expectedRevision) => perform(async () => (await api.automationRequest('pause', { id: edited.id, expectedRevision, requestId: crypto.randomUUID() })).automation) : undefined} key={editor} automation={edited} actionError={error} busy={busy} providerSettings={provider}
@@ -297,7 +302,7 @@ export function ScheduledTasksWorkspace({ onOpenProcess, onBack, index, panelDra
     </Dialog> : null}
     {discard ? <ConfirmDialog title={t.discardTitle} message={t.discardConfirm} confirmLabel={t.discard} cancelLabel={t.keepEditing}
       onCancel={() => setDiscard(false)} onConfirm={() => { setDiscard(false); setDirty(false); setEditor(null); }} /> : null}
-  </section></main>;
+  </section>;
 }
 function formatTime(time: number, timeZone: string): string {
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short', timeZone }).format(time);

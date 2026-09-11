@@ -115,7 +115,7 @@ Pane (outline panel):
 
 A document or outline view inside the canvas — the single canvas primitive.
 Panes are tiled in a single row. They may be resizable, but they do not overlap.
-A pane hosts an outliner, file-preview, Trajectory, or Scheduled tasks view. All tile
+A pane hosts an outliner, file-preview, or Trajectory view. All tile
 identically and share the same per-pane navigation history.
 
 Agent dock:
@@ -220,8 +220,7 @@ type PreviewTarget =
 type PanelView =
   | { kind: 'outliner'; rootId: NodeId; scrollTop?: number }
   | { kind: 'file-preview'; target: PreviewTarget; nodeId?: NodeId; presentation?: 'reader'; scrollTop?: number }
-  | { kind: 'thread-trajectory'; threadId: string; turnId?: string; selectedRecordId?: string }
-  | { kind: 'scheduled-tasks'; automationId?: string; automationRunId?: string; listScrollTop?: number; detailScrollTop?: number; detailVisible?: boolean };
+  | { kind: 'thread-trajectory'; threadId: string; turnId?: string; selectedRecordId?: string };
 
 interface WorkspaceContentPanelState extends WorkspacePanelBase {
   type: 'workspace';
@@ -1308,13 +1307,14 @@ User asks agent to rewrite selected node
 - Keep agent state and sidebar state outside the layout.
 - Route all overlays through the shared overlay host.
 
-### Scheduled tasks workspace
+### Scheduled tasks in Agent Deck
 
-The persistent sidebar entry opens a `scheduled-tasks` panel view through normal
-per-pane navigation. The shared breadcrumb owns Back, close and pane dragging;
-viewing an exact run opens its canonical Thread/Turn Trajectory and Back returns
-to the task workspace. Per-pane state retains exact task/run references and
-list/detail scroll positions; it stores no result content. The task list and result detail use list/detail navigation
-below 720 logical pane pixels. The Agent dock remains an independent peer for
-result discussion. Configuration uses a modal sheet with shared focus/dirty-close
-behavior. The domain contract is [Scheduled tasks](agent-automations.md).
+Scheduled tasks belong to the Agent Deck, independently of its selected
+conversation. The global header control opens the task list/detail surface;
+returning to conversations preserves both task navigation and the conversation
+draft. Task references and scroll positions are session-local Agent view state,
+not Outline layout entries. Native notices open the same surface. Discuss result
+opens a normal conversation with its exact result reference. View process uses
+the existing Agent Trajectory workspace inspector while the task remains in the
+Deck. Configuration uses a modal sheet with shared focus/dirty-close behavior.
+The domain contract is [Scheduled tasks](agent-automations.md).

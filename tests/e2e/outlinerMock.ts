@@ -121,6 +121,7 @@ type E2EWindow = Window & {
     projection: () => unknown;
     clipboardText: () => string;
     emitAgentCoreNotification: (notification: unknown) => void;
+    emitAutomationNotification: (notification: unknown) => void;
     /**
      * Seeds a Thread's canonical history. A drawer or a selection READS history
      * from the host, so a Turn only pushed as a notification is replaced by the
@@ -3668,6 +3669,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       projection,
       clipboardText: () => clipboardText,
       emitAgentCoreNotification,
+      emitAutomationNotification,
       setMockThreadTurns: (threadId, turns) => {
         mockTurns.set(threadId, clone(turns) as MockTurn[]);
       },

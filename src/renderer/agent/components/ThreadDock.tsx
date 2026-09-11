@@ -34,8 +34,12 @@ import { runtimeSlashCommands, slashCommandsFromSkills } from '../threadComposer
 import { shouldRestoreComposerAfterThreadCreation } from '../composerRefocus';
 import { matchesShortcutEvent } from '../../ui/interactions/shortcutRegistry';
 import { useShortcutHint } from '../../ui/interactions/useShortcutHint';
+import { onThreadRailRevealRequest, requestSendContextToThreadComposer, type PendingComposerContext } from '../agentReveal';
+import type { ScheduledTasksViewState } from '../automations/ScheduledTasksView';
+import { BackIcon, ScheduledIcon } from '../../ui/icons';
 
 const ProjectDialog = lazy(async () => ({ default: (await import('../projects/ProjectDialog')).ProjectDialog }));
+const ScheduledTasksView = lazy(async () => ({ default: (await import('../automations/ScheduledTasksView')).ScheduledTasksView }));
 
 export type ThreadRailState = 'collapsed' | 'open';
 
@@ -67,8 +71,11 @@ export const ThreadDock = memo(function ThreadDock({
 }: ThreadDockProps) {
   const t = useT();
   const open = railState === 'open';
-  const snapshot = useThreadStore(open);
   const [listOpen, setListOpen] = useState(false);
+  const [scheduledOpen, setScheduledOpen] = useState(false);
+  const [scheduledView, setScheduledView] = useState<ScheduledTasksViewState | null>(null);
+  const [resultHandoff, setResultHandoff] = useState<{ threadId: string; context: PendingComposerContext } | null>(null);
+  const snapshot = useThreadStore(open && (!scheduledOpen || listOpen));
   const [projectTarget, setProjectTarget] = useState<{ thread: Thread; mode: 'new' | Project } | null>(null);
   /**
    * The pushed Agent detail stack, root-most first. Empty is the conversation
@@ -150,8 +157,8 @@ export const ThreadDock = memo(function ThreadDock({
     : [], [snapshot.toolTasksById, thread]);
   const userInput = thread ? snapshot.userInputByThread.get(thread.id) ?? null : null;
   useEffect(() => {
-    if (open && thread?.id) void threadStore.userInputs.reconcile(thread.id);
-  }, [open, thread?.id]);
+    if (open && !scheduledOpen && thread?.id) void threadStore.userInputs.reconcile(thread.id);
+  }, [open, scheduledOpen, thread?.id]);
   const providerRetry = thread ? snapshot.providerRetryByThread.get(thread.id) ?? null : null;
   const plan = thread ? snapshot.planByThread.get(thread.id) ?? null : null;
   const providerBlocksCreation = providerSettingsLoaded
@@ -233,10 +240,48 @@ export const ThreadDock = memo(function ThreadDock({
     name: t.agent.thread.agent.main,
   }), [t]);
 
-  /** Selecting a root conversation from the list or an Automation. */
+  const showScheduledTasks = useCallback((automationId?: string) => {
+    setScheduledView((current) => automationId
+      ? { ...current, automationId, automationRunId: undefined, detailVisible: true, detailScrollTop: 0 }
+      : current ?? {});
+    setScheduledOpen(true);
+    setListOpen(false);
+    onRequestOpen();
+  }, [onRequestOpen]);
+
+  useEffect(() => {
+    const unsubscribe = api.onAutomationNotification((notification) => {
+      if (notification.type === 'automation/open') showScheduledTasks(notification.automationId);
+    });
+    return () => { unsubscribe(); };
+  }, [showScheduledTasks]);
+
+  // Explicit composer handoffs (including Discuss result) return to conversations.
+  useEffect(() => onThreadRailRevealRequest(() => {
+    setScheduledOpen(false);
+    setListOpen(false);
+  }), []);
+
+  const discussScheduledResult = useCallback(async (name: string, context: PendingComposerContext) => {
+    const target = await threadStore.createThread({ name });
+    setResultHandoff({ threadId: target.id, context });
+    setScheduledOpen(false);
+    setListOpen(false);
+    onRequestOpen();
+  }, [onRequestOpen]);
+
+  // The composer reports readiness after clearing the previous Thread's staging.
+  const deliverScheduledResult = useCallback((threadId: string) => {
+    if (!resultHandoff || threadId !== resultHandoff.threadId) return;
+    requestSendContextToThreadComposer(resultHandoff.context);
+    setResultHandoff(null);
+  }, [resultHandoff]);
+
+  /** Selecting a root conversation from the list or a shared reference. */
   const openThread = useCallback(async (threadId: string) => {
     try {
       await threadStore.openThreadById(threadId);
+      setScheduledOpen(false);
       setListOpen(false);
     } catch {
       reportActionError(t.agent.thread.threadUnavailable);
@@ -267,6 +312,7 @@ export const ThreadDock = memo(function ThreadDock({
           expectedActiveElement: document.activeElement,
         }));
       }
+      setScheduledOpen(false);
       return true;
     } catch (error) {
       if (project) throw error;
@@ -304,6 +350,7 @@ export const ThreadDock = memo(function ThreadDock({
     }
     if (
       snapshot.loading
+      || scheduledOpen
       || snapshot.error !== null
       || !providerSettingsLoaded
       || providerBlocksCreation
@@ -311,7 +358,7 @@ export const ThreadDock = memo(function ThreadDock({
     ) return;
     autoCreateAttemptedRef.current = true;
     void createThread('automatic');
-  }, [createThread, providerBlocksCreation, providerSettingsLoaded, snapshot.error, snapshot.loading, thread]);
+  }, [createThread, providerBlocksCreation, providerSettingsLoaded, snapshot.error, snapshot.loading, thread, scheduledOpen]);
 
   function beginRename(target: Thread) {
     setRenameTarget(target);
@@ -356,9 +403,10 @@ export const ThreadDock = memo(function ThreadDock({
     >
       <div className="thread-dock" ref={dockRef}>
         <header className="thread-dock-header">
+          {scheduledOpen ? <IconButton icon={BackIcon} label={t.agent.thread.title}
+            onClick={() => setScheduledOpen(false)} variant="chrome" /> : null}
           {(
-            // The dock's title is the conversation the user started, and its
-            // chevron opens the list of them.
+            // Conversation access remains global while viewing scheduled work.
             <div className="thread-dock-breadcrumb">
               <button
                 aria-expanded={listOpen}
@@ -368,7 +416,7 @@ export const ThreadDock = memo(function ThreadDock({
                 ref={threadListAnchorRef}
                 type="button"
               >
-                <span className="thread-dock-title">{thread ? title : t.agent.thread.title}</span>
+                <span className="thread-dock-title">{scheduledOpen ? t.agent.automations.work.workspace : thread ? title : t.agent.thread.title}</span>
                 <ChevronDownIcon
                   className={`thread-title-chevron${listOpen ? ' is-open' : ''}`}
                   size={ICON_SIZE.menu}
@@ -376,7 +424,9 @@ export const ThreadDock = memo(function ThreadDock({
               </button>
             </div>
           )}
-          {thread ? (
+          {!scheduledOpen ? <IconButton icon={ScheduledIcon} label={t.agent.automations.work.workspace}
+            className="thread-dock-surface-action" onClick={() => showScheduledTasks()} variant="chrome" /> : null}
+          {thread && !scheduledOpen ? (
             <ToolTaskStrip
               onClearDetails={(threadId) => threadStore.clearToolTaskDetails(threadId)}
               onRead={(threadId, taskId) => threadStore.readToolTask(threadId, taskId)}
@@ -386,6 +436,14 @@ export const ThreadDock = memo(function ThreadDock({
             />
           ) : null}
         </header>
+        {scheduledView ? <div className="thread-dock-scheduled" hidden={!scheduledOpen}>
+          <Suspense fallback={<p className="thread-empty-copy">{t.agent.automations.loading}</p>}>
+            <ScheduledTasksView active={open && scheduledOpen} view={scheduledView} onViewChange={setScheduledView}
+              indexStore={indexStore} onOpenNode={onOpenNodeReference} onOpenProcess={onOpenTurnDetails}
+              onDiscussResult={discussScheduledResult} />
+          </Suspense>
+        </div> : null}
+        <div className="thread-dock-conversation-surface" hidden={scheduledOpen}>
         {/* Conditions only. A provider that is not configured and a thread list
             that failed to load describe THIS surface and persist until they are
             resolved, so they are stated here and cannot be dismissed. A failed
@@ -422,8 +480,9 @@ export const ThreadDock = memo(function ThreadDock({
             <ThreadView
               projectContext={{ view: projects.view, loading: projects.loading, error: projects.error,
                 onChooseProject: (mode) => setProjectTarget({ thread, mode }) }}
-              active={open}
+              active={open && !scheduledOpen}
               composerEnabled={thread.parentThreadId === null && thread.threadSource === 'user'}
+              onComposerReady={deliverScheduledResult}
               composerFocusExpectedActiveElement={composerFocusRequest.expectedActiveElement}
               composerFocusToken={composerFocusRequest.token}
               selfSpeaker={conversationSpeaker}
@@ -473,6 +532,7 @@ export const ThreadDock = memo(function ThreadDock({
             </div>
           </div>
         ) : null}
+        </div>
         {listOpen ? (
           <ThreadList
             startupThreads={startupThreads}
@@ -498,6 +558,7 @@ export const ThreadDock = memo(function ThreadDock({
             onSelect={(threadId) => {
               if (startupThreads.some((entry) => entry.threadId === threadId)) { setListOpen(false); onOpenStartupIssues?.(); return; }
               void runAction(() => threadStore.selectThread(threadId));
+              setScheduledOpen(false);
               setListOpen(false);
             }}
             backgroundWorkThreadIds={rootsWithBackgroundWork}

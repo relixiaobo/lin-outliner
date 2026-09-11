@@ -201,6 +201,7 @@ interface ThreadViewProps {
   readonly slashCommands: readonly AgentSlashCommandView[];
   readonly threadModelProvider: string;
   readonly threadId: string;
+  readonly onComposerReady?: (threadId: string) => void;
   readonly threadsById: ReadonlyMap<ThreadId, Thread>;
   readonly turns: readonly Turn[];
   /**
@@ -664,6 +665,7 @@ export function ThreadView({
   projectContext,
   active,
   composerEnabled,
+  onComposerReady,
   composerFocusExpectedActiveElement,
   composerFocusToken,
   configuration,
@@ -2238,6 +2240,10 @@ export function ThreadView({
     for (const context of pendingComposerContexts()) acknowledgeThreadComposerContext(context.key);
     setStagedContexts([]);
   }, [threadId]);
+
+  useEffect(() => {
+    if (active && composerEnabled) onComposerReady?.(threadId);
+  }, [active, composerEnabled, onComposerReady, threadId]);
 
   useEffect(() => onThreadComposerNodeReferenceRequest((request) => {
     if (!composerEnabled) return;

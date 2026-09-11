@@ -9,8 +9,9 @@ not own a second transcript, output ledger, process registry or user profile.
 ## Domain Model
 
 `Automation` and `AutomationRun` remain internal owner names. The product names
-are Scheduled tasks, run and result. The application sidebar opens a workspace
-pane independently of the Agent dock. Results return to the task; authoring has
+are Scheduled tasks, run and result. A global control in the Agent Deck header
+opens the task surface independently of the selected conversation. It adds no
+Outline sidebar entry or workspace panel type. Results return to the task; authoring has
 one primary Project/directory location and no conversation destination picker.
 
 An assignment contains a UUIDv7 identity, name, durable prompt, zero or more
@@ -255,8 +256,16 @@ user-managed source folders.
 
 ## Renderer And Persistence
 
-The workspace has a compact task list and result-first detail. Below 720 logical
-pane pixels it uses list/detail navigation while keeping both surfaces mounted.
+The Agent Deck task surface has a compact task list and result-first detail.
+Below 720 logical Deck pixels it uses list/detail navigation while keeping both
+surfaces mounted. Switching back to conversations or collapsing the Deck retains
+task/run selection, filters, scroll, unfinished task edits and conversation drafts. Hidden task views do
+not mark results read or fetch result updates; reopening reconciles current facts.
+Native task notices open the exact assignment in the Deck. Discuss result returns
+to an ordinary conversation with an explicit result reference, staged after that
+exact conversation's composer initializes so mounting cannot clear the handoff.
+View process uses
+the shared Agent Trajectory inspector without replacing the task surface.
 Create/edit uses a modal sheet with shared focus trapping and restoration.
 Dirty close requires explicit discard. Live result updates do not replace the
 form draft. A successful local pause updates the editor's base revision while
@@ -266,8 +275,8 @@ only definition fields, never copied run or attention state.
 The typed Automation request/notification bridge remains separate from Agent
 history transport. Preload decodes responses and notifications. Renderer merge
 ordering retains canonical revisions and monotonic run event sequences, including
-read-marker transitions. The workspace is loaded on demand; opening it does not
-replace the Agent dock.
+read-marker transitions. The task view is loaded on demand inside the Deck;
+opening it does not navigate, split or change Outline panes.
 
 `agent/scheduled-tasks.sqlite` is the scheduling owner. This pre-release format
 cut includes explicit materials, missed occurrences, operation receipts and exact

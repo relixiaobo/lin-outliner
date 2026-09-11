@@ -71,8 +71,6 @@ function panelTarget(
 ): RendererUserViewPanelHint['target'] | null {
   if (panel.type !== 'workspace') return null;
   const view = panel.view;
-  // Scheduled assignments are referenced explicitly; do not fabricate an outline target.
-  if (view.kind === 'scheduled-tasks') return null;
   if (view.kind === 'outliner') {
     return index.byId.has(view.rootId) ? { kind: 'node', nodeId: view.rootId } : null;
   }

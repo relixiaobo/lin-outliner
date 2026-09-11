@@ -63,7 +63,7 @@ test('scheduled assignment created through Bash survives restart and delivers to
     const association = admitted.runs[0]!;
     await expect.poll(() => page.evaluate((id) => window.lin!.automationRequest('result', { id }), association.id), { timeout: 40_000 })
       .toMatchObject({ state: 'completed', answer: 'Scheduled delivery proof from the real Host.' });
-    await page.locator('.sidebar-primary-nav').getByRole('button', { name: 'Scheduled tasks', exact: true }).click();
+    await page.locator('.thread-dock-header').getByRole('button', { name: 'Scheduled tasks', exact: true }).click();
     await page.locator('.scheduled-task-row', { hasText: task.name }).click();
     await expect(page.locator('.scheduled-result')).toContainText('Scheduled delivery proof from the real Host.');
     for (const theme of ['light', 'dark'] as const) {
@@ -123,7 +123,7 @@ test('an expired scheduled question retains its draft and foreground slot until 
       return (await window.lin!.automationRequest('create', { requestId: 'question-assignment', name: 'Question review', prompt: 'Review the task after asking for its direction.',
         destination: { kind: 'standalone' }, schedule: { rrule: `DTSTART:${stamp}\nRRULE:FREQ=DAILY;COUNT=1`, timezone: 'UTC' } })).automation;
     });
-    await page.locator('.sidebar-primary-nav').getByRole('button', { name: 'Scheduled tasks', exact: true }).click();
+    await page.locator('.thread-dock-header').getByRole('button', { name: 'Scheduled tasks', exact: true }).click();
     await page.locator('.scheduled-task-row', { hasText: 'Question review' }).click();
     const admitted = await page.evaluate(async (task) => window.lin!.automationRequest('startNow', { id: task.id, expectedRevision: task.revision, requestId: 'question-first' }), task);
     const association = admitted.runs[0]!;

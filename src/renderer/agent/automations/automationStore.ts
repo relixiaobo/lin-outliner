@@ -362,8 +362,10 @@ export class AutomationRendererStore {
 
 export const automationStore = new AutomationRendererStore();
 
-export function useAutomationStore(): AutomationStoreSnapshot {
-  return useSyncExternalStore(automationStore.subscribe, automationStore.getSnapshot, automationStore.getSnapshot);
+const noSubscription = () => () => undefined;
+
+export function useAutomationStore(active = true): AutomationStoreSnapshot {
+  return useSyncExternalStore(active ? automationStore.subscribe : noSubscription, automationStore.getSnapshot, automationStore.getSnapshot);
 }
 
 function upsert<T extends { readonly id: string }>(items: readonly T[], value: T): T[] {

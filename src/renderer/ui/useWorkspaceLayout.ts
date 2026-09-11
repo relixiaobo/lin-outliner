@@ -112,7 +112,6 @@ function viewOutlineRootId(view: PanelView): NodeId | null {
 }
 
 function panelViewKey(view: PanelView): string {
-  if (view.kind === 'scheduled-tasks') return `scheduled-tasks:${view.automationId ?? ''}:${view.automationRunId ?? ''}`;
   if (view.kind === 'outliner') return `outliner:${view.rootId}`;
   if (view.kind === 'thread-trajectory') {
     return `thread-trajectory:${view.threadId}:${view.selectedRecordId ?? ''}:${view.turnId ?? ''}`;
@@ -181,14 +180,6 @@ function sanitizeSize(value: unknown): number {
 
 function sanitizePanelView(value: unknown, nodeIds: NodeLookup): PanelView | null {
   if (!isRecord(value) || typeof value.kind !== 'string') return null;
-  if (value.kind === 'scheduled-tasks') return { kind: 'scheduled-tasks',
-    ...(value.filter === 'all' || value.filter === 'attention' || value.filter === 'archived' ? { filter: value.filter } : {}),
-    ...(typeof value.search === 'string' ? { search: value.search.slice(0, 256) } : {}),
-    ...(typeof value.automationId === 'string' ? { automationId: value.automationId } : {}),
-    ...(typeof value.automationRunId === 'string' ? { automationRunId: value.automationRunId } : {}),
-    listScrollTop: normalizeScrollTop(value.listScrollTop), detailScrollTop: normalizeScrollTop(value.detailScrollTop),
-    ...(typeof value.detailVisible === 'boolean' ? { detailVisible: value.detailVisible } : {}),
-  };
   const scrollTop = normalizeScrollTop(value.scrollTop);
   if (value.kind === 'outliner') {
     return typeof value.rootId === 'string' && nodeIds.has(value.rootId)
@@ -771,21 +762,6 @@ export function useWorkspaceLayout({
     focusNode(nodeId);
   }, [canFitPanelCount, focusNode, panels, preparePanelCount, rootId]);
 
-  const updateScheduledView = useCallback((panelId: string, view: import('./workspaceLayoutTypes').ScheduledTasksPanelView) => {
-    setPanels((current) => current.map((panel) => panel.id === panelId && panel.view.kind === 'scheduled-tasks' ? { ...panel, view } : panel));
-  }, []);
-
-  const openScheduledTasks = useCallback((automationId?: string) => {
-    const targetPanel = panels.find((panel) => panel.id === activePanelId) ?? panels[0];
-    if (!targetPanel) return;
-    setPanels((current) => current.map((panel) => {
-      if (panel.id !== targetPanel.id || (!automationId && panel.view.kind === 'scheduled-tasks')) return panel;
-      const view: import('./workspaceLayoutTypes').ScheduledTasksPanelView = { kind: 'scheduled-tasks', ...(automationId ? { automationId, detailVisible: true } : {}) };
-      return panel.view.kind === 'scheduled-tasks' ? { ...panel, view } : navigateWorkspacePanel(panel, view);
-    }));
-    clearPreviewNavigationState();
-  }, [panels, activePanelId, clearPreviewNavigationState]);
-
   const openThreadTrajectoryPanel = useCallback((
     threadId: string,
     focus?: { readonly selectedRecordId?: string; readonly turnId?: string },
@@ -861,7 +837,7 @@ export function useWorkspaceLayout({
     const nextScrollTop = normalizeScrollTop(scrollTop);
     setPanels((prev) => prev.map((panel) => {
       if (panel.id !== panelId || !isWorkspacePanel(panel)) return panel;
-      if (panel.view.kind === 'thread-trajectory' || panel.view.kind === 'scheduled-tasks') return panel;
+      if (panel.view.kind === 'thread-trajectory') return panel;
       if (panel.view.scrollTop === nextScrollTop) return panel;
       return { ...panel, view: withScrollTop(panel.view, nextScrollTop) };
     }));
@@ -885,8 +861,6 @@ export function useWorkspaceLayout({
     openPanel,
     openPreview,
     openThreadTrajectoryPanel,
-    openScheduledTasks,
-    updateScheduledView,
     panels,
     repairInvalidPanelViews,
     resizePanelPair,

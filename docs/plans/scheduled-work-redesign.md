@@ -343,12 +343,17 @@ canonical run records into task-owned files.
 
 ### Screens and interaction
 
-**SCREEN-1: Scheduled tasks workspace.** A persistent Scheduled tasks entry in
-the application sidebar opens a workspace pane. At sufficient width it has a
-compact task list and task detail; below 720 logical pixels it uses list/detail
-navigation with Back restoring selection and scroll. The ordinary Agent dock
-remains available for discussing a result. This replaces the Automation drawer
-as the primary work surface.
+**SCREEN-1: Scheduled tasks in Agent Deck.** A global Scheduled tasks control
+in the Agent Deck header opens the task surface alongside conversation access,
+independently of the selected conversation. It contributes no Outline sidebar
+entry or workspace panel type. Task ownership remains independent of conversation
+ownership; presentation stays in the Agent domain. At sufficient Deck width it
+has a compact task list and task detail; below 720 logical pixels it uses
+list/detail navigation with Back restoring selection and scroll. Switching to
+conversations or collapsing the Deck preserves task selection and conversation
+drafts. Discuss result creates an ordinary conversation with the exact result
+reference. Native task notices open the same Deck surface. View process reuses
+the ordinary Agent Trajectory inspector while retaining the task in the Deck.
 
 The list offers **All** and **Needs attention**, with **Archived** in the list
 menu. Rows show name, latest result/exception, and the next planned time or paused
@@ -676,7 +681,7 @@ configuration, run association, and attention acknowledgement where needed.
 It is rebuildable and does not become another authoritative output ledger.
 
 Expected implementation areas are `src/core/agent/automation.ts`,
-`src/main/agent/automations/`, `src/renderer/agent/automations/`, sidebar/workspace
+`src/main/agent/automations/`, `src/renderer/agent/automations/`, Agent Deck
 navigation, shared exact-run navigation, i18n, and focused Core/renderer/E2E
 tests. CLI work also touches the packaged CLI entry/build wiring, a built-in
 scheduling Skill, built-in Skill discovery, Bash admission/Host wiring, the model
