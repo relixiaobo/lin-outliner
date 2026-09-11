@@ -1,4 +1,3 @@
-import { scheduledRunResult } from './AutomationRunResult';
 import { ScheduledRunOwnership } from './ScheduledRunOwnership';
 import { checkScheduledMaterials, scheduledMaterialInstructions } from './ScheduledMaterials';
 import { realpath } from 'node:fs/promises';
@@ -62,15 +61,8 @@ export class AutomationDispatcher {
   private get continuity(): AutomationRunContinuityReader {
     return {
       priorRuns: (current) => this.options.store.priorRuns(current),
-      acknowledged: async (run) => {
-        const result = await scheduledRunResult(run, {
-          readTurn: (threadId, turnId) => this.options.threads.readTurnForHost(threadId, turnId),
-          additionalTurns: (association) => new ScheduledRunOwnership(this.options.store, this.options.threads).turns(association),
-          recordPath: (threadId) => this.options.threads.threadRecordPath(threadId),
-          acknowledged: (id, key) => this.options.store.isAcknowledged(id, key),
-        });
-        return result.issues.length > 0 && result.issues.every((issue) => issue.acknowledged);
-      },
+      acknowledged: (id, key) => this.options.store.isAcknowledged(id, key),
+      additionalTurns: (run) => new ScheduledRunOwnership(this.options.store, this.options.threads).turns(run),
       readTurn: (threadId, turnId) => this.options.threads.readTurnForHost(threadId, turnId),
       recordPath: (threadId) => this.options.threads.threadRecordPath(threadId),
     };

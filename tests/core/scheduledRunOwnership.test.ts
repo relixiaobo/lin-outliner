@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { ScheduledRunOwnership } from '../../src/main/agent/automations/ScheduledRunOwnership';
 import { scheduledRunResult } from '../../src/main/agent/automations/AutomationRunResult';
+import { recentAutomationRuns } from '../../src/main/agent/automations/AutomationRunContinuity';
 import type { AutomationStore } from '../../src/main/agent/automations/AutomationStore';
 import type { AutomationRun } from '../../src/core/agent/automation';
 import type { ThreadService } from '../../src/main/agent/ThreadService';
@@ -94,6 +95,26 @@ describe('Scheduled run canonical ownership', () => {
     expect(result.state).toBe('unavailable');
     expect(result.answer).toBeNull();
     expect(result.issueKey).not.toBeNull();
+  });
+
+  test('unavailable continuity records prevent inspection of both original and completion Turns', async () => {
+    const f = fixture();
+    const prior = { ...f.run, createdSequence: 1, scheduledFor: 1, automationRevision: 1,
+      snapshot: { contextHint: null, materials: [] } } as unknown as AutomationRun;
+    const current = { ...prior, id: 'current', createdSequence: 2 };
+    for (const throws of [false, true]) {
+      let sourceReads = 0;
+      const recent = await recentAutomationRuns(current, {
+        priorRuns: () => [prior],
+        recordPath: async () => { if (throws) throw new Error('Source unavailable'); return null; },
+        readTurn: () => { sourceReads++; return f.original; },
+        additionalTurns: () => { sourceReads++; return f.owner.turns(f.run); },
+        acknowledged: () => false,
+      });
+      expect(sourceReads).toBe(0);
+      expect(recent).toEqual([expect.objectContaining({ automationRunId: prior.id, status: 'unknown', recordPath: null })]);
+      expect(JSON.stringify(recent)).not.toContain('Delivered answer');
+    }
   });
 
   test('inspection failures preserve known execution evidence and explicit answer truncation', async () => {

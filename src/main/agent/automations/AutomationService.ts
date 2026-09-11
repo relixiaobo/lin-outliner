@@ -230,15 +230,25 @@ export class AutomationService {
       }
       case 'delete': {
         const value = decoded as AutomationRequestByMethod['delete'];
-        await this.options.scheduler.runExclusive(async () => {
+        return this.options.scheduler.runExclusive(async () => {
+          await authorize?.();
+          const operation = { method, ...value };
+          const existing = value.requestId
+            ? this.options.store.operationReceipt<AutomationResponseByMethod['delete']>(value.requestId, operation) : null;
+          if (existing) return existing as AutomationResponseByMethod[Method];
           await this.options.dispatcher.recoverPendingRuns(value.id);
           const pending = this.options.store.pendingRuns(value.id);
-          this.options.store.delete(value.id, value.expectedRevision, this.now());
+          await authorize?.();
+          const remove = (): AutomationResponseByMethod['delete'] => {
+            this.options.store.delete(value.id, value.expectedRevision, this.now());
+            return { deleted: true, id: value.id };
+          };
+          const result = value.requestId ? this.options.store.withOperationReceipt(value.requestId, operation, remove) : remove();
           for (const run of pending) await this.runChanged(this.options.store.readRun(run.id)!);
           await this.publish({ type: 'automation/changed', automation: null, automationId: value.id });
           this.wake();
+          return result as AutomationResponseByMethod[Method];
         });
-        return { deleted: true, id: value.id } as AutomationResponseByMethod[Method];
       }
       case 'startNow': {
         const value = decoded as AutomationRequestByMethod['startNow'];

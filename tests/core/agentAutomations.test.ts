@@ -937,6 +937,65 @@ describe('Automation Thread dispatch', () => {
     expect(context.recentRuns[0]).toMatchObject({ automationRunId: onB.id, locationChanged: true });
   });
 
+  test('continuity follows owned completion Turns and retains older issues after later delivery', async () => {
+    const now = Date.parse('2026-07-24T09:00:00Z');
+    const store = automationStore();
+    const automation = store.create(definition('20260724T100000'), now);
+    const host = threadHost();
+    const dispatcher = dispatcherFor(store, host, now + 1);
+    const prior = await dispatcher.dispatch(store.claimNow(automation, null, now + 2));
+    const record = `/app-data/thread-records/${prior.threadId}/record.md`;
+    host.transcriptPaths.set(prior.threadId!, record);
+    host.finishTurn(prior.turnId!, { status: 'completed', startedAt: now + 2, completedAt: now + 3,
+      items: [{ type: 'agentMessage', id: uuidV7(), phase: 'final_answer', text: 'Background task started' }] as Turn['items'] });
+    const originalRead = host.readTurnForHost.bind(host);
+    const original = originalRead(prior.threadId!, prior.turnId!)!;
+    const completion: Turn = { ...original, id: uuidV7(), startedAt: now + 4, completedAt: now + 5,
+      status: 'failed', items: [], error: { code: 'provider_error', message: 'Background completion failed' },
+      provenance: { ...original.provenance, trigger: { kind: 'feature', feature: 'tool-task-completion', ref: 'batch' } } };
+    const deliveries = new Map([[completion.id, completion]]);
+    host.readTurnForHost = (threadId, turnId) => threadId === prior.threadId && deliveries.has(turnId)
+      ? deliveries.get(turnId)! : originalRead(threadId, turnId);
+    Object.assign(host, {
+      activeTurnIdForHost: () => null,
+      toolTaskService: () => ({ store: {
+        listAll: (threadId: string) => threadId === prior.threadId ? [...deliveries.keys()].map((id) => ({ deliveryTurnId: id })) : [],
+        read: () => ({ ownerThreadId: prior.threadId, sourceTurnId: prior.turnId }),
+        readBatch: (id: string) => ({ ownerThreadId: prior.threadId,
+          reservedTurnId: id === 'batch' ? completion.id : [...deliveries.keys()].at(-1), taskIds: ['process'] }),
+      } }),
+    });
+
+    await dispatcher.dispatch(store.claimNow(automation, null, now + 6));
+    const failedContext = JSON.parse(host.turnCalls.at(-1)!.dispatchContext.info).recentRuns;
+    expect(failedContext).toEqual([expect.objectContaining({ automationRunId: prior.id, status: 'errored',
+      finishedAt: new Date(now + 5).toISOString(), recordPath: record })]);
+
+    const delivered: Turn = { ...original, id: uuidV7(), startedAt: now + 7, completedAt: now + 8,
+      provenance: { ...original.provenance, trigger: { kind: 'feature', feature: 'tool-task-completion', ref: 'later-batch' } } };
+    deliveries.set(delivered.id, delivered);
+    const newer = await dispatcher.dispatch(store.claimNow(automation, null, now + 9));
+    host.transcriptPaths.set(newer.threadId!, `/app-data/thread-records/${newer.threadId}/record.md`);
+    host.finishTurn(newer.turnId!, { status: 'completed', completedAt: now + 10, items: original.items });
+    await dispatcher.dispatch(store.claimNow(automation, null, now + 11));
+    const context = JSON.parse(host.turnCalls.at(-1)!.dispatchContext.info).recentRuns;
+    // A newer delivered run cannot hide the old completion failure after that run recovers.
+    expect(context.map((entry: { automationRunId: string }) => entry.automationRunId)).toContain(prior.id);
+    expect(context.find((entry: { automationRunId: string }) => entry.automationRunId === prior.id))
+      .toMatchObject({ status: 'completed', finishedAt: new Date(now + 8).toISOString() });
+    expect(JSON.stringify(context)).not.toContain('Background');
+
+    const service = new AutomationService({ store, dispatcher, scheduler: schedulerFor(store, now + 12, { dispatch: (run) => dispatcher.dispatch(run) }),
+      threads: host as unknown as ThreadService, now: () => now + 12 });
+    const result = await service.request('result', { id: prior.id });
+    const failure = result.issues.find((issue) => issue.turnId === completion.id)!;
+    expect(failure).toBeDefined();
+    store.acknowledge(prior.id, failure.key, now + 12);
+    await dispatcher.dispatch(store.claimNow(automation, null, now + 13));
+    expect(JSON.parse(host.turnCalls.at(-1)!.dispatchContext.info).recentRuns
+      .map((entry: { automationRunId: string }) => entry.automationRunId)).not.toContain(prior.id);
+  });
+
   test('omits continuity entirely for an existing-Thread run', async () => {
     const now = Date.parse('2026-07-24T09:00:00Z');
     const store = automationStore();

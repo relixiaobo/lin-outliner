@@ -1,6 +1,5 @@
 import type { AutomationRun } from '../../../core/agent/automation';
-import type { ThreadId, Turn, TurnId } from '../../../core/agent/protocol';
-import { turnTerminalAnswer } from '../../../core/agent/turnAnswer';
+import { scheduledRunResult, type ScheduledResultReader } from './AutomationRunResult';
 
 export const RECENT_AUTOMATION_RUN_COUNT = 3;
 export type RecentAutomationRunStatus = 'completed' | 'errored' | 'interrupted' | 'running' | 'dispatchFailed' | 'pending' | 'omitted' | 'unknown';
@@ -15,11 +14,8 @@ export interface RecentAutomationRun {
   readonly materialsChanged: boolean;
   readonly locationChanged: boolean;
 }
-export interface AutomationRunContinuityReader {
+export interface AutomationRunContinuityReader extends ScheduledResultReader {
   priorRuns(current: AutomationRun): Iterable<AutomationRun>;
-  readTurn(threadId: ThreadId, turnId: TurnId): Turn | null;
-  recordPath(threadId: ThreadId): Promise<string | null>;
-  acknowledged(run: AutomationRun): Promise<boolean>;
 }
 export const AUTOMATION_RUN_GUIDANCE = [
   'This Turn executes a saved scheduled assignment.',
@@ -36,29 +32,33 @@ export async function recentAutomationRuns(current: AutomationRun, reader: Autom
   let issues = 0;
   for (const run of reader.priorRuns(current)) {
     if (run.id === current.id || run.automationId !== current.automationId || run.createdSequence >= current.createdSequence || run.state === 'omitted') continue;
-    let turn: Turn | null = null;
     let recordPath: string | null = null;
     if (run.threadId && run.turnId) {
       try {
         recordPath = await reader.recordPath(run.threadId);
-        if (recordPath) turn = reader.readTurn(run.threadId, run.turnId);
       } catch { /* Optional continuity cannot end the current invocation. */ }
     }
-    const trigger = turn?.provenance.trigger;
-    if (turn && (trigger?.kind !== 'feature' || trigger.feature !== 'automation' || trigger.ref !== run.id)) turn = null;
+    // Resolve source access before inspecting any original or completion Turn.
+    const result = await scheduledRunResult(run, {
+      ...reader,
+      readTurn: (threadId, turnId) => recordPath ? reader.readTurn(threadId, turnId) : null,
+      additionalTurns: (association) => recordPath ? reader.additionalTurns?.(association) ?? [] : [],
+      recordPath: async () => recordPath,
+    });
     const status: RecentAutomationRunStatus = run.state === 'pending' ? 'pending'
       : run.state === 'failed' ? 'dispatchFailed'
-      : !turn ? 'unknown' : turn.status === 'failed' ? 'errored'
-      : turn.status === 'inProgress' ? 'running' : turn.status;
-    const eligible = status === 'completed' && turn !== null && turnTerminalAnswer(turn.items).length > 0;
-    const issue = ['dispatchFailed', 'errored', 'interrupted', 'unknown'].includes(status)
-      || (status === 'completed' && !eligible);
-    if ((!eligible || delivered) && (!issue || issues >= RECENT_AUTOMATION_RUN_COUNT || await reader.acknowledged(run))) continue;
+      : result.state === 'failed' ? 'errored'
+      : result.state === 'stopping' || result.state === 'running' ? 'running'
+      : result.state === 'completed' || result.state === 'interrupted' ? result.state : 'unknown';
+    const eligible = status === 'completed' && result.answer !== null;
+    const issue = result.issues.some((issue) => !issue.acknowledged)
+      || (status === 'unknown' && result.issues.length === 0);
+    if ((!eligible || delivered) && (!issue || issues >= RECENT_AUTOMATION_RUN_COUNT)) continue;
     if (eligible) delivered = true;
-    if (issue) issues++;
+    if (issue && issues < RECENT_AUTOMATION_RUN_COUNT) issues++;
     selected.push({ automationRunId: run.id, automationRevision: run.automationRevision,
       scheduledFor: new Date(run.scheduledFor).toISOString(),
-      finishedAt: turn?.completedAt != null ? new Date(turn.completedAt).toISOString() : null,
+      finishedAt: result.finishedAt != null ? new Date(result.finishedAt).toISOString() : null,
       status, recordPath, requestedWorkLocation: run.snapshot.contextHint,
       materialsChanged: JSON.stringify(run.snapshot.materials) !== JSON.stringify(current.snapshot.materials),
       locationChanged: JSON.stringify(run.snapshot.contextHint) !== JSON.stringify(current.snapshot.contextHint),

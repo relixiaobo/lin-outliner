@@ -109,6 +109,10 @@ association blocks mutation; it never guesses that prior work did not happen.
 Receipts survive restart and archival. Revision conflicts return a nonzero CLI
 receipt with the current revision as structured data. Receipts contain operation associations and
 accepted configuration, not execution output.
+The retained Host `delete` operation also commits its tombstone, pending-run
+omissions and supplied request identity atomically. Replaying that identity
+returns the original deletion receipt before checking the now-archived revision;
+the public CLI command remains `archive`.
 
 ## Canonical Dispatch
 
@@ -195,7 +199,12 @@ An uncertain live process retains the generic settling fence.
 
 Automatic continuity contains record pointers and revision/location/material
 differences, never copied generated text. It selects the latest eligible delivered
-result plus bounded unacknowledged issue references across the same task. CLI
+result plus bounded unacknowledged issue references across the same task. Both
+selection and completion time use the canonical result projection, including
+run-owned Task completion Turns. A later successful delivery does not dismiss an
+older unacknowledged failure. Record access resolves before inspecting either the
+initial or completion Turns; an unavailable source remains a reference with
+unknown outcome and cannot supply a delivered result. CLI
 result, stop and acknowledgement receipts likewise omit source text and preserve
 explicit content availability; content reads follow shared record/file access.
 

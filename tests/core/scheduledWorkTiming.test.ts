@@ -151,6 +151,48 @@ describe('Scheduled work timing and operation boundaries', () => {
     expect(runtime.dispatched).toEqual([]);
   });
 
+  test('delete replays its committed receipt after a lost reply and restart', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'scheduled-delete-receipt-'));
+    roots.push(root);
+    const file = join(root, 'store.sqlite');
+    const store = open(file);
+    const task = store.create(definition(), start);
+    const pending = store.claimNow(task, null, start, 'queued');
+    const input = { id: task.id, expectedRevision: task.revision, requestId: 'delete-task' };
+    // Discard the reply as a disconnected caller would.
+    await host(store, start).service.request('delete', input);
+    const deleted = store.read(task.id, start, true);
+    const omitted = store.readRun(pending.id);
+    expect(omitted?.omission?.reason).toBe('deleted');
+    store.close(); stores.delete(store);
+
+    const reopened = open(file);
+    const runtime = host(reopened, due);
+    expect(await runtime.service.request('delete', input)).toEqual({ deleted: true, id: task.id });
+    expect(reopened.read(task.id, due, true)).toEqual(deleted);
+    expect(reopened.readRun(pending.id)).toEqual(omitted);
+    await expect(runtime.service.request('delete', { ...input, expectedRevision: 2 })).rejects.toThrow('different input');
+    await expect(runtime.service.request('delete', input, async () => { throw new Error('Caller revoked'); }))
+      .rejects.toThrow('Caller revoked');
+  });
+
+  test('delete rolls back the tombstone and pending omissions when receipt persistence fails', async () => {
+    const database = new Database(':memory:');
+    const store = new AutomationStore(':memory:', database as unknown as SqliteDatabase);
+    stores.add(store);
+    const task = store.create(definition(), start);
+    const pending = store.claimNow(task, null, start, 'queued');
+    database.exec(`CREATE TRIGGER reject_receipt BEFORE INSERT ON automation_operation_receipts
+      BEGIN SELECT RAISE(ABORT, 'Receipt unavailable'); END`);
+    const runtime = host(store, start);
+    const input = { id: task.id, expectedRevision: task.revision, requestId: 'delete-task' };
+    await expect(runtime.service.request('delete', input)).rejects.toThrow('Receipt unavailable');
+    expect(store.read(task.id, start)).toEqual(task);
+    expect(store.readRun(pending.id)).toEqual(pending);
+    database.exec('DROP TRIGGER reject_receipt');
+    expect(await runtime.service.request('delete', input)).toEqual({ deleted: true, id: task.id });
+  });
+
   test('receipt failure rolls back both the domain mutation and its nested transaction', () => {
     const store = open();
     expect(() => store.withOperationReceipt('request', { action: 'create' }, () => {
