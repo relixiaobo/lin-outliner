@@ -145,6 +145,12 @@ broker socket path, but no prompt or provider credential. The direct-exec child
 receives only an allow-listed process environment. The broker socket is created
 under the app's private data directory with owner-only permissions.
 
+The Host sends private control bytes to the trusted Task supervisor through its
+stdin pipe. The supervisor reads the Task's literal user stdin from its separate
+saved input and forwards private control on fd 3 to the direct-exec child. This
+keeps the Host pipe under one descriptor owner; private control never becomes
+user stdin, an environment variable, or persisted Task metadata.
+
 The local broker consumes the capability before executing the request. It
 rejects unknown, expired, reused, modified, revision-stale, or command-mismatched
 capabilities. Expired records are pruned on issuance and consumption; launch
