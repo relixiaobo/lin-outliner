@@ -225,7 +225,7 @@ committed fixtures. Update existing fixtures when #674 changes their entry seam.
 | [Targeted recovery](../targeted-thread-recovery.md) | No design rewrite: exact Task/resource closure and immutable observations already govern recovery. These units change no stored references or format. Preserve historical observations on restore and cover the final Task owner; do not turn a service timeout into permission for a whole-data reset. |
 | [Performance](../performance-optimization.md) | No edit: its three measured optimization units do not own these correctness defects. Retry/call-count measurements stay in Unit B; do not expand that plan into a new performance program. |
 | [Office preview](../file-preview-office.md) and [URL reader](../url-static-reader.md) | No design edit: extraction and network acquisition remain separate owners. Preserve their shared image consumers if the implementation overlaps; normalization creates no new fetch or preview authority. |
-| [Memory/profile](../memory-agent-profile.md), [Settings working states](../semantic-working-state.md), [floating toolbar](../floating-toolbar-polish.md), [dark-mode verification](../dark-mode-contrast-pass.md) | No changed premise or required implementation dependency was found. |
+| [Memory/profile](memory-agent-profile.md), [Settings working states](../semantic-working-state.md), [floating toolbar](../floating-toolbar-polish.md), [dark-mode verification](../dark-mode-contrast-pass.md) | No changed premise or required implementation dependency was found. |
 
 The active consumer designs and shipped #674 contract define the integration
 boundary. Unit B consumes the final Host directory resolution, Task admission and
