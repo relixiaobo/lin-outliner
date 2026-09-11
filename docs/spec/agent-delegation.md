@@ -40,7 +40,10 @@ receive neither, which keeps nested delegation unavailable by construction.
 The UI has no delegated-Agent roster, tree, chip, transcript, or navigation.
 Each invocation appears as the same Bash Item and generic Tool Task row used by
 any other long-running command. Completion is pushed through the Tool Task
-delivery path. `task_status` is for explicit inspection or recovery, not a
+delivery path under a finite-result agreement. Delegated jobs cannot be relabelled
+as handed-over services. The owning root may acknowledge an exact terminal event
+with `task_control`; hidden delegated callers cannot mutate Task responsibility.
+`task_status` is for explicit inspection or recovery, not a
 polling loop; `task_stop` accepts only a Tool Task ID.
 
 ## Vocabulary And Ownership
@@ -295,6 +298,13 @@ safe. After user stop, a fence requires a later root intent revision before
 continuation; stale queued messages are blocked. Cancellation aborts the active
 delegated Turn and the owning Tool Task still settles through generic process
 teardown.
+
+Stopping an already terminal Tool Task only revokes that Task's pending completion
+responsibility; it does not fence the released Session or a later invocation. If
+final-receipt reconciliation releases the execution while Stop waits for the
+Session gate, the committed or blocked settlement permits the same task-local
+revocation without installing a Session fence. A committed completion handler
+retains ownership of the result.
 
 ## Tool Policy
 

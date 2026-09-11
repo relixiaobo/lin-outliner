@@ -3115,7 +3115,10 @@
   width: 100%;
   min-width: 0;
   gap: var(--space-1);
-  padding: var(--space-1) 0 var(--space-1) calc(var(--icon-size-xs) + var(--space-2));
+  /* Task facts are content inside the translucent chrome disclosure. */
+  background: var(--bg-elevated);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
   color: var(--text-tertiary);
 }
 

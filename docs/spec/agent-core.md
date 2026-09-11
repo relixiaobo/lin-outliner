@@ -56,6 +56,12 @@ Command text, file changes, MCP/dynamic display arguments, Agent-task summaries,
 results, and host execution metadata never reconstruct model arguments. In particular,
 `commandExecution.cwd` is the Tool Task's Host-resolved execution address and is not
 part of the `bash` model call unless the optional task-scoped `cwd` field was admitted.
+Task responsibility controls bind caller authority to the owning root Thread and
+its active Tool Item. Handoff/watch receipts and terminal dispositions remain in
+the existing Task store. Acknowledgement binds an event to its handling Turn/Item;
+automatic continuation commits through the existing canonical Turn/batch owner
+only when a recorded responsibility remains. Silent service exits allocate no
+Turn. See [Task contracts](agent-tool-design.md) for admission and recovery rules.
 During the active Turn only, a transient raw-call overlay lets
 the next provider boundary observe the exact just-executed arguments. It is not durable;
 later Turns, restart, fork, and compaction use only the frozen envelope. An admitted

@@ -20,6 +20,7 @@ describe('delegated tool policy', () => {
     for (const blocked of [
       'task_status',
       'task_stop',
+      'task_control',
       'request_user_input',
       'automation_update',
       'get_goal',
@@ -73,6 +74,7 @@ describe('delegated tool policy', () => {
   test('fails closed at execution for empty, unclassified, or hard-blocked action sets', () => {
     expect(delegatedToolExecutionAllowed(GENERAL_WRITE, [])).toBe(false);
     expect(delegatedToolExecutionAllowed(GENERAL_WRITE, ['task.stop'])).toBe(false);
+    expect(delegatedToolExecutionAllowed(GENERAL_WRITE, ['task.control'])).toBe(false);
     expect(delegatedToolExecutionAllowed(GENERAL_WRITE, ['file.write.local_path'])).toBe(true);
     expect(delegatedToolExecutionAllowed(GENERAL_READ, ['file.read.local_path'])).toBe(true);
     expect(delegatedToolExecutionAllowed(GENERAL_READ, ['file.write.local_path'])).toBe(false);

@@ -1,3 +1,4 @@
+import { initialTaskContinuation } from '../../src/core/agent/taskContinuation';
 import { describe, expect, test } from 'bun:test';
 import type {
   AgentCoreNotification,
@@ -1281,6 +1282,7 @@ function toolTask(
     description: 'Background command',
     state,
     deliveryState: 'pending',
+    continuation: initialTaskContinuation(),
     progress: null,
     exitCode: null,
     signal: null,

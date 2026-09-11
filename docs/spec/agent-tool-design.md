@@ -339,8 +339,11 @@ Task service. Each command has a Host task ID, owning Thread, source
 Turn and Tool Item, command digest, supervisor nonce, bounded output, declared artifacts,
 progress, factual exit result, and delivery state. The command text is not duplicated in
 task storage. `task_status` reads an owned task for an explicit status or recovery request;
-completion is pushed, so it is not a polling primitive. `task_stop` stops an
-owned running or settling task by `task_id`. Neither tool accepts an Agent ID,
+unhandled results are pushed, so it is not a polling primitive. `task_stop` stops an
+owned running or settling task and revokes pending responsibilities even after exit
+before delivery. Terminal tasks skip producer execution fencing; revocation addresses
+only that Task's pending result, even if its producer has started another invocation.
+A committed handling Turn keeps its owner. These tools never accept an Agent ID,
 Session ID, or deprecated shell ID.
 
 `bash.stdin` is an optional JSON string for both foreground and explicit-background
@@ -400,7 +403,8 @@ flag. Reading does not stop the producer, rewrite raw logs, finalize artifacts, 
 a receipt. Terminal output continues to use the immutable sanitized capture.
 The development Skill uses observations plus an appropriate endpoint/Runtime/UI check;
 process existence alone is not readiness. It leaves verified servers running for the user
-and continues authorized diagnosis if a completion event reveals a failure.
+and commits explicit service handoff before reporting availability. Only an
+unresolved launch, finite result, or explicit watch can require continuation.
 
 Ordinary tool environments omit ambient Electron development control variables
 (`ELECTRON_EXEC_PATH`, `ELECTRON_RENDERER_URL`, `ELECTRON_CLI_ARGS`,
@@ -454,20 +458,82 @@ timeout.
 Producer-controlled stdout, stderr, progress text, artifact content, and future Runner
 text are untrusted observations. Host task identity, state, timestamps, exit facts, and
 resource references are application observations; only fixed Host handling rules are
-application instructions. Terminal background results are atomically claimed in bounded
+application instructions. Unhandled terminal background results with an applicable
+responsibility are atomically claimed in bounded
 batches. The canonical `turn/started` event, keyed by stable batch, member, Turn, client,
 terminal-digest, and envelope-digest identity, commits delivery. Startup rolls an
 uncommitted batch back, links a matching committed Turn, and blocks only mismatched
 members. A completion Turn that later fails remains the sole delivery and uses ordinary
 Continue/Rerun recovery.
 
+Task responsibility is separate from background waiting, process state, and user
+attention. Bash `completion_agreement` defaults to `{kind: "result"}` for finite
+jobs, including delegation. `{kind: "service"}` is allowed only for an explicitly
+background root Bash process. It owes verified launch until handoff. A watch is
+independent: `watchRequest` references an explicit reader Item, or
+`"current_request"` resolves the latest reader request in the admitted lineage.
+No command name, log, exit code, elapsed time, or final answer selects an agreement.
+
+`task_control` is a root-Thread mutation. The Host binds its active Tool Item;
+foreign Threads, historical callers, hidden/delegated Threads, and copied evidence
+cannot control another owner. Every action has `task_id` and `operation_id`:
+
+| Action | Required fields and accepted effect |
+| --- | --- |
+| `handoff` | `expected_revision`, one to eight `readiness` Turn/Item references to completed successful checks after this service's launch; complete launch, preserve watch and process ownership |
+| `acknowledge` | exact immutable `event_id`; bind a pending result to the current Turn/Item before reporting it |
+| `start_watch` | `expected_revision`, explicit reader `request` reference; create a distinct watch on a live service with no active watch; a later watch requires a newer reader request |
+| `revoke_watch` | `expected_revision`, exact `watch_id`; revoke only that watch, leaving launch and the process intact |
+
+Bash returns `evidence` references for follow-up checks. Launch progress and
+`task_status` are not readiness checks. The Host validates reference identity,
+ordering, success, and execution lineage; it does not certify arbitrary log
+semantics. The development Skill requires an appropriate endpoint, Runtime, or
+actual application check before handoff.
+
+`task_status.continuation` exposes revision, handoff, watch, Stop provenance, and
+event facts. Its optional `operation_id` reconciles an exact receipt read-only;
+`requestReference` identifies the latest reader request. After caller authorization,
+identical operation replay returns the persisted receipt before fresh preconditions.
+Different input under the same identity rejects. New stale operations return a
+bounded conflict receipt. An already handled/admitted event returns its existing
+handler. Receipts and responsibility commit atomically in the existing Task row;
+a failed write leaves work pending. Retain at most 256 distinct receipts per Task,
+reject new operations at that bound, and preserve old replay identities.
+
+Every terminal digest identifies exactly one event: `pending`, `silent` with
+`handed_off`/`watch_revoked`/`stopped`, `handled` with Turn/Item, or `admitted` with
+completion Turn/batch. A handed-over unwatched service exits silently for zero,
+nonzero, signal, or uncertain outcomes. Finite outcomes and unhanded launch exits
+remain pending; an active watch also owes continuation. Revoking a watch cannot
+suppress an unfinished launch. Silent outcomes have no fabricated delivery Turn.
+Acknowledged results stay owned if their handling Turn fails or is interrupted;
+ordinary Turn recovery applies, without an automatic second completion.
+
+Task control and Stop serialize with final Thread admission under the existing
+Thread mutex. The Host reconciles prepared batch identity before mutation and
+checks current responsibility again immediately before the canonical Turn start
+commits. Stop after exit can therefore silence an unadmitted event. Already
+committed admission wins over a competing acknowledgement or Stop; other batch
+members keep their own handling. Reconciliation failures remain blocked, never
+silent success. Restart preserves receipts, handoff, revocation, and disposition.
+
+Stop provenance is persisted before requesting supervisor teardown: UI, Agent,
+Host shutdown, or foreground Turn cancellation. The supervisor continues to own
+immutable code/signal/time/process-absence facts. A close outside the Host may
+have no known initiator; earlier stderr and shutdown errors cannot establish it.
+Process observations expose responsibility without granting fresh repair,
+monitoring, replacement, or restart authority. This Task format uses required
+`continuation_json` and `control_receipts_json`; pre-release data needs a fresh
+isolated directory, with no legacy reader or migration.
+
 Captured output and Tenon-managed artifacts share a 64 MiB per-task detail ceiling.
 Logical detail is capped at 1 GiB per owner Thread and content-addressed physical detail
 at 8 GiB per application. New background-capable work reserves its ceiling before spawn.
-Delivered detail has a 30-day TTL and is pressure-evicted oldest-first; undelivered or
+Delivered, silent, and handled detail has a 30-day TTL and is pressure-evicted oldest-first; pending or
 blocked evidence is protected. A storage refusal records required, reclaimable, and
 protected bytes without spawning. The task detail UI offers a confirmed Host-owned clear
-for eligible delivered details; this action is not a model tool and preserves compact
+for eligible settled details; this action is not a model tool and preserves compact
 terminal and delivery truth. Thread archive/delete and missing-owner recovery refuse or
 tear down work rather than creating orphan processes or completion Turns.
 

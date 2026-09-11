@@ -1,5 +1,11 @@
 import { decodeProcessIsolationEvidence, pendingProcessIsolation, sameIsolationRequest, type ProcessIsolationEvidence } from '../../../core/agent/processIsolation';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import {
+  decodeTaskCompletionAgreement, decodeTaskContinuation, decodeTaskControlInput, decodeTaskControlReceipt, initialTaskContinuation, taskDeliverySettled,
+  settleTaskEvent, taskOwesContinuation,
+  type TaskCompletionAgreement, type TaskContinuation, type TaskControlInput, type TaskControlReceipt,
+  type TaskItemReference, type TaskStopProvenance,
+} from '../../../core/agent/taskContinuation';
 import { validateExecutionContext } from './ExecutionContext';
 import type { ThreadContextPayloadReference, ThreadId, ThreadResourceReference, TurnId } from '../../../core/agent/protocol';
 import { decodeThreadContextPayloadReference } from '../../../core/agent/codec';
@@ -22,6 +28,8 @@ import {
 } from './toolTaskTypes';
 
 interface ToolTaskRow {
+  continuation_json: string;
+  control_receipts_json: string;
   task_id: string;
   owner_thread_id: string;
   source_turn_id: string;
@@ -113,12 +121,15 @@ interface ToolTaskLeaseRow {
 export class ToolTaskStore {
   constructor(private readonly db: SqliteDatabase) {
     const columns = this.db.prepare('PRAGMA table_info(tool_tasks)').all() as Array<{ name: string }>;
-    if (columns.length > 0 && (!columns.some(({ name }) => name === 'isolation_json') || !columns.some(({ name }) => name === 'parent_task_id'))) {
+    if (columns.length > 0 && ['execution_context_json', 'isolation_json', 'continuation_json', 'control_receipts_json']
+      .some((required) => !columns.some(({ name }) => name === required))) {
       throw new Error('Tool Task storage format changed. Start this pre-release build with fresh userData.');
     }
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS tool_tasks (
         task_id TEXT PRIMARY KEY,
+        continuation_json TEXT NOT NULL,
+        control_receipts_json TEXT NOT NULL DEFAULT '[]',
         owner_thread_id TEXT NOT NULL,
         source_turn_id TEXT NOT NULL,
         source_item_id TEXT NOT NULL,
@@ -139,7 +150,7 @@ export class ToolTaskStore {
           'running', 'settling', 'succeeded', 'failed', 'cancelled', 'timed_out', 'lost'
         )),
         delivery_state TEXT NOT NULL CHECK (delivery_state IN (
-          'pending', 'delivering', 'delivered', 'blocked'
+          'pending', 'delivering', 'delivered', 'blocked', 'silent', 'handled'
         )),
         progress_json TEXT,
         exit_code INTEGER,
@@ -413,7 +424,13 @@ export class ToolTaskStore {
     | 'outputBytes' | 'completedAt' | 'quiescedAt' | 'deliveryTurnId' | 'updatedAt'
     | 'artifacts' | 'artifactWarnings' | 'artifactsSettled' | 'reservationBytes' | 'deliveredAt'
     | 'detailBytes' | 'storagePressure' | 'isolation'
-  > & { isolation?: ProcessIsolationEvidence }): ToolTaskRecord {
+    | 'continuation' | 'controlReceipts'
+  > & { isolation?: ProcessIsolationEvidence; completionAgreement?: TaskCompletionAgreement }): ToolTaskRecord {
+    const agreement = decodeTaskCompletionAgreement(input.completionAgreement ?? { kind: 'result' });
+    if (agreement.kind === 'service' && (!input.backgroundEnabled || input.operationKind !== 'process' || input.producer !== 'bash')) {
+      throw new Error('Only explicit background Bash services may use a service agreement');
+    }
+    const continuation = initialTaskContinuation(agreement, `watch_${randomUUID()}`);
     validateExecutionContext(input.executionContext);
     const isolation = decodeProcessIsolationEvidence(input.isolation ?? pendingProcessIsolation(input.executionContext.policy, process.platform));
     if (isolation.requested !== input.executionContext.policy.isolation) throw new Error('Task isolation differs from admitted policy');
@@ -428,16 +445,107 @@ export class ToolTaskStore {
         task_id, owner_thread_id, source_turn_id, source_item_id, producer, description,
         command_digest, cwd, execution_context_json, isolation_json, operation_kind, parent_task_id,
         nonce, detail_path, background_enabled, state, delivery_state, detail_state,
-        timeout_ms, started_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', 'pending', 'available', ?, ?, ?)
+        timeout_ms, started_at, updated_at, continuation_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', 'pending', 'available', ?, ?, ?, ?)
     `).run(
       input.taskId, input.ownerThreadId, input.sourceTurnId, input.sourceItemId,
       input.producer, input.description, input.commandDigest, input.cwd,
       JSON.stringify(input.executionContext), JSON.stringify(isolation), input.operationKind, input.parentTaskId, input.nonce,
-      input.detailPath, input.backgroundEnabled ? 1 : 0, input.timeoutMs, input.startedAt, input.startedAt,
+      input.detailPath, input.backgroundEnabled ? 1 : 0, input.timeoutMs, input.startedAt, input.startedAt, JSON.stringify(continuation),
     );
       return this.read(input.taskId)!;
     });
+  }
+
+  controlReceipt(input: TaskControlInput): TaskControlReceipt | null {
+    const normalized = decodeTaskControlInput(input);
+    const prior = this.require(input.task_id).controlReceipts.find(({ receipt }) => receipt.operationId === input.operation_id);
+    if (!prior) return null;
+    if (prior.digest !== controlDigest(normalized)) throw new Error('Task operation identity was reused with different input');
+    return prior.receipt;
+  }
+
+  /** Caller authority and readiness are checked by the Host before entering this synchronous commit. */
+  control(input: TaskControlInput, caller: TaskItemReference, now: number): TaskControlReceipt {
+    input = decodeTaskControlInput(input);
+    return this.transaction(() => {
+      const replay = this.controlReceipt(input);
+      if (replay) return replay;
+      const task = this.require(input.task_id);
+      if (task.controlReceipts.length >= 256) throw new Error('Task operation receipt limit reached');
+      let continuation = task.continuation;
+      let status: TaskControlReceipt['status'] = 'conflict';
+      const mutableEvent = task.deliveryState !== 'delivering' && task.deliveryState !== 'blocked';
+      const liveService = task.state === 'running' && task.supervisorPid !== null && task.childPid !== null
+        && continuation.kind === 'service' && continuation.stop === null;
+      if (input.action === 'acknowledge') {
+        const event = continuation.event;
+        if (event?.id === input.event_id) {
+          if (event.disposition === 'handled' || event.disposition === 'admitted') status = 'already_handled';
+          else if (mutableEvent && event.disposition === 'pending') {
+            status = 'accepted';
+            continuation = { ...continuation, event: { ...event, disposition: 'handled', handling: { kind: 'turn', ...caller } } };
+          }
+        }
+      } else if (input.expected_revision === continuation.revision && mutableEvent) {
+        if (input.action === 'handoff' && liveService && !continuation.handoff) {
+          status = 'accepted';
+          continuation = { ...continuation, handoff: { by: caller, readiness: input.readiness } };
+        } else if (input.action === 'start_watch' && liveService && continuation.watch?.revokedAt !== null
+          && JSON.stringify(continuation.watch?.request) !== JSON.stringify(input.request)) {
+          status = 'accepted';
+          continuation = { ...continuation, watch: { id: `watch_${randomUUID()}`, request: input.request, revokedAt: null } };
+        } else if (input.action === 'revoke_watch' && continuation.watch?.id === input.watch_id
+          && continuation.watch.revokedAt === null) {
+          status = 'accepted';
+          continuation = { ...continuation, watch: { ...continuation.watch, revokedAt: now } };
+        }
+      }
+      if (status === 'accepted') {
+        continuation = { ...continuation, revision: continuation.revision + 1 };
+        if (continuation.event?.disposition === 'pending') continuation = { ...continuation, event: settleTaskEvent(continuation, continuation.event.id) };
+      }
+      const receipt: TaskControlReceipt = {
+        operationId: input.operation_id, taskId: task.taskId, action: input.action, status,
+        revision: continuation.revision, watchId: continuation.watch?.id ?? null, event: continuation.event,
+      };
+      this.writeContinuation(task, continuation, now);
+      this.db.prepare('UPDATE tool_tasks SET control_receipts_json = ? WHERE task_id = ?')
+        .run(JSON.stringify([...task.controlReceipts, { digest: controlDigest(input), receipt }]), task.taskId);
+      return receipt;
+    });
+  }
+
+  stopResponsibilities(taskId: string, source: TaskStopProvenance, now: number): ToolTaskRecord {
+    return this.transaction(() => {
+      const task = this.require(taskId);
+      if (task.continuation.stop) return task;
+      if (task.deliveryState === 'delivering') throw new Error('Reconcile the prepared delivery before accepting Stop');
+      let continuation: TaskContinuation = { ...task.continuation, stop: source, revision: task.continuation.revision + 1 };
+      if (continuation.event?.disposition === 'pending' && task.deliveryState !== 'blocked') {
+        continuation = { ...continuation, event: settleTaskEvent(continuation, continuation.event.id) };
+      }
+      this.writeContinuation(task, continuation, now);
+      return this.require(taskId);
+    });
+  }
+
+  deliveryIsCurrent(batchId: string): boolean {
+    const batch = this.readBatch(batchId);
+    return batch?.state === 'prepared' && batch.taskIds.every((id) => {
+      const task = this.require(id);
+      return task.deliveryState === 'delivering' && task.continuation.event?.disposition === 'pending'
+        && taskOwesContinuation(task.continuation);
+    });
+  }
+
+  private writeContinuation(task: ToolTaskRecord, continuation: TaskContinuation, now: number): void {
+    decodeTaskContinuation(continuation);
+    const disposition = continuation.event?.disposition;
+    const delivery = disposition === 'silent' || disposition === 'handled' ? disposition : task.deliveryState;
+    this.db.prepare(`UPDATE tool_tasks SET continuation_json = ?, delivery_state = ?,
+      delivered_at = CASE WHEN ? IN ('silent', 'handled') THEN COALESCE(delivered_at, ?) ELSE delivered_at END,
+      updated_at = ? WHERE task_id = ?`).run(JSON.stringify(continuation), delivery, delivery, now, now, task.taskId);
   }
 
   setIsolation(taskId: string, evidence: ProcessIsolationEvidence): ToolTaskRecord {
@@ -605,6 +713,8 @@ export class ToolTaskStore {
         receipt.quiescedAt, receipt.quiescedAt, now, taskId,
       );
       this.releaseLease(taskId, now);
+      const settled = this.require(taskId);
+      this.writeContinuation(settled, { ...settled.continuation, event: settleTaskEvent(settled.continuation, receipt.receiptDigest) }, now);
     });
     return this.require(taskId);
   }
@@ -703,6 +813,8 @@ export class ToolTaskStore {
         || !isToolTaskTerminal(task.state)
         || task.deliveryState !== 'pending'
         || task.terminalDigest === null
+        || task.continuation.event?.disposition !== 'pending'
+        || !taskOwesContinuation(task.continuation)
       ))) throw new Error('Tool Task delivery membership is stale');
       this.db.prepare(`
         INSERT INTO tool_task_delivery_batches(
@@ -762,6 +874,13 @@ export class ToolTaskStore {
           delivered_at = COALESCE(delivered_at, ?), updated_at = ?
         WHERE task_id IN (SELECT task_id FROM tool_task_delivery_members WHERE batch_id = ?)
       `).run(turnId, now, now, batchId);
+      for (const member of members) {
+        const task = this.require(member.task_id);
+        this.writeContinuation(task, { ...task.continuation, event: {
+          id: member.terminal_digest, disposition: 'admitted', reason: null,
+          handling: { kind: 'completion', turnId, batchId },
+        } }, now);
+      }
     });
     if (mismatchedTaskId !== null) {
       throw new Error(`Tool Task delivery member mismatch: ${mismatchedTaskId}`);
@@ -858,7 +977,7 @@ export class ToolTaskStore {
     return (this.db.prepare(`
       SELECT * FROM tool_tasks
       WHERE owner_thread_id = ? AND state NOT IN ('running', 'settling')
-        AND delivery_state = 'delivered' AND detail_state = 'available'
+        AND delivery_state IN ('delivered', 'silent', 'handled') AND detail_state = 'available'
       ORDER BY completed_at, task_id
     `).all(ownerThreadId) as ToolTaskRow[]).map(taskFromRow);
   }
@@ -956,7 +1075,7 @@ function taskFromRow(row: ToolTaskRow): ToolTaskRecord {
   if (![
     'running', 'settling', 'succeeded', 'failed', 'cancelled', 'timed_out', 'lost',
   ].includes(state)) throw new Error('Invalid persisted Tool Task state');
-  if (!['pending', 'delivering', 'delivered', 'blocked'].includes(deliveryState)) {
+  if (!['pending', 'delivering', 'delivered', 'blocked', 'silent', 'handled'].includes(deliveryState)) {
     throw new Error('Invalid persisted Tool Task delivery state');
   }
   if (!['available', 'expired', 'cleared', 'storage_pressure'].includes(detailState)) {
@@ -967,6 +1086,8 @@ function taskFromRow(row: ToolTaskRow): ToolTaskRecord {
   const artifactWarnings = decodeArtifactWarnings(row.artifact_warnings_json);
   return {
     taskId: row.task_id,
+    continuation: decodeTaskContinuation(JSON.parse(row.continuation_json)),
+    controlReceipts: decodeControlReceipts(row.control_receipts_json),
     ownerThreadId: row.owner_thread_id,
     sourceTurnId: row.source_turn_id,
     sourceItemId: row.source_item_id,
@@ -1014,6 +1135,7 @@ function taskFromRow(row: ToolTaskRow): ToolTaskRecord {
 
 export function projectToolTask(task: ToolTaskRecord): ToolTaskProjection {
   const {
+    controlReceipts: _controlReceipts,
     backgroundEnabled: _backgroundEnabled,
     commandDigest: _commandDigest,
     cwd: _cwd,
@@ -1203,7 +1325,7 @@ function storageUsage(
     const bytesFor = (task: ToolTaskRecord) => task.reservationBytes + task.detailBytes;
     const usedBytes = visible.reduce((sum, task) => sum + bytesFor(task), 0);
     const reclaimableBytes = visible
-      .filter((task) => isToolTaskTerminal(task.state) && task.deliveryState === 'delivered')
+      .filter((task) => isToolTaskTerminal(task.state) && taskDeliverySettled(task.deliveryState))
       .reduce((sum, task) => sum + bytesFor(task), 0);
     return { usedBytes, reclaimableBytes, protectedBytes: usedBytes - reclaimableBytes };
   }
@@ -1214,7 +1336,7 @@ function storageUsage(
   for (const task of visible) {
     for (const artifact of task.artifacts) {
       const current = artifactOwners.get(artifact.ref.id);
-      const reclaimable = isToolTaskTerminal(task.state) && task.deliveryState === 'delivered';
+      const reclaimable = isToolTaskTerminal(task.state) && taskDeliverySettled(task.deliveryState);
       artifactOwners.set(artifact.ref.id, {
         byteLength: Math.max(current?.byteLength ?? 0, artifact.ref.byteLength),
         reclaimable: (current?.reclaimable ?? true) && reclaimable,
@@ -1224,7 +1346,7 @@ function storageUsage(
   const artifacts = [...artifactOwners.values()];
   const artifactBytes = artifacts.reduce((sum, artifact) => sum + artifact.byteLength, 0);
   const reclaimableOutput = visible
-    .filter((task) => isToolTaskTerminal(task.state) && task.deliveryState === 'delivered')
+    .filter((task) => isToolTaskTerminal(task.state) && taskDeliverySettled(task.deliveryState))
     .reduce((sum, task) => sum + task.outputBytes, 0);
   const reclaimableArtifacts = artifacts
     .filter((artifact) => artifact.reclaimable)
@@ -1232,4 +1354,22 @@ function storageUsage(
   const usedBytes = reservations + outputBytes + artifactBytes;
   const reclaimableBytes = reclaimableOutput + reclaimableArtifacts;
   return { usedBytes, reclaimableBytes, protectedBytes: usedBytes - reclaimableBytes };
+}
+
+function controlDigest(input: TaskControlInput): string {
+  return createHash('sha256').update(JSON.stringify(input)).digest('hex');
+}
+
+function decodeControlReceipts(value: string): ToolTaskRecord['controlReceipts'] {
+  const records = JSON.parse(value) as unknown;
+  if (!Array.isArray(records) || records.length > 256) throw new Error('Invalid Task operation receipts');
+  const ids = new Set<string>();
+  return records.map((entry) => {
+    if (!entry || typeof entry !== 'object' || Object.keys(entry).some((key) => !['digest', 'receipt'].includes(key))
+      || typeof entry.digest !== 'string' || !/^[0-9a-f]{64}$/u.test(entry.digest)) throw new Error('Invalid Task operation digest');
+    const receipt = decodeTaskControlReceipt(entry.receipt);
+    if (ids.has(receipt.operationId)) throw new Error('Duplicate Task operation receipt');
+    ids.add(receipt.operationId);
+    return { digest: entry.digest, receipt };
+  });
 }

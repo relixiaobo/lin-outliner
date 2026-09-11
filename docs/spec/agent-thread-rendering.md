@@ -318,8 +318,19 @@ not delete canonical Thread history.
 The strip consumes a cold task list plus transient task-change notifications.
 Notifications are invalidation signals, not a second ledger. Reload, missed
 notification, and restart therefore converge on the same durable task state.
-Completion delivery is independent from strip visibility and commits exactly
-once through canonical root Turn admission.
+Completion delivery is independent from strip visibility. Only a remaining
+result, launch, or watch responsibility admits a completion Turn once. Handoff
+and exact watch revocation remain visible through cold reads and restart.
+
+Service rows distinguish startup verification, availability after handoff, and an
+explicit watch. Details show process state separately from launch and monitoring,
+plus factual exit code, signal, and known Stop source. An unknown external close
+initiator remains unknown. Silent failed, lost, timed-out, or signalled service
+exits retain an attention row beyond the ordinary terminal linger window; blocked
+reconciliation also stays visible. Neither an attention row nor opening details
+starts a model Turn. The existing neutral tokens, detail disclosure, light/dark
+themes, and accessibility preferences apply. Expanded Task facts use an opaque
+content surface inside the translucent chrome disclosure.
 
 The strip never displays launcher identity, model policy, Agent Session state, or
 a child Thread. A delegated result remains command output owned by its Tool Task;

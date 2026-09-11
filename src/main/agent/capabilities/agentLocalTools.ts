@@ -1,3 +1,4 @@
+import { decodeTaskLaunchAgreement, TASK_COMPLETION_AGREEMENT_SCHEMA } from '../../../core/agent/taskContinuation';
 import {
   TextFileNewlines,
   type NormalizedTextCharacter,
@@ -369,6 +370,7 @@ interface Hunk {
 }
 
 interface BashParams {
+  completion_agreement?: import('../../../core/agent/taskContinuation').TaskLaunchAgreement;
   command: string;
   stdin?: string;
   description?: string;
@@ -377,6 +379,8 @@ interface BashParams {
 }
 
 export interface BashData {
+  evidence?: import('../../../core/agent/taskContinuation').TaskItemReference;
+  continuation?: import('../../../core/agent/taskContinuation').TaskContinuation;
   stdout: string;
   stderr: string;
   rawOutputPath?: string;
@@ -740,7 +744,8 @@ const BASH_PARAMETERS = {
       ].join('\n'),
     },
     timeout: { type: 'integer', minimum: 1, maximum: BASH_MAX_TIMEOUT_MS, description: `Optional process lifetime in milliseconds. Foreground default: 120000. Background default: no elapsed-time limit. An explicit timeout also stops background work. Maximum ${BASH_MAX_TIMEOUT_MS}.` },
-    run_in_background: { type: 'boolean', description: 'Use true for a server that must remain available for user testing, or when useful work can continue independently. Without an explicit timeout it runs until stopped, application Quit, process exit, or a resource limit. Inspect startup output with task_status and verify readiness; keep a requested server running after verification. Do not append "&" or daemonize. Use task_stop only when the owned process should end.' },
+    completion_agreement: TASK_COMPLETION_AGREEMENT_SCHEMA,
+    run_in_background: { type: 'boolean', description: 'Changes waiting behavior only. For a requested application use completion_agreement kind service, verify readiness, then task_control handoff. Finite work defaults to a result obligation. Do not append "&" or daemonize. Omitted timeout means no elapsed-time deadline.' },
   },
 };
 
@@ -1728,6 +1733,10 @@ function createBashTool(
             'Delegate commands require run_in_background: true.',
           );
         }
+        if (params.completion_agreement?.kind === 'service'
+          && (delegateCommand || !toolTaskService || !workspace.threadId || !turnId)) {
+          throw new LocalToolFailure('invalid_args', 'Service agreements require an owned background Bash process; delegated jobs retain their finite result obligation.');
+        }
         if (params.run_in_background) {
           if (delegateCommand) validateDelegateCommandInput(delegateCommand, params.stdin);
           if (params.stdin !== undefined && (!toolTaskService || !workspace.threadId || !turnId)) {
@@ -1755,7 +1764,7 @@ function createBashTool(
               metrics: metrics(started, data),
             })
             : successEnvelope('bash', data, {
-              instructions: `Command is running in the background as ${data.backgroundTaskId}. Use task_status to inspect startup output and verify readiness without stopping it. Keep requested servers running; use task_stop only when they should end.`,
+              instructions: `Task ${data.backgroundTaskId} is owned by this Thread. A service requires a completed readiness check and task_control handoff before reporting it available. task_status exposes responsibility revision and running observations. Finite jobs retain result delivery. Use task_stop only when the process should end.`,
               metrics: metrics(started, data),
             });
           return agentToolResult(envelope, visibleBash(data));
@@ -2006,6 +2015,8 @@ function normalizeFileWriteParams(rawParams: unknown): FileWriteParams {
 
 function normalizeBashParams(rawParams: unknown): BashParams {
   const input = asRecord(rawParams);
+  const agreement = input.completion_agreement === undefined ? undefined : decodeTaskLaunchAgreement(input.completion_agreement);
+  if (agreement?.kind === 'service' && input.run_in_background !== true) throw new LocalToolFailure('invalid_args', 'A service agreement requires run_in_background: true.');
   const command = requiredLocalString(input.command, 'command');
   if (input.stdin !== undefined && typeof input.stdin !== 'string') {
     throw new LocalToolFailure('invalid_args', 'stdin must be a string.');
@@ -2020,6 +2031,7 @@ function normalizeBashParams(rawParams: unknown): BashParams {
   }
   return {
     command,
+    ...(agreement ? { completion_agreement: agreement } : {}),
     ...(typeof input.stdin === 'string' ? { stdin: input.stdin } : {}),
     description: optionalNormalizedString(input.description),
     ...(input.timeout === undefined ? {} : { timeout: clampInteger(input.timeout, 1, BASH_MAX_TIMEOUT_MS, BASH_DEFAULT_TIMEOUT_MS) }),
@@ -2710,6 +2722,7 @@ async function startSupervisedBackgroundCommand(
     : undefined;
   const task = await service.start({
     ownerThreadId: workspace.threadId!,
+    completionAgreement: params.completion_agreement,
     sourceTurnId: turnId,
     sourceItemId: toolCallId,
     producer: delegateRuntime ? 'delegate' : 'bash',
@@ -2746,6 +2759,8 @@ async function startSupervisedBackgroundCommand(
     stderr: '',
     interrupted: false,
     backgroundTaskId: task.taskId,
+    continuation: task.continuation,
+    evidence: { turnId, itemId: toolCallId },
     backgroundedByUser: true,
     command: params.command,
     taskStatus: bashTaskStatusForToolTaskState(task.state),
@@ -2818,7 +2833,7 @@ async function runSupervisedForegroundCommand(
   );
   if (!settled) throw new Error(`Tool Task disappeared before foreground settlement: ${task.taskId}`);
   if (!isToolTaskTerminalState(settled.state)) {
-    settled = await service.stop(settled.taskId, workspace.threadId!) ?? settled;
+    settled = await service.stop(settled.taskId, workspace.threadId!, turnId, signal?.aborted ? 'turnCancellation' : 'agent') ?? settled;
   }
   if (!isToolTaskTerminalState(settled.state)) {
     settled = service.promote(settled.taskId, workspace.threadId!)!;
@@ -2862,6 +2877,7 @@ async function runSupervisedForegroundCommand(
     return {
       stdout: output?.stdout ?? '',
       stderr: output?.stderr ?? '',
+      evidence: { turnId, itemId: toolCallId },
       interrupted,
       exitCode: settled.exitCode,
       command: params.command,
@@ -4465,6 +4481,8 @@ export function visibleBash(data: BashData): unknown {
   if (typeof data.exitCode === 'number' && data.exitCode !== 0) visible.exitCode = data.exitCode;
   if (data.isImage) visible.isImage = true;
   if (data.backgroundTaskId) visible.backgroundTaskId = data.backgroundTaskId;
+  if (data.continuation) visible.continuation = data.continuation;
+  if (data.evidence) visible.evidence = data.evidence;
   if (data.taskStatus) visible.taskStatus = data.taskStatus;
   if (data.persistedOutput) visible.persistedOutput = visiblePersistedToolOutput(data.persistedOutput);
   if (data.artifacts?.length) visible.artifacts = visibleShellArtifacts(data.artifacts);

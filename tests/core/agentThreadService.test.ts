@@ -7438,6 +7438,103 @@ class OpenToolItemExecutor implements TurnExecutor {
   }
 }
 
+describe('background Task responsibility authority', () => {
+  async function admittedFixture() {
+    const fixture = await createFixture();
+    const { thread } = await fixture.service.startThread({ source: 'app', threadSource: 'user', modelProvider: 'openai', configurationSource: { kind: 'user' } });
+    await fixture.service.startRendererTurn({ threadId: thread.id, input: [{ type: 'text', text: 'Start the application and watch it until I ask you to stop watching.' }] });
+    await fixture.executor.waitUntilWaiting();
+    const context = fixture.executor.contexts[0]!;
+    return { ...fixture, thread, context, tasks: fixture.service.toolTaskService() };
+  }
+  async function item(context: TurnExecutionContext, tool: string, completed = false, success = true) {
+    const id = context.recorder.createItemId();
+    const started: Extract<ThreadItem, { type: 'dynamicToolCall' }> = {
+      type: 'dynamicToolCall', id, provenance: context.recorder.localProvenance(id), namespace: null, tool, arguments: {},
+      status: 'inProgress', outputRef: null, contentItems: null, success: null, durationMs: null,
+      modelCall: replayableModelCall(tool, {}),
+    };
+    await context.recorder.started(started);
+    if (completed) await context.recorder.completed({ ...started, status: 'completed', success, durationMs: 1 });
+    return { turnId: context.turn.id, itemId: id };
+  }
+
+  test('validates active root authority and actual successful readiness lineage before handoff', async () => {
+    const fixture = await admittedFixture();
+    const { context, tasks, thread } = fixture;
+    const earlier = await item(context, 'web_fetch', true);
+    const launch = await item(context, 'bash');
+    const gate = join(fixture.root, 'service-exit');
+    const task = await tasks.start({ ownerThreadId: thread.id, sourceTurnId: context.turn.id, sourceItemId: launch.itemId,
+      producer: 'bash', description: 'Application', command: `while [ ! -f '${gate}' ]; do sleep 0.02; done; exit 7`,
+      cwd: fixture.root, env: process.env, timeoutMs: 5_000, completionAgreement: { kind: 'service' } });
+    await withTimeout(waitUntil(() => tasks.readOwned(task.taskId, thread.id)?.childPid !== null), 3000);
+    const failed = await item(context, 'web_fetch', true, false);
+    const status = await item(context, 'task_status', true);
+    const valid = await item(context, 'web_fetch', true);
+    const caller = await item(context, 'task_control');
+    const input = { action: 'handoff' as const, task_id: task.taskId, operation_id: 'handoff', expected_revision: 0, readiness: [valid] };
+    for (const reference of [earlier, launch, failed, status, { ...valid, itemId: 'missing' }]) {
+      await expect(tasks.control(thread.id, caller, { ...input, readiness: [reference] })).rejects.toThrow();
+    }
+    await expect(tasks.control(thread.id, { ...caller, turnId: 'another-turn' }, input)).rejects.toThrow('active Tool Item');
+    const foreign = (await fixture.service.startThread({ source: 'app', threadSource: 'user', modelProvider: 'openai', configurationSource: { kind: 'user' } })).thread;
+    await expect(tasks.control(foreign.id, caller, input)).rejects.toThrow('active Tool Item');
+    const receipt = await tasks.control(thread.id, caller, input);
+    expect(receipt.status).toBe('accepted');
+    expect(tasks.readOwned(task.taskId, thread.id)?.continuation.handoff).toEqual({ by: caller, readiness: [valid] });
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(thread.id);
+    await expect(tasks.control(thread.id, caller, input)).rejects.toThrow('active Tool Item');
+    await writeFile(gate, 'exit');
+    await withTimeout(waitUntil(() => tasks.readOwned(task.taskId, thread.id)?.deliveryState === 'silent'), 3000);
+    expect(fixture.executor.contexts).toHaveLength(1);
+  });
+
+  test('binds watch requests to reader Items and rejects reusing a revoked request', async () => {
+    const { tasks, thread, context, ...fixture } = await admittedFixture();
+    const launch = await item(context, 'bash');
+    const task = await tasks.start({ ownerThreadId: thread.id, sourceTurnId: context.turn.id, sourceItemId: launch.itemId,
+      producer: 'bash', description: 'Watched application', command: 'sleep 30', cwd: fixture.root,
+      env: process.env, timeoutMs: null, completionAgreement: { kind: 'service', watchRequest: 'current_request' } });
+    const reader = fixture.service.taskReaderRequest(thread.id, context.turn.id)!;
+    expect(task.continuation.watch?.request).toEqual(reader);
+    const caller = await item(context, 'task_control');
+    const revoke = await tasks.control(thread.id, caller, { task_id: task.taskId, operation_id: 'revoke', action: 'revoke_watch',
+      expected_revision: 0, watch_id: task.continuation.watch!.id });
+    expect(revoke.status).toBe('accepted');
+    expect(await tasks.control(thread.id, caller, { task_id: task.taskId, operation_id: 'stale', action: 'start_watch',
+      expected_revision: 0, request: launch })).toMatchObject({ status: 'conflict', revision: 1 });
+    await expect(tasks.control(thread.id, caller, { task_id: task.taskId, operation_id: 'rewatch', action: 'start_watch',
+      expected_revision: 1, request: reader })).rejects.toThrow('explicit reader request');
+    await expect(tasks.control(thread.id, caller, { task_id: task.taskId, operation_id: 'fake-watch', action: 'start_watch',
+      expected_revision: 1, request: launch })).rejects.toThrow('explicit reader request');
+    await tasks.stop(task.taskId, thread.id, context.turn.id, 'agent');
+    expect(tasks.readOwned(task.taskId, thread.id)?.continuation).toMatchObject({ stop: { source: 'agent' }, event: { disposition: 'silent' } });
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(thread.id);
+    expect(fixture.executor.contexts).toHaveLength(1);
+  });
+
+  test('an existing Turn acknowledges a terminal result once and interruption does not redispatch it', async () => {
+    const { tasks, thread, context, ...fixture } = await admittedFixture();
+    const launch = await item(context, 'bash');
+    const task = await tasks.start({ ownerThreadId: thread.id, sourceTurnId: context.turn.id, sourceItemId: launch.itemId,
+      producer: 'bash', description: 'Finite result', command: 'exit 1', cwd: fixture.root, env: process.env, timeoutMs: 5000 });
+    await withTimeout(waitUntil(() => tasks.readOwned(task.taskId, thread.id)?.continuation.event !== null), 3000);
+    const terminal = tasks.readOwned(task.taskId, thread.id)!;
+    const caller = await item(context, 'task_control');
+    const receipt = await tasks.control(thread.id, caller, { task_id: task.taskId, operation_id: 'ack', action: 'acknowledge', event_id: terminal.continuation.event!.id });
+    expect(receipt.event).toMatchObject({ disposition: 'handled', handling: { kind: 'turn', ...caller } });
+    await fixture.service.interruptUserWork(thread.id, context.turn.id);
+    await fixture.service.waitForIdle(thread.id);
+    tasks.wakeDelivery(thread.id);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(fixture.executor.contexts).toHaveLength(1);
+    expect(tasks.readOwned(task.taskId, thread.id)?.continuation.event).toEqual(receipt.event);
+  });
+});
+
 async function createFixture(
   extensions?: ExtensionRegistry,
   options: Pick<

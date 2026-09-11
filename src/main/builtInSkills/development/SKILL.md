@@ -9,40 +9,62 @@ user-invocable: true
 1. Inspect the project instructions and choose the intended Bash `cwd`. Use the
    existing capability and worktree assignment. A worktree redirects relative
    work; it does not contain arbitrary absolute-path shell effects.
-2. Run finite dependent commands in the foreground. For a development server the
-   user wants to use or test, set `run_in_background: true` and omit `timeout` so
-   it remains running after the Turn. Explicit timeouts also terminate background
-   work; foreground commands default to 120 seconds. Keep the Task ID. Do not
-   append `&` or daemonize. Independent finite work may also run in the background.
-   Delegated Agent jobs retain their configured deadlines.
-3. Inspect that Task with `task_status`. Requested policy, observed OS isolation,
+2. Run finite dependent commands in the foreground. Independent finite jobs may
+   use `run_in_background: true`; omitted `completion_agreement` means they still
+   owe a result. For an application or server the user wants to use, explicitly
+   set `completion_agreement: {"kind":"service"}` with `run_in_background: true`.
+   Omit `timeout` to leave it running; explicit timeouts terminate background work.
+   Keep its Task ID and launch `evidence` reference. Never daemonize or append `&`.
+3. Inspect the Task with `task_status`. Requested policy, observed OS isolation,
    capability, and worktree identity are different facts. `unsandboxed` is normal
    Full Access. The macOS write sandbox does not restrict network access.
    `unavailable` or `rejected` requires addressing the reported requirement; do
    not rerun unrestricted or broaden roots implicitly.
-4. Verify startup with `task_status` running logs and an appropriate native check:
-   a server endpoint, Runtime connection, or the actual application surface.
-   Process existence, a listening frontend, and passing typechecks alone do not
-   establish that the requested application works. Running observations contain
-   bounded, sanitized complete log lines; they are not final captures. Inspect
-   only when readiness, recovery, or the user needs it; avoid repetitive polling.
-5. Leave a verified server running for the user. Do not call `task_stop` merely
-   to obtain output or finish your reply. Stop owned work only when requested or
-   necessary for an explained restart/cleanup, then inspect the terminal result.
-   Orderly application Quit also stops owned processes. Terminal output has a
-   bounded preview;
-   retained output and artifacts can later expire while the compact receipt
-   remains. Treat every capture as an immutable observation.
-6. A background Task does not reserve its directory. Other commands and file
-   operations can run there; native tool locks and ordinary coordination handle
-   conflicts. Use separate worktrees for independent edits when appropriate.
-7. After a restart, retry, or compaction, reconcile the original Task before any
-   new start. Historical `running` means running at observation time. It is not
-   proof of current liveness. Repeat neither an unchanged Skill body nor a full
-   process list in model context. A completion notification does not cancel the
-   original request: if it reveals a startup failure, continue diagnosis and
-   reversible fixes within the user's existing authorization. Report a concrete
-   blocker only when progress requires a new decision or unavailable access.
+4. Verify usable startup with an appropriate completed endpoint, Runtime, or
+   application check in the same authorized execution lineage. Running logs,
+   process existence, a listening frontend, and typechecks alone do not establish
+   that the requested application works. Bash checks return an `evidence` Item
+   reference. A failed check leaves launch unfinished. Avoid repetitive polling.
+5. Before reporting availability, call `task_control` with `action: "handoff"`,
+   the exact `task_id`, a fresh `operation_id`, current `expected_revision` from
+   `task_status.continuation`, and `readiness: [evidence]` from completed successful
+   checks after launch. Check the receipt's status. Handoff keeps the process,
+   output, isolation, and Stop ownership, and ends only the launch responsibility.
+   It does not end a watch. A later exit of an unwatched handed-over service is
+   silent, including nonzero or uncertain exits; do not start unsolicited repair.
+6. Watch only when explicitly requested. At launch, add
+   `watchRequest: "current_request"` to the service agreement to bind that reader
+   request. To watch an already live service, obtain the exact reader
+   `requestReference` from `task_status`, then call `task_control` with
+   `action: "start_watch"`, `request`, and the current revision. Retain its returned
+   `watchId`. To stop watching while keeping it running, use `action: "revoke_watch"`
+   with that `watch_id` and revision. A later watch requires a newer explicit
+   reader request. A watch grants no periodic polling or extra permissions.
+7. When an active Turn inspects and handles a terminal result, call `task_control`
+   with `action: "acknowledge"` and the exact `event_id` from
+   `task_status.continuation.event` before finishing the response. Acceptance binds
+   that result to this Turn; it does not claim success or user receipt. A failed
+   or interrupted handling Turn retains that ownership through ordinary recovery.
+   An event already admitted to a completion Turn keeps its existing handler.
+8. Every control call includes an operation ID. After an uncertain reply, inspect
+   `task_status` with that `operation_id`; retry identical input under the same ID.
+   Reusing an ID for different input rejects. A conflict returns bounded current
+   facts; reread before making a new decision. Old watch retries never restore or
+   cancel another watch. Status reads and natural-language replies do not mutate
+   responsibility. At most 256 distinct control receipts are retained per Task;
+   existing receipts remain replayable at that bound.
+9. Use `task_stop` only for authorized process Stop or necessary explained cleanup,
+   not to finish a reply, collect output, or stop watching. Stop revokes pending
+   responsibilities even if exit already occurred, without stealing an admitted
+   handling Turn. Orderly application Quit also stops live owned processes.
+   Exit code, signal, known Stop source, and earlier stderr are separate facts;
+   an external application's close initiator may be unknown. Logs do not prove it.
+10. A background Task does not reserve its directory. Use ordinary coordination
+    and separate worktrees where appropriate. Reconcile the original Task after
+    restart or compaction before any new launch. Retained output can expire while
+    compact ownership and receipts remain. Finite results, unfinished launches,
+    and explicit watches continue within their recorded request; events do not
+    grant restart, replacement, or broader authority on their own.
 
 ## Interactive tmux Experiment
 

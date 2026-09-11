@@ -229,6 +229,14 @@ notification-settings panel is required.
 
 ### Implementation scope and dependencies
 
+The launch field is `completion_agreement`; omitted agreements mean a finite
+result. `task_control` owns handoff, acknowledgement, start-watch and revoke-watch
+operations. The existing Task row stores responsibility revision, operation
+receipts, Stop provenance and terminal disposition. Its immutable terminal digest
+is the event identity. No additional receipt database or notification queue is
+introduced. Completion admission rechecks the same Task owner while holding the
+existing Thread admission boundary; a prepared batch alone is not handling.
+
 Implementation suggestions follow the behavioral contract above. Launch and all
 four Task control actions must be usable by the Agent in this same feature.
 Settle their shared-interface shape before building consumers; local spelling
@@ -298,12 +306,10 @@ design into specs and archive the plan only after that complete feature ships.
 
 ## Open questions
 
-OQ-1: At implementation-plan ratification, confirm the recommended default that
-all handed-over service exits, including nonzero/uncertain exits, update Task
-attention without waking the Agent. This avoids guessing whether the user closed
-the application; the accepted tradeoff is that continued diagnosis requires an
-existing watch agreement or a new user request. Do not silently implement a
-different rule based on stderr or exit timing.
+None. The selected default is that all handed-over service exits, including
+nonzero/uncertain exits, update Task attention without waking the Agent. Continued
+diagnosis requires an existing watch agreement or a new user request; stderr and
+exit timing do not change that rule.
 
 ## Implementation checklist
 

@@ -31,9 +31,53 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
           "maximum": 600000,
           "description": "Optional process lifetime in milliseconds. Foreground default: 120000. Background default: no elapsed-time limit. An explicit timeout also stops background work. Maximum 600000."
         },
+        "completion_agreement": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "result",
+                "service"
+              ]
+            },
+            "watchRequest": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "turnId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "itemId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "turnId",
+                    "itemId"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "const": "current_request"
+                }
+              ],
+              "description": "Only for an explicitly requested watch. current_request binds the latest reader request in the authorized Turn lineage."
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false,
+          "description": "Default result: a finite job owes its result. Service: a user-requested application must be verified and explicitly handed off. watchRequest references an explicit reader request to monitor that exact service; background execution alone never grants monitoring."
+        },
         "run_in_background": {
           "type": "boolean",
-          "description": "Use true for a server that must remain available for user testing, or when useful work can continue independently. Without an explicit timeout it runs until stopped, application Quit, process exit, or a resource limit. Inspect startup output with task_status and verify readiness; keep a requested server running after verification. Do not append \\"&\\" or daemonize. Use task_stop only when the owned process should end."
+          "description": "Changes waiting behavior only. For a requested application use completion_agreement kind service, verify readiness, then task_control handoff. Finite work defaults to a result obligation. Do not append \\"&\\" or daemonize. Omitted timeout means no elapsed-time deadline."
         },
         "cwd": {
           "type": "string",
@@ -466,12 +510,111 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
     }
   },
   {
+    "name": "task_control",
+    "description": "Change responsibility for an owned Task. handoff requires expected_revision and completed successful readiness references; launch progress/status alone is insufficient. acknowledge binds an exact terminal event_id to this Turn before reporting its result. start_watch requires expected_revision and an explicit reader request reference; revoke_watch requires expected_revision and the exact watch_id and keeps the process running. Handoff preserves a watch. All actions require operation_id; reconcile lost replies with task_status. A conflict or existing handler never transfers responsibility or grants repair/restart authority.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "Stable operation identity. Retry the same input with this identity after reconciling task_status; never reuse it for different input."
+        },
+        "action": {
+          "enum": [
+            "handoff",
+            "acknowledge",
+            "start_watch",
+            "revoke_watch"
+          ]
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "readiness": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "turnId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "itemId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "turnId",
+              "itemId"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1,
+          "maxItems": 8
+        },
+        "request": {
+          "type": "object",
+          "properties": {
+            "turnId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "itemId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "turnId",
+            "itemId"
+          ],
+          "additionalProperties": false
+        },
+        "event_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "watch_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "task_id",
+        "operation_id",
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
     "name": "task_status",
-    "description": "Read one background Tool Task owned by this Thread.\\nRead bounded running logs to verify startup readiness without stopping the process. Running observations are separate from terminal results. Use for readiness, an explicit status request, or recovery; avoid repetitive polling. Completion is delivered automatically.",
+    "description": "Read one background Tool Task owned by this Thread.\\nRead bounded running logs and responsibility/event facts without changing them. Running observations are not readiness proof. Use for readiness, an explicit status request, or recovery; avoid repetitive polling. operation_id reconciles an exact Task control receipt. Finite unhandled results and unfinished service launches continue automatically; handed-over services do not unless watched.",
     "parameters": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "Inspect the receipt for this exact Task control operation without changing responsibility."
+        },
         "task_id": {
           "description": "The Tool Task ID returned by a background-producing tool.",
           "type": "string",
@@ -486,7 +629,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
   },
   {
     "name": "task_stop",
-    "description": "\\n- Stops a running background task by its ID\\n- Takes a task_id parameter identifying the task to stop\\n- Returns a success or failure status\\n- Use this tool when you need to terminate a long-running task\\n",
+    "description": "\\n- Stops an owned background task and revokes its pending responsibilities, even after exit before delivery\\n- Takes a task_id parameter identifying the task to stop\\n- Returns factual process state and responsibility; an already committed handling Turn keeps its owner\\n- Use for authorized process Stop, not to stop watching; task_control revoke_watch leaves the process running\\n",
     "parameters": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",

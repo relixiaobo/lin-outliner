@@ -88,6 +88,7 @@ export interface DelegationUserStopInput {
 
 export type DelegationUserStopSettlement =
   | { readonly outcome: 'unrelated' }
+  | { readonly outcome: 'settled' }
   | {
     readonly outcome: 'fenced';
     readonly sessionId: ThreadId;
@@ -242,6 +243,12 @@ export class DelegationCoordinator {
       if (!session || session.ownerThreadId !== input.ownerThreadId) {
         throw unauthorized('Delegate Session is not owned by the Tool Task root Thread.');
       }
+      // Final-receipt reconciliation can release this execution while Stop
+      // waits for the Session gate, before the Tool Task's terminal row commits.
+      if (session.currentTaskId !== input.taskId
+        && (settlement.state === 'committed' || settlement.state === 'blocked')) {
+        return { outcome: 'settled' } as const;
+      }
       const fenced = this.options.store.fenceUserStop({
         sessionId: session.sessionId,
         expectedRevision: session.revision,
@@ -256,7 +263,7 @@ export class DelegationCoordinator {
         minimumResumeRevision: fenced.stopFence!.minimumResumeRevision,
       } as const;
     });
-    this.notifySession(initial.sessionId);
+    if (result.outcome === 'fenced') this.notifySession(initial.sessionId);
     return result;
   }
 
