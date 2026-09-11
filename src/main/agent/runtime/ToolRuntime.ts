@@ -116,7 +116,7 @@ export class ToolRuntime {
       ...(configuredWorkspace ?? { root: this.service.defaultExecutionDirectory(), scratchRoot: this.service.defaultExecutionDirectory(), readFileState: new Map() }),
       threadId: context.thread.id,
       ...(context.thread.threadSource === 'user' && !context.thread.parentThreadId && !context.thread.ephemeral
-        ? { resolveWorkFolder: () => this.service.projects.store.workFolder(context.thread.id) } : {}),
+        ? { resolveProjectDefault: () => this.service.projects.store.executionDefault(context.thread.id) } : {}),
       capability: delegationPolicy?.access === 'read-only' ? 'read-only' as const : 'full-access' as const,
       ...(automationBoundary ? { writeBoundary: automationBoundary } : {}),
       ...(validateAutomationIsolation ? { validateIsolation: validateAutomationIsolation } : {}),
@@ -263,16 +263,17 @@ export class ToolRuntime {
     if (context.thread.threadSource === 'user' && !context.thread.parentThreadId && !context.thread.ephemeral) {
       const view = await this.service.projects.currentContext(context.thread.id).catch(() => null);
       const text = view ? JSON.stringify({ conversation: context.thread.id, membership: view.memberships[0],
-        savedWorkFolder: view.workFolders[0], applicationDefault: view.applicationDefault,
+        applicationDefault: view.applicationDefault,
         project: view.projects[0] ?? null, unavailableFolders: view.unavailableFolders }) : 'Conversation location is unavailable; inspect it before relying on a default.';
       if (this.publishedLocations.get(context.turn) !== text) {
         const bounded = text.length <= 16_000 ? text : JSON.stringify({
-          conversation: context.thread.id, membership: view?.memberships[0], savedWorkFolder: view?.workFolders[0],
+          conversation: context.thread.id, membership: view?.memberships[0],
+          project: view?.projects[0] ? { id: view.projects[0].id, revision: view.projects[0].revision, primaryFolder: view.projects[0].primaryFolder } : null,
           applicationDefault: view?.applicationDefault, projectSources: 'Inspect the Project CLI for the complete source-folder list.',
         });
         await context.persistContextEvidence({ schemaVersion: 1, kind: 'additionalContext', threadState: null,
           turnEntries: [{ key: 'conversation-location', source: 'host:conversation-settings', authority: 'application', purpose: 'observation',
-            text: `Current saved conversation location (not a task execution receipt): ${bounded}` }] }, 'Conversation work folder and Project references');
+            text: `Current Project and default directory (not a task execution receipt): ${bounded}` }] }, 'Conversation Project and primary folder');
         this.publishedLocations.set(context.turn, text);
       }
     }

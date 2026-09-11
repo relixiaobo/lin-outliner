@@ -39,6 +39,20 @@ describe('task execution context', () => {
     await expect(resolveExecutionAddress({ defaultCwd: root, cwd: '' })).rejects.toMatchObject({ code: 'invalid_cwd' });
   });
 
+  test('Project defaults retain immutable provenance and reject redirected primary paths without fallback', async () => {
+    const root = await fixture();
+    const projectDefault = { projectId: owner, revision: 2, path: join(root, 'a') };
+    const context = pendingExecutionContext(await resolveExecutionAddress({ defaultCwd: projectDefault.path, projectDefault }), policy);
+    expect(context.address.projectDefault).toEqual(projectDefault);
+    expect(Object.isFrozen(context.address.projectDefault)).toBe(true);
+    expect(decodeTaskExecutionContext(context)).toEqual(context);
+    expect(() => decodeTaskExecutionContext({ ...context, address: { ...context.address, projectDefault: { projectId: null, path: null, revision: 1 } } })).toThrow();
+    await rm(join(root, 'a'), { recursive: true });
+    await symlink(join(root, 'b'), join(root, 'a'));
+    await expect(resolveExecutionAddress({ defaultCwd: projectDefault.path, projectDefault })).rejects.toMatchObject({ code: 'invalid_cwd' });
+    await expect(resolveExecutionAddress({ defaultCwd: projectDefault.path, projectDefault, cwd: join(root, 'b') })).resolves.toMatchObject({ cwd: join(root, 'b'), projectDefault });
+  });
+
   test('retains target applicability within a worktree with its shared identity', async () => {
     const root = await fixture();
     execFileSync('git', ['init', '-q', root]);

@@ -128,7 +128,7 @@ export function projectAgentCoreResponse<Method extends AgentCoreMethod>(
     case 'userInput/read':
     case 'userInput/respond':
     case 'identities/get':
-    case 'project/pickFolder':
+    case 'project/pickFolders':
     case 'project/inspect':
     case 'project/manage':
       return response as unknown as RendererAgentCoreResponseByMethod[Method];

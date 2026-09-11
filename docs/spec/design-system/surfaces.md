@@ -309,12 +309,49 @@ unboxed dense controls. Tool and reasoning metadata uses
 not an inset card. It uses neutral fill (`--fill-1`, focus/drag `--fill-2`), top
 corners at the rail radius, and text inset to the shared agent content column. Its
 toolbar is visually unified with the textarea. Add (`+`) is a neutral unboxed
-icon entry for attachments and optional Project/work-folder controls. A saved
-location adds one compact chip directly beside it, with full paths in details;
+icon entry for attachments and a searchable Project flyout with recent choices first, the full scrolling
+catalog, and a fixed creation footer. An empty catalog contains only New Project,
+without status text, search or separators. Project creation uses an icon/name field and
+a bordered, fully clickable empty source-folder area. Search and menu rows share
+a 16px icon slot, 4px label gap and 28px height; bare inputs do not add a second
+horizontal inset. A 4px vertical separator margin separates the catalog from footer
+actions. Primary-folder state uses a readable label. Each Project row reserves one
+28px trailing slot: the selection check at rest swaps to a pencil on row hover or
+visible keyboard focus, without shifting the label. Pointer focus alone does not
+keep the pencil visible after leaving the row. The pencil opens the same form with that Project’s saved values and a separate deletion confirmation. All chat
+Project operations live here; the Thread chooser only displays Project grouping.
+A selected Project adds one compact chip directly beside it: click its name to
+change selection. Its leading folder icon switches in place to a remove button on
+hover or keyboard focus, with neutral pill feedback and no geometry change.
+All four toolbar controls, including Send, use `--control-size-xl` height and
+vertical alignment before and during hover. Project and model pills retain
+`--space-4` horizontal padding so text has equal breathing room at the edges. Add, Project and model selection share `--control-hover`; Add uses a circular
+hit area, while text controls hug content plus padding under their truncation
+ceilings. Narrow model controls retain both horizontal padding and the dropdown
+caret, truncating the name inside the content area. The spacer absorbs spare
+toolbar width, never a hover background. Full paths remain in the Project editor;
 no selection adds no status row. Project names truncate before the application-
 default qualifier. Flexible space precedes the compact model/effort button and
 Send/Stop. Full model and effort identity remains accessible from keyboard and
 menus, and narrow layouts preserve these controls without hover reflow.
+Add folders opens a native directory picker with multiselection. Cancellation
+leaves the draft unchanged. A batch appends distinct new paths in picker order;
+the first added folder supplies the initial name suggestion and primary only
+when the source list was empty. Existing names and primaries remain unchanged.
+A batch exceeding the 20-folder total is rejected with a visible message,
+without partially adding its folders.
+
+Project folder rows are single-line and share icon, path, primary-action and
+remove columns. The Project dialog is 560px wide, capped to the viewport with
+16px outer insets. The final folder name takes its intrinsic width before the
+parent path receives the remaining space; only names exceeding the entire path
+column are themselves truncated. Long paths elide parent segments first;
+hover titles preserve the full path. Make primary appears on row hover or
+keyboard focus while its column stays reserved, so neither text nor neighbors
+move. The selected Primary label stays visible. Editing feedback appears above
+the action row, and closing restores focus to the Project chip or Add after
+deleting the selected Project.
+
 The attachment carousel stays within that inset, hides its redundant visual scrollbar,
 and preserves touchpad scrolling, edge buttons, and keyboard navigation. Card hover keeps
 the existing 1 px boundary and changes only its neutral colour; its radius-aligned Remove

@@ -12,7 +12,6 @@ export interface ProjectReview {
   readonly request: ProjectManageRequest;
   readonly project: import('../../../core/agent/project').Project | null;
   readonly threadName: string | null;
-  readonly currentWorkFolder: string | null;
 }
 
 export interface ProjectAutomationLifecycle {
@@ -54,26 +53,24 @@ export class ProjectService {
   }
   async currentContext(threadId: string): Promise<ProjectCatalogView> {
     const membership = this.store.membership(threadId);
-    const project = membership.projectId ? this.store.read(membership.projectId) : null;
+    const project = membership.projectId ? this.store.read(membership.projectId, true) : null;
     return this.buildView(project ? [project] : [], [threadId]);
   }
   private async buildView(projects: ProjectCatalogView['projects'], threadIds: readonly string[]): Promise<ProjectCatalogView> {
     const memberships = threadIds.map((id) => { this.requireRoot(id); return this.store.membership(id); });
-    const workFolders = threadIds.map((id) => this.store.workFolder(id));
-    const paths = [...new Set([...projects.flatMap((p) => p.folders), ...workFolders.flatMap((f) => f.path ? [f.path] : [])])];
+    const paths = [...new Set(projects.flatMap((p) => p.folders))];
     const unavailableFolders = (await Promise.all(paths.map(async (path) => await directoryAvailable(path) ? [] : [path]))).flat();
     let applicationDefault: ProjectCatalogView['applicationDefault'];
     try {
       const path = await realpath(this.applicationDirectory());
       applicationDefault = { path, available: await directoryAvailable(path) };
     } catch { applicationDefault = { path: null, available: false }; }
-    return { projects, memberships, workFolders, unavailableFolders, applicationDefault };
+    return { projects, memberships, unavailableFolders, applicationDefault };
   }
   proposal(request: ProjectManageRequest): ProjectReview {
     const project = 'projectId' in request && request.projectId ? this.store.require(request.projectId, request.expectedRevision ?? undefined) : null;
     const thread = 'threadId' in request ? this.requireRoot(request.threadId) : null;
-    return { request, project, threadName: thread ? thread.name || thread.preview || thread.id : null,
-      currentWorkFolder: thread ? this.store.workFolder(thread.id).path : null };
+    return { request, project, threadName: thread ? thread.name || thread.preview || thread.id : null };
   }
   async manage(raw: unknown, signal?: AbortSignal,
     confirm?: (request: ProjectManageRequest) => Promise<boolean>,
@@ -104,11 +101,6 @@ export class ProjectService {
       }
       request = decodeProjectManageRequest({ ...request, folders: [...paths.values()],
         primaryFolder: request.primaryFolder === null ? null : paths.get(request.primaryFolder) });
-    } else if (request.operation === 'setWorkFolder') {
-      this.requireRoot(request.threadId);
-      request = { ...request, path: await canonicalize(request.path) };
-    } else if (request.operation === 'bind' && request.workFolder) {
-      request = { ...request, workFolder: { ...request.workFolder, path: await canonicalize(request.workFolder.path) } };
     }
     if (confirm && !await confirm(request)) throw new Error('Project proposal cancelled; no change was committed');
     return this.exclusive(async () => {
@@ -142,14 +134,10 @@ export class ProjectService {
           ? this.store.create(request.name, request.folders, request.primaryFolder, this.now())
           : this.store.update(request.projectId, request.expectedRevision, request.name, request.folders, request.primaryFolder, this.now());
         return { outcome: 'applied', project: saved, affectedThreadIds: [] };
-      } else if (request.operation === 'setWorkFolder') {
-        this.requireRoot(request.threadId);
-        this.store.setWorkFolder(request.threadId, request.path, request.expectedRevision);
-        return { outcome: 'applied', project: null, affectedThreadIds: [request.threadId] };
       } else if (request.operation === 'bind') {
         this.requireRoot(request.threadId);
         const affectedThreadIds = this.store.bind(request.threadId, request.projectId,
-          request.expectedRevision, request.expectedMembershipRevision, request.workFolder);
+          request.expectedRevision, request.expectedMembershipRevision);
         return { outcome: 'applied', project: request.projectId ? this.store.require(request.projectId) : null, affectedThreadIds };
       } else {
         return { outcome: 'applied', project: null, affectedThreadIds: this.store.finishDeletion(request.projectId) };

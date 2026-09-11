@@ -1,19 +1,20 @@
 import { expect, test } from '@playwright/test';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { mkdir, mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { closeSmokeApp, launchSmokeApp, type SmokeApp } from './electronApp';
 import { configureSmokeProvider } from './configurationHelpers';
 
-test('native picker and Agent CLI persist independent conversation folders across restart', async ({}, testInfo) => {
+test('native Project picker and Agent primary-folder edit drive defaults across restart', async ({}, testInfo) => {
   test.setTimeout(120_000);
   const root = await realpath(await mkdtemp(join(tmpdir(), 'tenon-folders-smoke-')));
   const a = join(root, 'repository'), b = join(root, 'worktree');
   await mkdir(a); await mkdir(b);
   let smoke: SmokeApp | undefined;
   let threadId = '';
+  let projectId = '';
   let step = 0;
   const results: any[] = [];
   const server = createServer(async (request, response) => {
@@ -46,14 +47,12 @@ test('native picker and Agent CLI persist independent conversation folders acros
       const projectCommand = (input: unknown) => tool('bash', {
         command: 'delegate project --input - --output json', stdin: JSON.stringify(input), cwd: a,
       });
-      if (step === 1) projectCommand({ action: 'manage', operationId: 'native-create', request: {
-        operation: 'create', name: 'Native folder Project', folders: [a, b], primaryFolder: a,
+      if (step === 1) projectCommand({ action: 'manage', operationId: 'native-primary', request: {
+        operation: 'update', projectId, expectedRevision: 1, name: 'Native folder Project', folders: [a, b], primaryFolder: b,
       } });
-      else if (step === 2) projectCommand({ action: 'manage', operationId: 'native-folder', request: {
-        operation: 'setWorkFolder', threadId, path: b, expectedRevision: 1,
-      } });
-      else if (step === 3) tool('file_write', { file_path: 'native-proof.txt', content: 'Saved folder execution after Agent update.' });
-      else done('Folder setting saved and verified.');
+      else if (step === 2) tool('file_write', { file_path: 'override-proof.txt', cwd: a, content: 'Explicit task override.' });
+      else if (step === 3) tool('file_write', { file_path: 'native-proof.txt', content: 'Project primary execution after Agent update.' });
+      else done('Project primary saved and verified.');
     }
     response.end('data: [DONE]\n\n');
   });
@@ -73,17 +72,23 @@ test('native picker and Agent CLI persist independent conversation folders acros
     await page.getByRole('button', { name: 'Show Threads', exact: true }).click();
     await page.getByRole('dialog', { name: 'Threads' }).getByRole('button', { name: 'New Thread', exact: true }).click();
     threadId = await page.evaluate(async () => (await window.lin!.agentCoreRequest('thread/list', {})).data[0]!.id);
-    await page.locator('.thread-composer-toolbar').getByRole('button', { name: 'Add', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Set work folder', exact: true }).click();
-    const details = page.getByRole('dialog', { name: 'Project and work folder', exact: true });
-    await details.getByRole('button', { name: 'Set work folder', exact: true }).click();
-    await expect(page.locator('.thread-location-chip')).toHaveText('repository');
-    await details.getByRole('button', { name: 'Close', exact: true }).click();
-    await page.getByRole('textbox', { name: 'Message this Thread', includeHidden: true }).fill('Create the Project and use its worktree for this conversation.');
+    await expect.poll(() => page.evaluate(() => window.lin!.startup.get())).toMatchObject({ status: 'ready' });
+    await page.locator('.thread-composer-toolbar').getByRole('button', { name: 'Add', exact: true }).press('Enter');
+    await page.getByRole('menu', { name: 'Add', exact: true }).locator('[aria-haspopup="menu"]').hover();
+    await page.getByRole('menuitem', { name: 'New Project', exact: true }).click();
+    const form = page.getByRole('dialog', { name: 'Create project', exact: true });
+    await form.getByRole('button', { name: 'Add folders', exact: true }).click();
+    await expect(form.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('repository');
+    await form.getByRole('textbox', { name: 'Name', exact: true }).fill('Native folder Project');
+    await form.getByRole('button', { name: 'Create project', exact: true }).click();
+    await expect(page.locator('.thread-location-chip')).toHaveText('Native folder Project');
+    projectId = await page.evaluate(async () => (await window.lin!.agentCoreRequest('project/inspect', {})).projects[0]!.id);
+    await page.getByRole('textbox', { name: 'Message this Thread', includeHidden: true }).fill('Add the worktree and make it the Project primary folder.');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
-    await expect(page.getByText('Folder setting saved and verified.', { exact: true })).toBeVisible({ timeout: 30_000 });
-    expect(await readFile(join(b, 'native-proof.txt'), 'utf8'), JSON.stringify(results)).toBe('Saved folder execution after Agent update.');
-    await expect(page.locator('.thread-location-chip')).toHaveText('worktree');
+    await expect(page.getByText('Project primary saved and verified.', { exact: true })).toBeVisible({ timeout: 30_000 });
+    expect(await readFile(join(b, 'native-proof.txt'), 'utf8'), JSON.stringify(results)).toBe('Project primary execution after Agent update.');
+    expect(await readFile(join(a, 'override-proof.txt'), 'utf8')).toBe('Explicit task override.');
+    await expect(page.locator('.thread-location-chip')).toHaveText('Native folder Project');
     const reviews = await smoke.app.evaluate(() => (globalThis as any).__folderReviews);
     expect(reviews).toHaveLength(1);
     expect(reviews[0]).toMatchObject({ defaultId: 0, cancelId: 0 });
@@ -92,36 +97,54 @@ test('native picker and Agent CLI persist independent conversation folders acros
     expect(reviews[0].detail).toContain(b);
     const inspect = () => page.evaluate((threadId) => window.lin!.agentCoreRequest('project/inspect', { threadIds: [threadId] }), threadId);
     const before = await inspect();
-    expect(before.workFolders[0]).toMatchObject({ path: b, revision: 2 });
-    const project = before.projects.find((entry) => entry.name === 'Native folder Project')!;
-    await page.evaluate(({ threadId, project }) => window.lin!.agentCoreRequest('project/manage', {
-      operation: 'bind', threadId, projectId: project.id, expectedRevision: project.revision, expectedMembershipRevision: 0,
-    }), { threadId, project });
+    expect(before.projects[0]).toMatchObject({ id: projectId, primaryFolder: b, revision: 2 });
     const userDataDir = smoke.userDataDir;
     await closeSmokeApp(smoke, { keepUserData: true });
     smoke = await launchSmokeApp({ userDataDir }); page = smoke.window;
     await expect.poll(() => page.evaluate(() => window.lin!.startup.get())).toMatchObject({ status: 'ready' });
-    expect((await inspect()).workFolders[0]).toEqual(before.workFolders[0]);
-    await expect(page.locator('.thread-location-chip')).toHaveText('Native folder Project · worktree');
+    expect((await inspect()).projects).toEqual(before.projects);
+    await expect(page.locator('.thread-location-chip')).toHaveText('Native folder Project');
     for (const theme of ['light', 'dark'] as const) {
       await smoke.app.evaluate(({ nativeTheme }, theme) => { nativeTheme.themeSource = theme; }, theme);
       await page.emulateMedia({ colorScheme: theme });
       await page.locator('.agent-dock').screenshot({ path: testInfo.outputPath(`native-${theme}.png`) });
     }
-    await page.evaluate((threadId) => window.lin!.agentCoreRequest('project/manage', {
-      operation: 'setWorkFolder', threadId, path: null, expectedRevision: 2,
-    }), threadId);
-    await expect(page.locator('.thread-location-chip')).toHaveText('Native folder Project · Application default');
+    await page.getByRole('button', { name: 'Remove project from chat', exact: true }).click();
+    await expect(page.locator('.thread-location-chip')).toHaveCount(0);
     await closeSmokeApp(smoke, { keepUserData: true });
     smoke = await launchSmokeApp({ userDataDir }); page = smoke.window;
-    await expect.poll(async () => (await inspect()).workFolders[0]?.path).toBeNull();
-    await expect(page.locator('.thread-location-chip')).toHaveText('Native folder Project · Application default');
-    await page.getByRole('button', { name: 'Show Threads', exact: true }).click();
-    await expect(page.locator('.thread-list-select').getByText(/Native folder Project · Application default/)).toBeVisible();
+    await expect.poll(async () => (await inspect()).memberships[0]?.projectId).toBeNull();
+    await expect(page.locator('.thread-location-chip')).toHaveCount(0);
   } finally {
+    const resultsPath = testInfo.outputPath('project-tool-results.json');
+    await writeFile(resultsPath, JSON.stringify(results, null, 2));
+    await testInfo.attach('project-tool-results', { path: resultsPath, contentType: 'application/json' });
     if (smoke) await closeSmokeApp(smoke);
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('native Project folder multiselection returns every directory and handles cancellation', async () => {
+  const smoke = await launchSmokeApp();
+  try {
+    await smoke.app.evaluate(({ dialog }) => {
+      (globalThis as any).__projectPickerOptions = [];
+      let canceled = false;
+      dialog.showOpenDialog = (async (_parent: unknown, options: unknown) => {
+        (globalThis as any).__projectPickerOptions.push(options);
+        const result = { canceled, filePaths: ['/tmp/project-app', '/tmp/project-docs'] };
+        canceled = true;
+        return result;
+      }) as typeof dialog.showOpenDialog;
+    });
+    const picked = await smoke.window.evaluate(() => window.lin!.agentCoreRequest('project/pickFolders', {}));
+    expect(picked).toEqual({ paths: ['/tmp/project-app', '/tmp/project-docs'] });
+    const canceled = await smoke.window.evaluate(() => window.lin!.agentCoreRequest('project/pickFolders', {}));
+    expect(canceled).toEqual({ paths: [] });
+    const options = await smoke.app.evaluate(() => (globalThis as any).__projectPickerOptions);
+    expect(options).toHaveLength(2);
+    expect(options[0].properties).toEqual(['openDirectory', 'multiSelections']);
+  } finally { await closeSmokeApp(smoke); }
 });

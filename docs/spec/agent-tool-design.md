@@ -167,12 +167,12 @@ settlement contract.
 - `task_stop`, shared with Agent orchestration
 
 Every local file/process call uses its Tool Task's admitted `ExecutionAddress`.
-An explicit absolute `cwd` wins. A relative override resolves against the saved
-conversation folder, otherwise the application default (the user's home directory).
-Without an override, that selected base is the address. The saved path and revision
+An explicit absolute `cwd` wins. A relative override resolves against the selected
+Project primary folder, otherwise the application default (the user's home directory).
+Without an override, that selected base is the address. The Project ID, primary path and revision
 are sampled before asynchronous admission work and retained with the task address;
 a later edit cannot redirect an admitted or running operation. A missing or
-redirected saved folder fails dependent calls without fallback, while a valid
+redirected Project primary folder fails dependent calls without fallback, while a valid
 absolute override remains usable. Relative file paths resolve from that address's
 `cwd`. An explicit
 absolute file path is canonicalized as the task's target independently of cwd.
@@ -185,8 +185,8 @@ canonical parent plus suffix.
 Bash instruction scope remains its admitted cwd. Neither an unrelated cwd nor
 Project membership supplies the rules for an absolute file target.
 Full Access permits absolute host paths unless an explicit block removes the
-capability. Project membership and ancestor lookup supply no execution directory;
-only the separately saved conversation preference supplies a default. Receipts retain the resolved address, canonical targets,
+capability. The selected Project primary supplies the default; ancestor lookup never
+changes that default. Receipts retain the resolved address, canonical targets,
 `ExecutionPolicy`, and immutable `ContextSnapshot` reference used at admission.
 File tools return bounded content and persist oversized output in app-owned
 scratch space. Relative attachment paths resolve from the same Host default;
@@ -496,7 +496,7 @@ Bash returns `evidence` references for follow-up checks. Launch progress and
 ordering, successful completion and owning-Thread provenance. The exact Task ID
 and Item references associate the check with the service; cwd equality is not
 an eligibility rule and grants no authority. Independently admitted checks may
-run in another directory or after a saved-folder change without redirecting
+run in another directory or after a Project primary-folder change without redirecting
 either execution. Foreign/copied, missing, forbidden, unfinished, failed and
 pre-launch evidence rejects; live-target, revision, Stop and receipt replay rules
 remain with the Task owner. Expected rejections use `readiness_unavailable`,
@@ -915,7 +915,7 @@ standing authorization are specified in
 ### Project Organization
 
 The Host-owned `ProjectService` owns Project sources/primary selection, lineage
-membership, independent revisioned conversation folders and Automation deletion
+membership, derived Project execution defaults and Automation deletion
 fences. Both native UI operations and the built-in `projects` Skill use it.
 The Skill invokes foreground Bash with the exact packaged CLI command
 `delegate project --input - --output json` and separate literal JSON stdin.
@@ -924,11 +924,10 @@ a live root user invocation; it remains available when delegation is disabled.
 
 The request-bound private broker checks the source Thread/Turn/Item, supervised
 Task/process identity, input digest and current capability before mutation. Project
-proposals use native confirmation with canonical paths and revision revalidation;
-folder-only explicit changes save directly only for the invoking conversation.
-The CLI rejects a `setWorkFolder` target that differs from the trusted source root
-Thread before receipt replay or mutation. Combined binds commit membership and
-folder together. Durable operation receipts report applied/pending/not_committed;
+proposals all use native confirmation with canonical paths and revision
+revalidation. Binding selects the Project whose primary supplies subsequent task
+defaults; there is no independent folder-setting operation. Durable operation
+receipts report applied/pending/not_committed;
 retrying the same ID and digest returns the original result. Inspection pages 50
 Projects with a revision-bound cursor and separately includes the selected Project.
 Neither a lost response nor a successful create followed by a failed bind implies

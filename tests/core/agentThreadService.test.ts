@@ -7509,17 +7509,18 @@ describe('background Task responsibility authority', () => {
     expect(fixture.executor.contexts).toHaveLength(1);
   });
 
-  test('hands off actual Bash evidence across saved-folder changes without redirecting execution', async () => {
+  test('hands off actual Bash evidence across Project primary-folder changes without redirecting execution', async () => {
     const fixture = await admittedFixture();
     const { context, tasks, thread, service } = fixture;
     const a = join(fixture.root, 'application'), b = join(fixture.root, 'checks');
     await mkdir(a); await mkdir(b);
-    await service.projects.manage({ operation: 'setWorkFolder', threadId: thread.id, path: a, expectedRevision: 0 });
+    const project = (await service.projects.manage({ operation: 'create', name: 'Service', folders: [a, b], primaryFolder: a })).project!;
+    await service.projects.manage({ operation: 'bind', threadId: thread.id, projectId: project.id, expectedRevision: 1, expectedMembershipRevision: 0 });
     const runtime = new ToolRuntime(service, {
       capabilityConfig: { blocks: [] },
       capabilityTools: () => createLocalTools({
         workspace: { root: service.defaultExecutionDirectory(), scratchRoot: join(fixture.root, 'scratch'), readFileState: new Map(), threadId: thread.id,
-          resolveWorkFolder: () => service.projects.store.workFolder(thread.id) },
+          resolveProjectDefault: () => service.projects.store.executionDefault(thread.id) },
         toolTaskService: tasks, turnId: context.turn.id,
       }),
     });
@@ -7541,7 +7542,7 @@ describe('background Task responsibility authority', () => {
     await withTimeout(waitUntil(() => tasks.readOwned(taskId, thread.id)?.state === 'running'
       && tasks.readOwned(taskId, thread.id)?.childPid !== null), 3000);
     const original = tasks.readOwned(taskId, thread.id)!;
-    await service.projects.manage({ operation: 'setWorkFolder', threadId: thread.id, path: b, expectedRevision: 1 });
+    await service.projects.manage({ operation: 'update', projectId: project.id, expectedRevision: 1, name: project.name, folders: [a, b], primaryFolder: b });
     const failed = await execute('bash', { command: 'exit 7', description: 'Failed application check' });
     for (const [evidence, code] of [[before.data.evidence, 'readiness_before_launch'], [failed.data.evidence, 'readiness_unsuccessful'],
       [{ turnId: context.turn.id, itemId: 'missing' }, 'readiness_unavailable']] as const) {
@@ -7559,7 +7560,7 @@ describe('background Task responsibility authority', () => {
     const accepted = await execute('task_control', input);
     expect(accepted).toMatchObject({ ok: true, data: { receipt: { status: 'accepted', revision: 1 } } });
     expect((await execute('task_control', input)).data.receipt).toEqual(accepted.data.receipt);
-    expect(service.projects.store.workFolder(thread.id)).toMatchObject({ path: await realpath(b), revision: 2 });
+    expect(service.projects.store.executionDefault(thread.id)).toMatchObject({ path: await realpath(b), revision: 2 });
     expect(tasks.readOwned(taskId, thread.id)).toMatchObject({ cwd: await realpath(a), executionContext: { address: original.executionContext.address } });
     await tasks.stop(taskId, thread.id, context.turn.id, 'agent');
     expect(await execute('task_control', { ...input, operation_id: 'stopped', expected_revision: tasks.readOwned(taskId, thread.id)!.continuation.revision }))
@@ -8962,7 +8963,7 @@ describe('bounded user input lifecycle', () => {
 });
 
 describe('Project CLI and live conversation location', () => {
-  test.each(['source', 'bundled'])('executes invocation-bound folder and Project operations through the %s CLI', async (kind) => {
+  test.each(['source', 'bundled'])('executes invocation-bound Project defaults and operations through the %s CLI', async (kind) => {
     const bundled = kind === 'bundled';
     const { DelegateRuntimeHost, schedulingPolicyDigest } = await import('../../src/main/agent/delegation');
     const { ProjectCliService, projectCliScheduling, PROJECT_CLI_CONFIGURATION_REVISION } = await import('../../src/main/agent/projects/ProjectCliService');
@@ -9000,7 +9001,7 @@ describe('Project CLI and live conversation location', () => {
       capabilityConfig: { blocks: [] }, disabledTools: () => disabled ? ['bash'] : [],
       capabilityTools: () => createLocalTools({
         workspace: { root: fixture.service.defaultExecutionDirectory(), scratchRoot: join(fixture.root, 'scratch'), readFileState: new Map(), threadId: thread.id,
-          resolveWorkFolder: () => fixture.service.projects.store.workFolder(thread.id) },
+          resolveProjectDefault: () => fixture.service.projects.store.executionDefault(thread.id) },
         toolTaskService: fixture.service.toolTaskService(), turnId: context.turn.id,
         delegateCommandRuntime: broker.commandRuntime(() => projectCliScheduling()),
       }),
@@ -9024,65 +9025,48 @@ describe('Project CLI and live conversation location', () => {
         return response.data;
       }
       const initial = await command({ action: 'inspect' });
-      expect(initial.workFolders[0]).toMatchObject({ threadId: thread.id, path: null, revision: 0 });
-      const otherThread = (await fixture.service.startThread({ source: 'app', threadSource: 'user', modelProvider: 'openai', configurationSource: { kind: 'user' } })).thread;
-      await fixture.service.projects.manage({ operation: 'setWorkFolder', threadId: otherThread.id, path: b, expectedRevision: 0 });
-      const crossConversation = await execute('bash', { command: 'delegate project --input - --output json', cwd: a,
-        stdin: JSON.stringify({ action: 'manage', operationId: 'other-folder', request: {
-          operation: 'setWorkFolder', threadId: otherThread.id, path: a, expectedRevision: 1,
-        } }),
-      });
-      expect(crossConversation.details.ok).toBe(false);
-      expect(JSON.parse(crossConversation.details.data.stdout)).toMatchObject({ ok: false, error: { code: 'unauthorized' } });
-      expect(fixture.service.projects.store.workFolder(otherThread.id)).toMatchObject({ path: b, revision: 1 });
-      expect(await command({ action: 'receipt', operationId: 'other-folder' })).toEqual({ outcome: 'not_committed' });
-      expect(confirmations).toBe(0);
-      await command({ action: 'manage', operationId: 'set-a', request: { operation: 'setWorkFolder', threadId: thread.id, path: a, expectedRevision: 0 } });
-      expect(confirmations).toBe(0);
-      expect((await execute('file_read', { file_path: 'identity.txt' })).details.data.file.content).toContain('directory A');
-      const override = await execute('file_read', { file_path: 'identity.txt', cwd: b });
-      expect(override.executionContext.address.cwd).toBe(b);
-      expect(override.executionContext.address.workFolder).toMatchObject({ path: a, revision: 1 });
-      expect((await execute('file_read', { file_path: 'identity.txt' })).executionContext.address.cwd).toBe(a);
-      const request = { operation: 'create', name: 'CLI Project', folders: [a, b], primaryFolder: b };
+      expect(initial.memberships[0]).toMatchObject({ threadId: thread.id, projectId: null });
+      expect(initial).not.toHaveProperty('workFolders');
+      const request = { operation: 'create', name: 'CLI Project', folders: [a, b], primaryFolder: a };
       const created = await command({ action: 'manage', operationId: 'create-once', request });
       expect(confirmations).toBe(1);
       expect((await command({ action: 'receipt', operationId: 'create-once' })).result.project.id).toBe(created.project.id);
       expect((await command({ action: 'manage', operationId: 'create-once', request })).project.id).toBe(created.project.id);
       expect(confirmations).toBe(1);
-      const updated = await command({ action: 'manage', operationId: 'edit-project', request: {
-        operation: 'update', projectId: created.project.id, expectedRevision: 1, name: 'Renamed CLI Project', folders: [a, b], primaryFolder: a,
-      } });
       await command({ action: 'manage', operationId: 'bind-project', request: {
-        operation: 'bind', projectId: created.project.id, expectedRevision: updated.project.revision,
-        threadId: thread.id, expectedMembershipRevision: 0,
+        operation: 'bind', projectId: created.project.id, expectedRevision: 1, threadId: thread.id, expectedMembershipRevision: 0,
       } });
-      expect(fixture.service.projects.store.workFolder(thread.id)).toMatchObject({ path: a, revision: 1 });
-      await command({ action: 'manage', operationId: 'unbind-project', request: {
-        operation: 'bind', projectId: null, expectedRevision: null, threadId: thread.id, expectedMembershipRevision: 1,
-      } });
-      await command({ action: 'manage', operationId: 'delete-project', request: {
-        operation: 'delete', projectId: created.project.id, expectedRevision: updated.project.revision,
-      } });
-      expect(fixture.service.projects.store.list()).toEqual([]);
-      expect(fixture.service.projects.store.workFolder(thread.id)).toMatchObject({ path: a, revision: 1 });
+      expect(confirmations).toBe(2);
+      expect((await execute('file_read', { file_path: 'identity.txt' })).details.data.file.content).toContain('directory A');
+      const override = await execute('file_read', { file_path: 'identity.txt', cwd: b });
+      expect(override.executionContext.address.cwd).toBe(b);
+      expect(override.executionContext.address.projectDefault).toMatchObject({ projectId: created.project.id, path: a, revision: 1 });
+      expect((await execute('file_read', { file_path: 'identity.txt' })).executionContext.address.cwd).toBe(a);
       await runtime.prepareProviderContext(context);
       const before = context.recorder.orderedItems().filter((item) => item.type === 'contextEvidence' && item.kind === 'additionalContext').length;
       const background = await execute('bash', { command: 'pwd; sleep 0.15', run_in_background: true });
       expect(background.details).toMatchObject({ ok: true });
-      await command({ action: 'manage', operationId: 'set-b', request: { operation: 'setWorkFolder', threadId: thread.id, path: b, expectedRevision: 1 } });
+      await command({ action: 'manage', operationId: 'primary-b', request: {
+        operation: 'update', projectId: created.project.id, expectedRevision: 1, name: 'CLI Project', folders: [a, b], primaryFolder: b,
+      } });
       const settled = await fixture.service.toolTaskService().waitForTerminal(background.details.data.backgroundTaskId, thread.id, 5_000);
-      expect(settled?.executionContext.address).toMatchObject({ cwd: a, workFolder: { path: a, revision: 1 } });
+      expect(settled?.executionContext.address).toMatchObject({ cwd: a, projectDefault: { path: a, revision: 1 } });
       await runtime.prepareProviderContext(context);
       expect(context.recorder.orderedItems().filter((item) => item.type === 'contextEvidence' && item.kind === 'additionalContext').length).toBe(before + 1);
       expect((await execute('file_read', { file_path: 'identity.txt' })).executionContext.address.cwd).toBe(b);
       await rm(b, { recursive: true });
       expect((await execute('file_read', { file_path: 'identity.txt' })).details.ok).toBe(false);
       expect((await execute('file_read', { file_path: 'identity.txt', cwd: a })).details.ok).toBe(true);
-      await command({ action: 'manage', operationId: 'clear', request: { operation: 'setWorkFolder', threadId: thread.id, path: null, expectedRevision: 2 } });
+      await command({ action: 'manage', operationId: 'unbind-project', request: {
+        operation: 'bind', projectId: null, expectedRevision: null, threadId: thread.id, expectedMembershipRevision: 1,
+      } });
       const defaultDirectory = await execute('bash', { command: 'pwd' });
       expect(defaultDirectory.details).toMatchObject({ ok: true, data: { stdout: `${fixture.service.defaultExecutionDirectory()}\n` } });
-      expect(defaultDirectory.executionContext.address.workFolder).toMatchObject({ path: null, revision: 3 });
+      expect(defaultDirectory.executionContext.address.projectDefault).toMatchObject({ projectId: null, path: null, revision: 0 });
+      await command({ action: 'manage', operationId: 'delete-project', request: {
+        operation: 'delete', projectId: created.project.id, expectedRevision: 2,
+      } });
+      expect(fixture.service.projects.store.list()).toEqual([]);
       disabled = true;
       const refused = await execute('bash', { command: 'delegate project --input - --output json', stdin: '{"action":"inspect"}', cwd: a });
       expect(refused.details.ok).toBe(false);

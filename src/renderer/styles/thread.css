@@ -2487,7 +2487,7 @@
   display: inline-flex;
   min-width: 0;
   max-width: 220px;
-  height: 28px;
+  height: var(--control-size-xl);
   align-items: center;
   gap: var(--space-2);
   border-radius: var(--radius-pill);
@@ -2500,7 +2500,7 @@
 .thread-composer-model-button:hover:not(:disabled),
 .thread-composer-model-button[aria-expanded='true'] {
   background: var(--control-hover);
-  color: var(--surface-inverse);
+  color: var(--text-primary);
 }
 
 .thread-composer-model-button:disabled {
@@ -2649,9 +2649,9 @@
 .thread-composer .icon-button-composerTool,
 .thread-composer .icon-button-composerAction {
   display: inline-flex;
-  width: 28px;
-  height: 28px;
-  flex: 0 0 28px;
+  width: var(--control-size-xl);
+  height: var(--control-size-xl);
+  flex: 0 0 var(--control-size-xl);
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-pill);
@@ -2661,8 +2661,9 @@
   color: var(--text-faint);
 }
 
-.thread-composer .icon-button-composerTool:hover:not(:disabled) {
-  background: transparent;
+.thread-composer .icon-button-composerTool:hover:not(:disabled),
+.thread-composer .icon-button-composerTool[aria-expanded='true'] {
+  background: var(--control-hover);
   color: var(--text-primary);
 }
 
@@ -2922,6 +2923,11 @@
   -webkit-backdrop-filter: var(--material-backdrop);
   backdrop-filter: var(--material-backdrop);
   box-shadow: var(--overlay-shadow-level-1);
+}
+
+.thread-list:focus-visible {
+  outline: none;
+  box-shadow: var(--overlay-shadow-level-1), var(--focus-ring-shadow);
 }
 
 .thread-list > header {

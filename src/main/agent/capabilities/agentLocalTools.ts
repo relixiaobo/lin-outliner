@@ -145,7 +145,7 @@ export interface AgentLocalWorkspaceContext {
   // The call working directory: cwd, default file-tool search root, and relative-path base.
   root: string;
   executionContext?: TaskExecutionContext;
-  resolveWorkFolder?: () => import('../../../core/agent/project').ConversationWorkFolder;
+  resolveProjectDefault?: () => import('../../../core/agent/project').ProjectExecutionDefault;
   capability?: 'full-access' | 'read-only';
   parentTaskId?: string;
   onTaskAdmitted?: (task: ToolTaskRecord) => Promise<void>;
@@ -778,7 +778,7 @@ export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>
         ...tool.parameters,
         properties: {
           ...tool.parameters.properties,
-          cwd: { type: 'string', minLength: 1, description: 'Directory for this call only. Relative paths resolve from the saved conversation work folder or application default; this does not change later calls.' },
+          cwd: { type: 'string', minLength: 1, description: 'Directory for this call only. Relative paths resolve from the selected Project primary folder or application default; this does not change later calls.' },
         },
       },
       execute: async (itemId, raw, signal, onUpdate, onExecutionStart) => {
@@ -799,8 +799,8 @@ export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>
           }
           // Sampling the revision is the admission order point. Later setting
           // changes cannot redirect this operation while discovery is awaiting IO.
-          const workFolder = workspace.resolveWorkFolder?.();
-          const defaultCwd = workFolder?.path ?? workspace.root;
+          const projectDefault = workspace.resolveProjectDefault?.();
+          const defaultCwd = projectDefault?.path ?? workspace.root;
           const callRoot = path.resolve(defaultCwd, expandHome(params.cwd as string ?? '.'));
           candidatePath = target ? path.resolve(callRoot, target) : callRoot;
           if (['file_edit', 'file_write'].includes(tool.name)) {
@@ -808,7 +808,7 @@ export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>
           }
           const addressInput = {
             defaultCwd,
-            ...(workFolder ? { workFolder } : {}),
+            ...(projectDefault ? { projectDefault } : {}),
             targetKind: fileField === 'path' ? 'directory' as const : 'entry' as const,
             ...(params.cwd === undefined ? {} : { cwd: expandHome(params.cwd as string) }),
             ...(tool.name === 'bash' ? {} : { targets: target

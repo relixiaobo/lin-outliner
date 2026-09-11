@@ -516,7 +516,7 @@ Suggestions or Automation-level notification settings.
 The Automation editor can select a saved Project or enter a standalone directory
 for each context hint. A Project without a primary folder is disabled. Secondary
 Project folders do not add execution fan-out, and an originating conversation's
-mutable work-folder preference never changes a saved Automation location. A removed Project
+Project selection never changes a saved Automation location. A removed Project
 remains visibly unavailable on a completed definition; editing its source preserves
 the scheduling slot ID. Historical roots are never copied into a reactivation.
 

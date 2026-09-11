@@ -4,7 +4,7 @@ import * as fs from 'node:fs/promises';
 import { mkdtemp, realpath, rm, symlink, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { decodeProjectManageRequest, type Project } from '../../src/core/agent/project';
+import { decodeProjectFolderPick, decodeProjectManageRequest, type Project } from '../../src/core/agent/project';
 import { decodeAutomationResponse, EMPTY_AUTOMATION_CONFIGURATION } from '../../src/core/agent/automation';
 import type { Thread } from '../../src/core/agent/protocol';
 import { defaultEffectiveThreadConfiguration } from '../../src/main/agent/AgentConfigurationLoader';
@@ -303,60 +303,58 @@ describe('Project catalog lifecycle', () => {
   });
 });
 
-describe('Conversation work folders', () => {
-  test('new chats and forks copy folders while moves, primary edits and deletion preserve independent defaults', async () => {
+describe('Project-owned execution defaults', () => {
+  test('primary edits and unbinding change derived defaults without rewriting admitted snapshots', async () => {
     const host = catalog();
     const a = await directory(), b = await directory();
     const project = (await host.service.manage({ operation: 'create', name: 'Sources', folders: [a, b], primaryFolder: a })).project!;
-    const first = host.chat({}, project);
-    const second = host.chat({}, project);
-    await host.service.manage({ operation: 'setWorkFolder', threadId: first.id, path: b, expectedRevision: 1 });
+    const first = host.chat({}, project), second = host.chat({}, project);
     const fork = host.chat({ forkedFromId: first.id });
-    const child = host.chat({ parentThreadId: first.id, sessionId: first.sessionId, threadSource: 'delegation' });
-    expect(host.projects.workFolder(fork.id).path).toBe(b);
-    expect(host.projects.workFolder(child.id).path).toBeNull();
+    const admitted = host.projects.executionDefault(first.id);
+    expect(admitted).toEqual({ projectId: project.id, path: a, revision: 1 });
     const edited = (await host.service.manage({ operation: 'update', projectId: project.id, expectedRevision: 1,
-      name: 'Renamed', folders: [a, b], primaryFolder: b })).project!;
-    expect(host.projects.workFolder(second.id).path).toBe(a);
-    await host.service.manage({ operation: 'setWorkFolder', threadId: first.id, path: null, expectedRevision: 2 });
-    expect(host.projects.workFolder(fork.id).path).toBe(b);
+      name: 'Sources', folders: [a, b], primaryFolder: b })).project!;
+    for (const chat of [first, second, fork]) expect(host.projects.executionDefault(chat.id)).toEqual({ projectId: project.id, path: b, revision: 2 });
+    expect(admitted.path).toBe(a);
+    await host.service.manage({ operation: 'bind', threadId: first.id, projectId: null, expectedRevision: null, expectedMembershipRevision: 1 });
+    expect(host.projects.executionDefault(first.id)).toEqual({ projectId: null, path: null, revision: 0 });
+    expect(host.projects.executionDefault(fork.id).path).toBeNull();
+    expect(host.projects.executionDefault(second.id).path).toBe(b);
     await host.service.manage(deletion(edited));
-    expect(host.projects.workFolder(fork.id).path).toBe(b);
-    expect(host.projects.workFolder(second.id).path).toBe(a);
-    expect(host.projects.workFolder(first.id).path).toBeNull();
+    expect(host.projects.executionDefault(second.id).path).toBeNull();
     expect(host.metadata.require(first.id).configuration).toEqual(defaultEffectiveThreadConfiguration());
   });
 
-  test('a folder-less Project and a fork of an unset chat keep application-default identity', async () => {
-    const host = catalog();
-    const project = createProject(host, 'Organization', null, 1);
-    const chat = host.chat({}, project);
-    const fork = host.chat({ forkedFromId: chat.id });
-    expect(host.projects.workFolder(chat.id)).toMatchObject({ path: null, revision: 1 });
-    expect(host.projects.workFolder(fork.id)).toMatchObject({ path: null, revision: 1 });
+  test('folderless Projects use the application default and inherited membership', async () => {
+    const host = catalog(), project = createProject(host, 'Organization', null, 1);
+    const chat = host.chat({}, project), fork = host.chat({ forkedFromId: chat.id });
+    for (const entry of [chat, fork]) expect(host.projects.executionDefault(entry.id)).toEqual({ projectId: project.id, path: null, revision: 1 });
     const view = await host.service.inspect({ threadIds: [chat.id, fork.id] });
     expect(view.applicationDefault.available).toBe(true);
-    expect(view.memberships.every((entry) => entry.projectId === project.id)).toBe(true);
+    expect(view).not.toHaveProperty('workFolders');
   });
 
-  test('concurrent folder updates conflict and combined selection writes neither setting on a stale folder revision', async () => {
-    const host = catalog();
-    const chat = host.chat();
-    const a = await directory(), b = await directory();
-    const project = createProject(host, 'Project', a, 1);
-    const results = await Promise.allSettled([a, b].map((path) => host.service.manage({ operation: 'setWorkFolder', threadId: chat.id, path, expectedRevision: 0 })));
+  test('pending deletion preserves selected default and published context until detachment', async () => {
+    const host = catalog(), project = createProject(host, 'Selected', await directory(), 1);
+    const chat = host.chat({}, project);
+    host.projects.beginDeletion(project.id, 1);
+    expect(host.projects.executionDefault(chat.id).path).toBe(project.primaryFolder);
+    expect((await host.service.currentContext(chat.id)).projects[0]?.id).toBe(project.id);
+    host.projects.finishDeletion(project.id);
+    expect(host.projects.executionDefault(chat.id)).toEqual({ projectId: null, path: null, revision: 0 });
+  });
+
+  test('retired folder writes are rejected and concurrent selections keep one winner', async () => {
+    const host = catalog(), chat = host.chat();
+    const a = createProject(host, 'A', await directory(), 1), b = createProject(host, 'B', await directory(), 1);
+    await expect(host.service.manage({ operation: 'setWorkFolder', threadId: chat.id, path: a.primaryFolder, expectedRevision: 0 })).rejects.toThrow();
+    await expect(host.service.manage({ operation: 'bind', threadId: chat.id, projectId: a.id, expectedRevision: 1,
+      expectedMembershipRevision: 0, workFolder: { path: a.primaryFolder, expectedRevision: 0 } })).rejects.toThrow();
+    const results = await Promise.allSettled([a, b].map((project) => host.service.manage({ operation: 'bind', threadId: chat.id,
+      projectId: project.id, expectedRevision: 1, expectedMembershipRevision: 0 })));
     expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
-    const accepted = host.projects.workFolder(chat.id);
-    await expect(host.service.manage({ operation: 'bind', threadId: chat.id, projectId: project.id, expectedRevision: 1,
-      expectedMembershipRevision: 0, workFolder: { path: a, expectedRevision: 0 } })).rejects.toThrow('changed');
-    expect(host.projects.membership(chat.id).projectId).toBeNull();
-    expect(host.projects.workFolder(chat.id)).toEqual(accepted);
-    await host.service.manage({ operation: 'bind', threadId: chat.id, projectId: project.id, expectedRevision: 1,
-      expectedMembershipRevision: 0, workFolder: { path: a, expectedRevision: accepted.revision } });
-    expect(host.projects.membership(chat.id).projectId).toBe(project.id);
-    expect(host.projects.workFolder(chat.id).path).toBe(a);
-    await host.service.manage({ operation: 'bind', threadId: chat.id, projectId: null, expectedRevision: null, expectedMembershipRevision: 1 });
-    expect(host.projects.workFolder(chat.id).path).toBe(a);
+    const selected = host.projects.read(host.projects.membership(chat.id).projectId!)!;
+    expect(host.projects.executionDefault(chat.id).path).toBe(selected.primaryFolder);
   });
 
   test('canonical folder identity, primary selection and unavailable secondary references are truthful', async () => {
@@ -373,10 +371,9 @@ describe('Conversation work folders', () => {
       name: 'Renamed', folders: [a, b], primaryFolder: a });
     const view = await host.service.inspect({ threadIds: [chat.id] });
     expect(view.unavailableFolders).toContain(b);
-    expect(view.workFolders[0]?.path).toBe(a);
+    expect(host.projects.executionDefault(chat.id).path).toBe(a);
     await rm(a, { recursive: true });
     expect((await host.service.inspect({ threadIds: [chat.id] })).unavailableFolders).toContain(a);
-    await host.service.manage({ operation: 'setWorkFolder', threadId: chat.id, path: null, expectedRevision: 1 });
     expect(host.projects.membership(chat.id).projectId).toBe(project.id);
   });
 
@@ -392,7 +389,7 @@ describe('Conversation work folders', () => {
     expect(host.projects.list()).toEqual([]);
   });
 
-  test('saved folders and operation receipts survive reopening without duplicate creation', async () => {
+  test('Project selection and operation receipts survive reopening without duplicate creation', async () => {
     const root = await directory();
     const path = join(root, 'threads.sqlite');
     const host = catalog(path);
@@ -401,10 +398,10 @@ describe('Conversation work folders', () => {
     const receipt = { sourceThreadId: chat.id, operationId: 'create-once', digest: 'exact-request' };
     const first = await host.service.manage(request, undefined, undefined, receipt);
     expect(await host.service.manage(request, undefined, undefined, receipt)).toEqual(first);
-    await host.service.manage({ operation: 'setWorkFolder', threadId: chat.id, path: root, expectedRevision: 0 });
+    await host.service.manage({ operation: 'bind', threadId: chat.id, projectId: first.project!.id, expectedRevision: 1, expectedMembershipRevision: 0 });
     closers.pop()!();
     const restored = catalog(path);
-    expect(restored.projects.workFolder(chat.id)).toEqual({ threadId: chat.id, path: root, revision: 1 });
+    expect(restored.projects.executionDefault(chat.id)).toEqual({ projectId: first.project!.id, path: root, revision: 1 });
     expect(restored.projects.receipt(chat.id, 'create-once', 'exact-request')).toEqual(first);
     expect(restored.projects.list()).toHaveLength(1);
     await expect(restored.service.manage(request, undefined, undefined, { ...receipt, digest: 'different' })).rejects.toThrow('different request');
@@ -430,34 +427,23 @@ describe('Conversation work folders', () => {
 });
 
 describe('invocation-bound Project operations', () => {
-  test('rejects folder changes to another conversation while allowing own settings without confirmation', async () => {
+  test('all CLI mutations require native review, and retired folder mutations cannot bypass it', async () => {
     const { ProjectCliService } = await import('../../src/main/agent/projects/ProjectCliService');
-    const host = catalog(), source = host.chat(), target = host.chat();
-    const original = await directory(), replacement = await directory();
-    await host.service.manage({ operation: 'setWorkFolder', threadId: target.id, path: original, expectedRevision: 0 });
+    const host = catalog(), chat = host.chat();
+    const project = createProject(host, 'Reviewed', await directory(), 1);
     let confirmations = 0;
-    const cli = new ProjectCliService(host.service, async () => {}, async () => { confirmations++; return true; });
-    const execute = (input: unknown) => cli.execute({
-      admission: { stdin: JSON.stringify(input), source: { rootThreadId: source.id } }, signal: new AbortController().signal,
-    } as Parameters<typeof cli.execute>[0]);
-    for (const [index, path] of [replacement, null].entries()) {
-      const operationId = `other-folder-${index}`;
-      await expect(execute({ action: 'manage', operationId, request: {
-        operation: 'setWorkFolder', threadId: target.id, path, expectedRevision: 1,
-      } })).rejects.toMatchObject({ code: 'unauthorized' });
-      expect(host.projects.workFolder(target.id)).toEqual({ threadId: target.id, path: original, revision: 1 });
-      expect(await execute({ action: 'receipt', operationId })).toEqual({ outcome: 'not_committed' });
-    }
-    for (const [revision, path] of [replacement, null].entries()) {
-      const input = { action: 'manage', operationId: `own-folder-${revision}`, request: {
-        operation: 'setWorkFolder', threadId: source.id, path, expectedRevision: revision,
-      } };
-      const result = await execute(input);
-      expect(result).toMatchObject({ outcome: 'applied', affectedThreadIds: [source.id] });
-      expect(await execute(input)).toEqual(result);
-      expect(host.projects.workFolder(source.id)).toEqual({ threadId: source.id, path, revision: revision + 1 });
-    }
-    expect(confirmations).toBe(0);
+    const cli = new ProjectCliService(host.service, async () => {}, async () => { confirmations++; return false; });
+    const execute = (input: unknown) => cli.execute({ admission: { stdin: JSON.stringify(input), source: { rootThreadId: chat.id } },
+      signal: new AbortController().signal } as Parameters<typeof cli.execute>[0]);
+    await expect(execute({ action: 'manage', operationId: 'retired', request: {
+      operation: 'setWorkFolder', threadId: chat.id, path: project.primaryFolder, expectedRevision: 0,
+    } })).rejects.toThrow();
+    await expect(execute({ action: 'manage', operationId: 'bind', request: {
+      operation: 'bind', threadId: chat.id, projectId: project.id, expectedRevision: 1, expectedMembershipRevision: 0,
+    } })).rejects.toThrow('cancelled');
+    expect(confirmations).toBe(1);
+    expect(host.projects.executionDefault(chat.id).path).toBeNull();
+    expect(await execute({ action: 'receipt', operationId: 'bind' })).toEqual({ outcome: 'not_committed' });
   });
 
   test('paginates the catalog without dropping the selected Project and rejects a changed cursor', async () => {
@@ -480,26 +466,20 @@ describe('invocation-bound Project operations', () => {
     await expect(execute({ action: 'inspect', offset: 50, catalogRevision: first.catalogRevision })).rejects.toThrow('catalog changed');
   });
 
-  test('rechecks current authority immediately before folder-only commits and cancels native proposals', async () => {
+  test('rechecks authority after native confirmation and immediately before commit', async () => {
     const { ProjectCliService } = await import('../../src/main/agent/projects/ProjectCliService');
-    const host = catalog(), chat = host.chat();
-    let checks = 0;
-    const signal = new AbortController();
-    const cli = new ProjectCliService(host.service, async () => {
-      if (++checks === 2) throw new Error('authority revoked');
-    }, async () => { signal.abort(); return true; });
-    const execute = (input: unknown) => cli.execute({
-      admission: { stdin: JSON.stringify(input), source: { rootThreadId: chat.id } }, signal: signal.signal,
-    } as Parameters<typeof cli.execute>[0]);
-    await expect(execute({ action: 'manage', operationId: 'folder-revoked', request: {
-      operation: 'setWorkFolder', threadId: chat.id, path: await directory(), expectedRevision: 0,
-    } })).rejects.toThrow('authority revoked');
-    expect(host.projects.workFolder(chat.id)).toMatchObject({ path: null, revision: 0 });
-    expect(await execute({ action: 'receipt', operationId: 'folder-revoked' })).toEqual({ outcome: 'not_committed' });
-    await expect(execute({ action: 'manage', operationId: 'cancelled', request: {
-      operation: 'create', name: 'Cancelled', folders: [], primaryFolder: null,
-    } })).rejects.toThrow();
-    expect(host.projects.list()).toEqual([]);
+    for (const revokeAt of [2, 3]) {
+      const host = catalog(), chat = host.chat();
+      let checks = 0;
+      const cli = new ProjectCliService(host.service, async () => { if (++checks === revokeAt) throw new Error('authority revoked'); }, async () => true);
+      const execute = (input: unknown) => cli.execute({ admission: { stdin: JSON.stringify(input), source: { rootThreadId: chat.id } },
+        signal: new AbortController().signal } as Parameters<typeof cli.execute>[0]);
+      await expect(execute({ action: 'manage', operationId: 'revoked', request: {
+        operation: 'create', name: 'Revoked', folders: [], primaryFolder: null,
+      } })).rejects.toThrow('authority revoked');
+      expect(host.projects.list()).toEqual([]);
+      expect(await execute({ action: 'receipt', operationId: 'revoked' })).toEqual({ outcome: 'not_committed' });
+    }
   });
 
   test('rejects a revision changed while the proposal is open instead of overwriting the newer Project', async () => {
@@ -514,4 +494,12 @@ describe('invocation-bound Project operations', () => {
     })).rejects.toThrow('Project changed');
     expect(host.projects.require(project.id)).toMatchObject({ name: 'Newer UI edit', revision: 2 });
   });
+});
+
+test('native Project folder results accept multiselection and cancellation but reject invalid paths', () => {
+  expect(decodeProjectFolderPick({ paths: [] })).toEqual({ paths: [] });
+  expect(decodeProjectFolderPick({ paths: ['/work/app', '/work/docs'] })).toEqual({ paths: ['/work/app', '/work/docs'] });
+  for (const invalid of [{ path: '/work/app' }, { paths: null }, { paths: [null] }, { paths: ['relative'] }, { paths: ['/work'], extra: true }]) {
+    expect(() => decodeProjectFolderPick(invalid)).toThrow();
+  }
 });

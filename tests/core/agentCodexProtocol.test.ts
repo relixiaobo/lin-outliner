@@ -1608,7 +1608,7 @@ describe('Codex Agent Core protocol codec', () => {
       updatedAt: 100,
     } as const;
     const requests: Record<string, unknown> = {
-      'project/pickFolder': {},
+      'project/pickFolders': {},
       'project/inspect': { threadIds: [THREAD_ID] },
       'project/manage': { operation: 'create', name: 'Example', folders: [], primaryFolder: null },
       'thread/list': {},
@@ -1692,9 +1692,9 @@ describe('Codex Agent Core protocol codec', () => {
       'identities/get': { threadId: null },
     };
     const responses: Record<string, unknown> = {
-      'project/pickFolder': { path: null },
+      'project/pickFolders': { paths: [] },
       'project/inspect': { projects: [], memberships: [{ threadId: THREAD_ID, projectId: null, revision: 0 }],
-        workFolders: [{ threadId: THREAD_ID, path: null, revision: 0 }], unavailableFolders: [], applicationDefault: { path: '/tmp', available: true } },
+        unavailableFolders: [], applicationDefault: { path: '/tmp', available: true } },
       'project/manage': { outcome: 'applied', project: { id: THREAD_ID, name: 'Example', folders: [], primaryFolder: null,
         revision: 1, createdAt: 1, updatedAt: 1 }, affectedThreadIds: [] },
       'thread/list': { data: [thread], nextCursor: null },

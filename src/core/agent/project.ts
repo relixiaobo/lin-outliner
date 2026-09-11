@@ -15,17 +15,17 @@ export interface ProjectMembership {
   readonly revision: number;
 }
 
-export interface ConversationWorkFolder {
-  readonly threadId: string;
-  readonly path: string | null;
+/** Immutable provenance sampled from Project membership at task admission. */
+export interface ProjectExecutionDefault {
+  readonly projectId: string | null;
   readonly revision: number;
+  readonly path: string | null;
 }
 
 export interface ProjectInspectRequest { readonly threadIds?: readonly string[] }
 export interface ProjectCatalogView {
   readonly projects: readonly Project[];
   readonly memberships: readonly ProjectMembership[];
-  readonly workFolders: readonly ConversationWorkFolder[];
   readonly unavailableFolders: readonly string[];
   readonly applicationDefault: { readonly path: string | null; readonly available: boolean };
 }
@@ -34,9 +34,7 @@ export type ProjectManageRequest =
   | { readonly operation: 'update'; readonly projectId: string; readonly expectedRevision: number;
       readonly name: string; readonly folders: readonly string[]; readonly primaryFolder: string | null }
   | { readonly operation: 'bind'; readonly threadId: string; readonly projectId: string | null;
-      readonly expectedRevision: number | null; readonly expectedMembershipRevision: number;
-      readonly workFolder?: { readonly path: string | null; readonly expectedRevision: number } }
-  | { readonly operation: 'setWorkFolder'; readonly threadId: string; readonly path: string | null; readonly expectedRevision: number }
+      readonly expectedRevision: number | null; readonly expectedMembershipRevision: number }
   | { readonly operation: 'delete'; readonly projectId: string; readonly expectedRevision: number };
 export interface ProjectManageResult {
   readonly outcome: 'applied';
@@ -55,7 +53,7 @@ export function decodeProjectSelection(value: unknown): { projectId: string; exp
 }
 
 export function decodeProjectManageRequest(value: unknown): ProjectManageRequest {
-  const entry = record(value, ['operation', 'name', 'folders', 'primaryFolder', 'projectId', 'threadId', 'expectedRevision', 'expectedMembershipRevision', 'workFolder', 'path']);
+  const entry = record(value, ['operation', 'name', 'folders', 'primaryFolder', 'projectId', 'threadId', 'expectedRevision', 'expectedMembershipRevision']);
   switch (entry.operation) {
     case 'create':
       record(entry, ['operation', 'name', 'folders', 'primaryFolder']);
@@ -65,15 +63,11 @@ export function decodeProjectManageRequest(value: unknown): ProjectManageRequest
       return { operation: 'update', projectId: id(entry.projectId), expectedRevision: integer(entry.expectedRevision, 1),
         name: label(entry.name), ...decodeFolders(entry) };
     case 'bind':
-      record(entry, ['operation', 'threadId', 'projectId', 'expectedRevision', 'expectedMembershipRevision', 'workFolder']);
+      record(entry, ['operation', 'threadId', 'projectId', 'expectedRevision', 'expectedMembershipRevision']);
       if ((entry.projectId === null) !== (entry.expectedRevision === null)) throw new Error('Project binding revision must match its identity');
       return { operation: 'bind', threadId: id(entry.threadId), projectId: entry.projectId === null ? null : id(entry.projectId),
         expectedRevision: entry.expectedRevision === null ? null : integer(entry.expectedRevision, 1),
-        expectedMembershipRevision: integer(entry.expectedMembershipRevision, 0),
-        ...(entry.workFolder === undefined ? {} : { workFolder: decodeFolderChange(entry.workFolder) }) };
-    case 'setWorkFolder':
-      record(entry, ['operation', 'threadId', 'path', 'expectedRevision']);
-      return { operation: 'setWorkFolder', threadId: id(entry.threadId), ...decodeFolderChange({ path: entry.path, expectedRevision: entry.expectedRevision }) };
+        expectedMembershipRevision: integer(entry.expectedMembershipRevision, 0) };
     case 'delete':
       record(entry, ['operation', 'projectId', 'expectedRevision']);
       return { operation: 'delete', projectId: id(entry.projectId), expectedRevision: integer(entry.expectedRevision, 1) };
@@ -88,12 +82,12 @@ export function decodeProject(value: unknown): Project {
 }
 
 export function decodeProjectCatalogView(value: unknown): ProjectCatalogView {
-  const entry = record(value, ['projects', 'memberships', 'workFolders', 'unavailableFolders', 'applicationDefault']);
+  const entry = record(value, ['projects', 'memberships', 'unavailableFolders', 'applicationDefault']);
   return { projects: array(entry.projects, decodeProject, 1_000), memberships: array(entry.memberships, (value) => {
     const membership = record(value, ['threadId', 'projectId', 'revision']);
     return { threadId: id(membership.threadId), projectId: membership.projectId === null ? null : id(membership.projectId),
       revision: integer(membership.revision, 0) };
-  }, 200), workFolders: array(entry.workFolders, decodeConversationWorkFolder, 200),
+  }, 200),
     unavailableFolders: array(entry.unavailableFolders, requiredRoot, 20_200),
     applicationDefault: decodeApplicationDefault(entry.applicationDefault) };
 }
@@ -132,13 +126,13 @@ function array<T>(value: unknown, decode: (entry: unknown) => T, limit: number):
   return value.map(decode);
 }
 
-export function decodeConversationWorkFolder(value: unknown): ConversationWorkFolder {
-  const entry = record(value, ['threadId', 'path', 'revision']);
-  return { threadId: id(entry.threadId), path: root(entry.path), revision: integer(entry.revision, 0) };
-}
-function decodeFolderChange(value: unknown): { path: string | null; expectedRevision: number } {
-  const entry = record(value, ['path', 'expectedRevision']);
-  return { path: root(entry.path), expectedRevision: integer(entry.expectedRevision, 0) };
+export function decodeProjectExecutionDefault(value: unknown): ProjectExecutionDefault {
+  const entry = record(value, ['projectId', 'path', 'revision']);
+  const projectId = entry.projectId === null ? null : id(entry.projectId);
+  const revision = integer(entry.revision, projectId === null ? 0 : 1);
+  const path = root(entry.path);
+  if (projectId === null && (revision !== 0 || path !== null)) throw new Error('Invalid application default provenance');
+  return { projectId, path, revision };
 }
 function requiredRoot(value: unknown): string {
   const path = root(value);
@@ -160,7 +154,7 @@ function decodeApplicationDefault(value: unknown): ProjectCatalogView['applicati
   return { path: root(entry.path), available: entry.available };
 }
 
-export function decodeProjectFolderPick(value: unknown): { path: string | null } {
-  const entry = record(value, ['path']);
-  return { path: root(entry.path) };
+export function decodeProjectFolderPick(value: unknown): { paths: readonly string[] } {
+  const entry = record(value, ['paths']);
+  return { paths: Object.freeze(array(entry.paths, requiredRoot, 1_000)) };
 }

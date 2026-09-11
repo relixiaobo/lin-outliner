@@ -26,7 +26,7 @@ export interface DelegateCommandDefinition {
 }
 
 export const DELEGATE_COMMANDS: readonly DelegateCommandDefinition[] = Object.freeze([
-  command('project', 'delegate project --input - [--output text|json]', true, 'Inspect or manage Projects and conversation work folders through the Host.'),
+  command('project', 'delegate project --input - [--output text|json]', true, 'Inspect or manage Projects and their primary folders through the Host.'),
   command('run', 'delegate run --input - [--output text|json]', true, 'Start one Agent Session and its first Turn.'),
   command('send', 'delegate send (--task TASK_ID | --session SESSION_ID) --input - [--output text|json]', true, 'Queue context or continue an owned Agent Session.'),
   command('close', 'delegate close --session SESSION_ID [--output text|json]', true, 'Close one idle owned Agent Session.'),

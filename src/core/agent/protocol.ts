@@ -2307,7 +2307,7 @@ export interface AgentIdentityCatalogResponse {
 }
 
 export const AGENT_CORE_METHODS = [
-  'project/pickFolder',
+  'project/pickFolders',
   'project/inspect',
   'project/manage',
   'thread/list',
@@ -2356,7 +2356,7 @@ export const AGENT_CORE_METHODS = [
 export type AgentCoreMethod = typeof AGENT_CORE_METHODS[number];
 
 export interface AgentCoreRequestByMethod {
-  readonly 'project/pickFolder': Record<string, never>;
+  readonly 'project/pickFolders': Record<string, never>;
   readonly 'project/inspect': import('./project').ProjectInspectRequest;
   readonly 'project/manage': import('./project').ProjectManageRequest;
   readonly 'thread/list': ThreadListRequest;
@@ -2403,7 +2403,7 @@ export interface AgentCoreRequestByMethod {
 }
 
 export interface AgentCoreResponseByMethod {
-  readonly 'project/pickFolder': { readonly path: string | null };
+  readonly 'project/pickFolders': { readonly paths: readonly string[] };
   readonly 'project/inspect': import('./project').ProjectCatalogView;
   readonly 'project/manage': import('./project').ProjectManageResult;
   readonly 'thread/list': ThreadListResponse;

@@ -56,34 +56,107 @@ appear in navigation, or enter the renderer Thread map. The renderer has no
 Agent tree, child navigation stack, delegated transcript, or descendant-running
 indicator.
 
-The Thread chooser retains Project grouping and shows each user conversation's
-saved location beside existing source, startup-availability, activity, and time
-metadata. A folder-only chat shows its basename; colliding basenames include the
-shortest distinguishing parent suffix. Project membership shows the Project name,
-plus the folder when different from its primary. A Project chat with no saved
-folder always reads `Project · Application default`, even if the resolved default
-happens to equal the primary. Unknown membership is never labeled No Project.
-Full accepted paths are accessible, and unavailable folders retain their identity.
-The composer preserves the folder label beside a separate unavailable indicator;
-long Project names yield space to the location and its status.
+The Thread chooser retains Project grouping alongside existing source, startup
+availability, activity and time metadata. A member conversation shows its Project
+name; a folderless Project also shows Application default. Unknown membership is
+never labeled No Project. The composer shows the same compact chip beside Add,
+with full primary and secondary paths in the Project editor and a separate
+unavailable indicator. No Project shows no persistent chip or extra row.
 
-The composer's Add (`+`) menu offers attachments, Choose project, and Set work
-folder. With neither Project nor saved folder there is no persistent location
-chip or extra row. A selected location appears immediately beside Add and uses the
-same labels as history. Its details expose canonical paths, primary and secondary
-sources, application-default resolution, and clear/reselect repair actions.
-Attachment limits disable only the attachment action. Existing paste/drop, draft,
-tray and removal owners are unchanged; attachment use never changes location.
+The composer's Add (`+`) menu opens above and leading-aligned to its trigger. It
+offers Add attachment, a separator and Project with a trailing chevron. Hover,
+click or Right Arrow opens the Project flyout to the right, flipping left only at
+the window edge. Pointer traversal keeps both surfaces open. Left Arrow returns
+to the parent; Escape dismisses the menus and restores focus to Add. Attachment
+limits disable only the attachment action; paste/drop and attachment ownership
+remain unchanged.
 
-The Project picker supports search, New Project and No Project. It previews the
-resulting work folder and preserves it on existing-chat moves unless Use project
-primary folder is explicitly checked. That choice uses one atomic Host operation.
-Project forms use the native directory picker, editable first-folder name
-suggestion, and add/remove/make-primary controls. Removing the primary requires an
-explicit replacement unless every folder was removed. New Chat in Project copies
-the primary. Deletion explains retained chats, folders and task evidence plus
-Automation dependencies. Folder changes remain available during a Turn and never
-redirect admitted tasks or change permissions.
+The parent Project row displays the selected Project name, or Choose project when
+unselected. The child shows a bottom Don't work in a project action, with a close icon,
+only when there is a selection to clear. It follows New Project, remains available
+while searching, and clears chat membership without deleting the Project.
+With an empty catalog, show only New Project: omit search, status text,
+separators and the deselection row. With available projects and no selection, show the
+searchable catalog directly without a redundant checked empty choice.
+
+The flyout includes inline search and the complete Project list with
+folder icons and the current selection checked. Up to six recent choices lead the
+remaining catalog. The list scrolls while New Project stays fixed below a separator;
+search filters the entire catalog without a second picker dialog. Recent IDs are
+bounded local userData UI metadata, filtered against the catalog; Project edits
+are not usage. Successful selection and explicit project-chat creation update
+recency; failed selection does not. Before a bind disables the focused control,
+focus moves to the menu surface so keyboard dismissal remains available during
+the request. Failure restores focus to that control after it is enabled (or the
+first available menu target if the control disappeared), unless the user has
+already moved focus elsewhere or dismissed the menu. Left/Right and Home/End retain their normal
+text-editing behavior inside search; Enter chooses the first filtered result.
+New Project
+opens the creation form directly, then creates and selects the Project. If creation
+succeeds but selection fails, the dialog retains the created Project and offers
+selection retry without another create. Cancellation changes no membership. The creation form has a header close action,
+an icon/name field, and a large bordered Add folders button in its empty state.
+After adding folders it shows primary selection/removal and an Add folder action;
+Create project submits, and Cancel from direct creation closes the dialog.
+Search and menu actions share a 16px icon slot, a 4px label gap and 28px row
+height. Bare inputs inherit their surrounding inset without extra horizontal
+padding. Primary is a readable status label, not a disabled action.
+
+The Project chip stays beside Add in the bottom composer toolbar. Its leading
+folder icon switches in place to the remove button on hover or keyboard focus;
+neutral pill hover feedback groups the icon and name without changing geometry.
+Add, Project and model selection share the control-hover fill. All four toolbar
+controls, including Send, use the 28px control-size-xl height and vertical center
+in both resting and hover states. Add has a circular
+hit area; text controls size to their displayed content plus padding, with width
+ceilings for truncation instead of growing into the toolbar spacer. Narrow model
+controls retain horizontal padding and the dropdown caret; only the model name
+truncates inside the available content area.
+
+The selected Project chip opens the same picker directly, without the Add menu.
+Its separate remove button clears only chat membership, preserving the Project
+catalog. Failed removal keeps the selection and displays a focused error dialog
+with retry and close actions. Each Project row reserves one 28px trailing slot:
+at rest it shows the selection check; row hover or visible keyboard focus replaces
+the check with the pencil action. Pointer focus alone never keeps the pencil visible
+after the pointer leaves, and the label never shifts. It edits that row’s Project directly, including
+unselected Projects, without changing chat selection. Selection and editing
+are sibling buttons; the footer contains only New Project and deselection. Saving
+updates the Project without rebinding the conversation; Cancel discards changes.
+The editor includes Delete Project with a confirmation that explains retained
+chats, files and running tasks. Canceling deletion returns to the unsaved editor.
+The composer is the sole chat Project operation entry: the Thread chooser
+retains grouping and membership metadata but has no Project management or
+assignment action. Closing the picker
+restores focus to the chip; successful removal restores focus to Add.
+
+Add folders opens a native directory picker with multiselection. Cancellation
+leaves the draft unchanged. A batch appends distinct new paths in picker order;
+the first added folder supplies the initial name suggestion and primary only
+when the source list was empty. Existing names and primaries remain unchanged.
+A batch exceeding the 20-folder total is rejected with a visible message,
+without partially adding its folders.
+
+Project folder rows are single-line and share icon, path, primary-action and
+remove columns. The Project dialog is 560px wide, capped to the viewport with
+16px outer insets. The final folder name takes its intrinsic width before the
+parent path receives the remaining space; only names exceeding the entire path
+column are themselves truncated. Long paths elide parent segments first;
+hover titles preserve the full path. Make primary appears on row hover or
+keyboard focus while its column stays reserved, so neither text nor neighbors
+move. The selected Primary label stays visible. Editing feedback appears above
+the action row, and closing restores focus to the Project chip or Add after
+deleting the selected Project.
+
+Project is the sole user-facing default-directory choice. Selection adopts its
+current primary for subsequent task admissions, including in existing chats;
+No Project and folderless Projects use Application default. There is no separate
+Set/Clear work folder action or Use project primary checkbox. Project forms use
+the native directory picker, editable first-folder name suggestion and
+add/remove/make-primary controls. Removing the primary requires a replacement
+unless every folder is removed. Primary edits affect subsequent tasks in all
+member conversations; admitted tasks remain unchanged. Deletion explains retained
+chats/files/tasks and Automation dependencies.
 
 The renderer refreshes after mutations, global `project/catalog/changed`
 notifications (including Agent writes), Thread creation and window focus. Reads

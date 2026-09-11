@@ -239,7 +239,7 @@ Agent Core. It is a contract checklist, not project status.
   before the PR is ready.
 
 Service handoff verification must exercise actual Bash evidence with different
-admitted directories and saved-folder changes. Task/Item ownership, success and
+admitted directories and Project primary-folder changes. Task/Item ownership, success and
 post-launch ordering establish evidence eligibility; cwd equality does not.
 Application acceptance checks the exact isolated Runtime and content root with
 no-start inspection. A listening frontend or healthy sibling is insufficient.

@@ -9,7 +9,7 @@ renderer state, and user-visible language use the same four concepts:
 A `Thread` is the durable container for ordered work history and configuration.
 It owns stable UUIDv7 identity, lineage, source, model provider, timestamps,
 status, and optional loaded Turns. A persistent user conversation can separately
-save a default work folder; actual execution addresses belong to Tool Tasks. `sessionId` groups a
+select a Project whose primary folder supplies the execution default; actual execution addresses belong to Tool Tasks. `sessionId` groups a
 root Thread with its descendants; it is only a grouping key.
 
 A `Turn` is one accepted input and its resulting ordered Items. At most one Turn
@@ -322,8 +322,8 @@ and delegation Threads have no renderer-editable configuration. A fork inherits 
 source Thread's effective execution selection.
 
 An ordinary renderer-created root has no execution cwd in its Thread DTO. Its
-optional conversation work folder is a separate revisioned setting, not execution
-evidence. Every executable Turn resolves an
+Project membership resolves a default from the current primary folder, not an
+independent conversation preference or execution receipt. Every executable Turn resolves an
 ExecutionAddress for each Tool Task, and descendants validate or refresh their
 own context references. Before any Tool Task starts, its immutable address,
 policy, and context snapshot references are durable. Initial discovery uses a
@@ -342,13 +342,14 @@ only after the owning resource reaches its terminal fence.
 membership or an execution default. Root creation defaults to `user`; forks and
 delegated Sessions retain the selected source. The desktop Host default is the OS user's home directory, exposed by
 `ProjectService` as the application default. New Chat needs no directory
-selection. Local calls use an explicit `cwd`, otherwise the saved conversation
+selection. Local calls use an explicit `cwd`, otherwise the selected Project primary
 folder, otherwise this default; relative overrides use the selected base.
-A missing or redirected saved directory fails dependent calls without fallback;
+A missing or redirected Project primary directory fails dependent calls without fallback;
 an absolute valid override still works. A call never saves its own cwd as a
-conversation preference. The Host samples the setting synchronously before
-address resolution and stores its path/revision in the immutable execution
-address. Later edits affect only subsequent admissions.
+conversation preference. The Host samples Project membership and the primary
+folder synchronously before address resolution and stores the Project ID, revision
+and primary path as `projectDefault` in the immutable execution address. Later
+Project edits or membership changes affect only subsequent admissions.
 Collection, immutable successor delivery, and freshness validation follow the
 [local task context lifecycle](agent-tool-design.md#local-files-and-commands).
 
@@ -362,46 +363,51 @@ never grants permissions or scans every source automatically. Exact codecs rejec
 unknown fields, relative saved paths, duplicate canonical folders, and an invalid
 primary. An unavailable retained secondary source does not block unrelated edits.
 
-Membership and `ConversationWorkFolder` are separate revisioned settings. The
-latter is a canonical path or null; unset is revision zero until first saved.
-`project/inspect` exposes both settings, source availability, and the canonical
-application default. `project/manage` provides create/update/delete, bind, and
-`setWorkFolder`; `project/pickFolder` uses the native directory picker. The UI and
-invocation-bound Project CLI share `ProjectService`, its directory identity
-revalidation, lifecycle lock, and optimistic revisions.
+Membership is revisioned organizational state. No separate conversation folder is
+stored or editable. `project/inspect` exposes Projects, membership, source
+availability, and the canonical application default. `project/manage` provides
+create/update/delete and bind; `project/pickFolders` uses the native directory
+picker with multiselection, returning `{ paths: string[] }` (empty on cancel).
+The UI and invocation-bound Project CLI share `ProjectService`, directory
+identity revalidation, lifecycle locking, and optimistic revisions.
 
-Plain new Chats are ungrouped and unset. An explicit `thread/start.project`
-checks the Project revision and copies its primary folder in the Thread insertion
-transaction. A folderless Project copies null. Forks copy the parent's saved
-folder by value, including explicit null. Persistent forks and children inherit
-membership from canonical lineage; changing the root's folder never updates a
-fork or a delegated Session. Ephemeral Threads have no durable setting.
+Plain new Chats are ungrouped. An explicit `thread/start.project` checks the
+Project revision and binds it in the Thread insertion transaction. Persistent forks
+and children inherit membership from canonical lineage. Root user task admissions
+resolve the selected Project's current primary folder; child execution retains its
+Host-admitted delegation or isolation directory. Folderless Projects resolve to the
+application default. A root reassignment traverses the complete descendant lineage
+and checks Project and membership revisions; missing intermediate membership never
+truncates traversal. No Project removes grouping and restores the application
+default for subsequent root tasks.
 
-A root reassignment traverses the complete descendant lineage and checks Project
-and membership revisions. Missing intermediate membership never truncates traversal.
-Existing-chat moves preserve its folder unless the caller explicitly includes
-`workFolder` and its expected revision in the same atomic bind operation. Project
-rename, source/primary edits, unbinding, and deletion never redirect existing chats,
-change configuration/permissions, or rewrite accepted Task evidence.
+Project primary edits change future root task defaults in all member conversations;
+rename and secondary-source edits do not change the directory. Unbinding or deletion
+restores the application default. None of these changes modifies configuration,
+permissions, or already admitted Task addresses. `ProjectCatalogStore.executionDefault`
+samples the current Project into an immutable admission value. Pending deletion
+retains the selected default until membership is actually detached.
 
 Agent access uses the built-in `projects` Skill and the foreground
 `delegate project --input - --output json` CLI. The existing private invocation
 broker binds the exact input to the active persistent user Thread/Turn/Item and
 supervised Bash Task. Project access is independent of the delegation experiment.
 The Host checks current tool/capability authority again immediately before commit.
-Project proposals require native confirmation of name, sources/primary, affected
-conversation and resulting folder. An explicit folder-only change needs no extra
-confirmation only for the invoking conversation: the CLI rejects `setWorkFolder`
-when its target differs from the trusted source root Thread, before receipt replay
-or mutation. Cancellation and stale revisions commit nothing. Durable operation
-IDs bind the request digest to an atomic result receipt, permitting lost-response
-inspection and idempotent retry without duplicate creation. Deletion intent retains
-its operation identity for startup completion and truthful pending receipts.
+Every Project mutation requires native confirmation of name, sources/primary,
+affected conversation and resulting default. Cancellation and stale revisions
+commit nothing. Durable operation IDs bind the request digest to an atomic result
+receipt, permitting lost-response inspection and idempotent retry without duplicate
+creation. Deletion intent retains its operation identity for startup completion
+and truthful pending receipts. Retired folder-only operations and combined
+membership/folder writes are rejected by the exact request codec.
 
-Current-context evidence publishes the selected Project, saved folder/revision,
+Current-context evidence publishes the selected Project and primary/revision,
 availability and application default before the next provider continuation, after
 live changes, on new Turns and after compaction. Historical evidence cannot replace
-the current setting. Project sources stay bounded and inspection-only.
+the current Project. Project sources stay bounded and inspection-only. This
+pre-release cut removes independent conversation-folder persistence and its old
+execution-address codec; it has no migration or legacy reader. Verification uses
+fresh isolated userData.
 
 Deletion persists a fence before checking Automation dependencies. New membership
 and live Project resolution reject fenced Projects; a child born during deletion

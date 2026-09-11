@@ -1220,7 +1220,7 @@ export function decodeAgentCoreRequest<M extends AgentCoreMethod>(
 ): AgentCoreRequestByMethod[M] {
   let decoded: AgentCoreRequestByMethod[AgentCoreMethod];
   switch (method) {
-    case 'project/pickFolder': exactKeys(recordValue(value, 'request'), [], 'request'); decoded = deepFreeze({}); break;
+    case 'project/pickFolders': exactKeys(recordValue(value, 'request'), [], 'request'); decoded = deepFreeze({}); break;
     case 'project/inspect': decoded = deepFreeze(decodeProjectInspectRequest(value)); break;
     case 'project/manage': decoded = deepFreeze(decodeProjectManageRequest(value)); break;
     case 'thread/list':
@@ -1361,7 +1361,7 @@ export function decodeAgentCoreResponse<M extends AgentCoreMethod>(
 ): AgentCoreResponseByMethod[M] {
   let decoded: AgentCoreResponseByMethod[AgentCoreMethod];
   switch (method) {
-    case 'project/pickFolder': decoded = deepFreeze(decodeProjectFolderPick(value)); break;
+    case 'project/pickFolders': decoded = deepFreeze(decodeProjectFolderPick(value)); break;
     case 'project/inspect': decoded = deepFreeze(decodeProjectCatalogView(value)); break;
     case 'project/manage': decoded = deepFreeze(decodeProjectManageResult(value)); break;
     case 'thread/list':

@@ -1,4 +1,4 @@
-import { decodeProject, decodeProjectManageResult, type Project, type ConversationWorkFolder, type ProjectMembership } from '../../../core/agent/project';
+import { decodeProject, decodeProjectManageResult, type Project, type ProjectExecutionDefault, type ProjectMembership } from '../../../core/agent/project';
 import { uuidV7 } from '../uuid';
 import type { SqliteDatabase } from './sqlite';
 
@@ -29,16 +29,6 @@ export class ProjectCatalogStore {
         operation_id TEXT NOT NULL, digest TEXT NOT NULL, result_json TEXT NOT NULL,
         PRIMARY KEY(source_thread_id, operation_id)
       ) STRICT;
-      CREATE TABLE IF NOT EXISTS conversation_work_folders (
-        thread_id TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE,
-        path TEXT, revision INTEGER NOT NULL CHECK (revision > 0)
-      ) STRICT;
-      CREATE TRIGGER IF NOT EXISTS conversation_work_folder_fork AFTER INSERT ON threads
-      BEGIN
-        INSERT INTO conversation_work_folders(thread_id, path, revision)
-        SELECT NEW.id, f.path, 1 FROM threads parent LEFT JOIN conversation_work_folders f ON f.thread_id = parent.id
-        WHERE parent.id = NEW.forked_from_id;
-      END;
       CREATE TRIGGER IF NOT EXISTS project_membership_inherit AFTER INSERT ON threads
       BEGIN
         INSERT INTO project_memberships(thread_id, project_id, revision)
@@ -80,9 +70,8 @@ export class ProjectCatalogStore {
   }
   /** The caller owns the surrounding Thread creation transaction. */
   admit(threadId: string, projectId: string, revision: number): void {
-    const project = this.require(projectId, revision);
+    this.require(projectId, revision);
     this.writeMembership(threadId, projectId);
-    if (this.workFolder(threadId).revision === 0) this.writeWorkFolder(threadId, project.primaryFolder, 0);
   }
   lineage(threadId: string): string[] {
     return (this.db.prepare(`WITH RECURSIVE family(id) AS (
@@ -90,29 +79,23 @@ export class ProjectCatalogStore {
       UNION SELECT t.id FROM threads t JOIN family f ON t.parent_thread_id = f.id OR t.forked_from_id = f.id
     ) SELECT id FROM family ORDER BY id`).all(threadId) as { id: string }[]).map((row) => row.id);
   }
-  bind(threadId: string, projectId: string | null, revision: number | null, membershipRevision: number, workFolder?: { path: string | null; expectedRevision: number }): readonly string[] {
+  bind(threadId: string, projectId: string | null, revision: number | null, membershipRevision: number): readonly string[] {
     return this.transaction(() => {
       if (projectId) this.require(projectId, revision!);
       if (this.membership(threadId).revision !== membershipRevision) throw new Error('Thread Project membership changed; inspect it again');
       const family = this.lineage(threadId);
       if (!family.length) throw new Error('Thread no longer exists');
-      if (workFolder) this.writeWorkFolder(threadId, workFolder.path, workFolder.expectedRevision);
       for (const id of family) this.writeMembership(id, projectId);
       return family;
     });
   }
-  workFolder(threadId: string): ConversationWorkFolder {
-    const row = this.db.prepare('SELECT path, revision FROM conversation_work_folders WHERE thread_id = ?')
-      .get(threadId) as { path: string | null; revision: number } | undefined;
-    return { threadId, path: row?.path ?? null, revision: row?.revision ?? 0 };
-  }
-  setWorkFolder(threadId: string, path: string | null, expectedRevision: number): void {
-    this.transaction(() => this.writeWorkFolder(threadId, path, expectedRevision));
-  }
-  private writeWorkFolder(threadId: string, path: string | null, expectedRevision: number): void {
-    if (this.workFolder(threadId).revision !== expectedRevision) throw new Error('Conversation work folder changed; inspect it again before retrying');
-    this.db.prepare(`INSERT INTO conversation_work_folders(thread_id, path, revision) VALUES (?, ?, 1)
-      ON CONFLICT(thread_id) DO UPDATE SET path = excluded.path, revision = revision + 1`).run(threadId, path);
+  executionDefault(threadId: string): ProjectExecutionDefault {
+    const membership = this.membership(threadId);
+    // Include a pending deletion until membership is actually detached. A fence
+    // blocks new membership, not the already selected conversation's directory.
+    const project = membership.projectId ? this.read(membership.projectId, true) : null;
+    if (membership.projectId && !project) throw new Error('Selected Project is unavailable');
+    return { projectId: project?.id ?? null, path: project?.primaryFolder ?? null, revision: project?.revision ?? 0 };
   }
   receipt(sourceThreadId: string, operationId: string, digest?: string): import('../../../core/agent/project').ProjectManageResult | null {
     const row = this.db.prepare('SELECT digest, result_json FROM project_operation_receipts WHERE source_thread_id = ? AND operation_id = ?')
