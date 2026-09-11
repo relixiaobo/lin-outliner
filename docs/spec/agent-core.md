@@ -62,7 +62,11 @@ its active Tool Item. Handoff/watch receipts and terminal dispositions remain in
 the existing Task store. Acknowledgement binds an event to its handling Turn/Item;
 automatic continuation commits through the existing canonical Turn/batch owner
 only when a recorded responsibility remains. Silent service exits allocate no
-Turn. See [Task contracts](agent-tool-design.md) for admission and recovery rules.
+Turn. A service handoff consumes exact owned post-launch successful Item
+references; checks may execute in a different independently admitted cwd. A saved
+conversation-folder edit changes future defaults, never an existing service or
+check's recorded address. Evidence references do not grant additional authority.
+See [Task contracts](agent-tool-design.md) for admission and recovery rules.
 During the active Turn only, a transient raw-call overlay lets
 the next provider boundary observe the exact just-executed arguments. It is not durable;
 later Turns, restart, fork, and compaction use only the frozen envelope. An admitted

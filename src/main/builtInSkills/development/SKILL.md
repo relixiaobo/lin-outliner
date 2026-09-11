@@ -6,8 +6,24 @@ user-invocable: true
 
 # Development Processes
 
+A request to start an application means its required frontend and backend must
+work together, unless the person explicitly requests only one component.
+"Do not start or repair the backend" forbids backend lifecycle changes; it does
+not waive read-only verification. Do not redefine the request as frontend-only
+to avoid a failed or unverified dependency. If verification itself is prohibited,
+report that limitation and leave the application unverified.
+
+Keeping the frontend running does **not** require handoff. If a required backend
+check fails or remains unavailable, do **not** call `task_control` with
+`action: "handoff"` for this application, even when the person asks to leave the
+frontend running. Keep the current process and unfinished launch responsibility,
+and report partial startup. Do not select only the successful frontend Item to
+bypass failed application verification.
+
 1. Inspect the project instructions and choose the intended Bash `cwd`. Use the
-   existing capability and worktree assignment. A worktree redirects relative
+   conversation default, capability and worktree assignment. Always pass the
+   intended explicit `cwd` for launch: shell `cd` does not change the Host
+   admission directory. A worktree redirects relative
    work; it does not contain arbitrary absolute-path shell effects.
 2. Run finite dependent commands in the foreground. Independent finite jobs may
    use `run_in_background: true`; omitted `completion_agreement` means they still
@@ -20,11 +36,31 @@ user-invocable: true
    Full Access. The macOS write sandbox does not restrict network access.
    `unavailable` or `rejected` requires addressing the reported requirement; do
    not rerun unrestricted or broaden roots implicitly.
-4. Verify usable startup with an appropriate completed endpoint, Runtime, or
-   application check in the same authorized execution lineage. Running logs,
-   process existence, a listening frontend, and typechecks alone do not establish
-   that the requested application works. Bash checks return an `evidence` Item
-   reference. A failed check leaves launch unfinished. Avoid repetitive polling.
+4. Verify the behavior the person requested with a completed application check.
+   Address the exact running application's isolated root and advertised endpoint;
+   the Agent Host's default Runtime or another healthy clone cannot verify it.
+   Running logs, process existence, a listening frontend, and typechecks alone do
+   not establish usable startup. For Tenon, use its installed `outline` CLI with
+   explicit `TENON_OUTLINE_RUNTIME_ROOT=<target-userData>/outline-runtime`
+   and `TENON_CONTENT_ROOT=<target-userData>/content`, plus `--no-start`:
+   inspect `status`, then `get @library --depth 0` (or the requested exact Node)
+   to prove that this document Runtime serves content.
+   Check both command success and returned application data; a stopped status is
+   a limitation, not a healthy workspace. Read the project's root convention
+   first. Do not let inspection start, repair or redirect the target Runtime.
+   For a bounded Tenon document check use
+   `TENON_OUTLINE_RUNTIME_ROOT="<target-userData>/outline-runtime" TENON_CONTENT_ROOT="<target-userData>/content" outline --no-start --json get @library --depth 0`.
+   Inspect its application result; do not mask failures with a pipeline to `head`.
+   Preserve the advertised hostname/address family: an IPv4 refusal while the
+   service listens on IPv6 is not evidence of a crash. Quote the full URL,
+   including IPv6 brackets, when passing it to the shell. Do not broaden listeners.
+   A Bash check may use a different independently authorized `cwd`, including
+   after the conversation default changes. It still checks the original service;
+   neither handoff nor a folder edit redirects an existing process or grants new
+   permissions. Retain its returned `evidence` Item reference. Bound checks;
+   avoid blind sleeps and unchanged retries. If the frontend is healthy but the
+   Runtime or workspace fails, report partial startup and the concrete error,
+   preserve available evidence, and leave launch responsibility unfinished.
 5. Before reporting availability, call `task_control` with `action: "handoff"`,
    the exact `task_id`, a fresh `operation_id`, current `expected_revision` from
    `task_status.continuation`, and `readiness: [evidence]` from completed successful
@@ -65,6 +101,14 @@ user-invocable: true
     compact ownership and receipts remain. Finite results, unfinished launches,
     and explicit watches continue within their recorded request; events do not
     grant restart, replacement, or broader authority on their own.
+11. For an explicitly authorized reset, retain available stderr, startup failures
+    and exact target/root identity before deletion. Stop the target through its
+    owner. Managed Skill contents are intentionally read-only; use their existing
+    lifecycle cleanup owner when available. If the authorized whole-data deletion
+    requires permission repair, restrict it to that exact disposable tree, never
+    shared/global Skill sources. Verify removal with `test ! -e <exact-path>`,
+    not `ls` of the removed directory. Successful deletion is not proof of repair;
+    repeat the application check after the authorized restart.
 
 ## Interactive tmux Experiment
 
