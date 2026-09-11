@@ -1,0 +1,83 @@
+{
+  "purpose": "Frozen synthetic comparison inputs; labels are review fixtures, not measured model outcomes. Compare equal model, prompts and source access before claiming quality or cost gains.",
+  "cases": [
+    {
+      "id": "temporary-en",
+      "language": "en",
+      "source": "For this reply only, use a table.",
+      "prospectiveTask": "Write a later unrelated report.",
+      "expectedNewCategories": []
+    },
+    {
+      "id": "completion-zh",
+      "language": "zh",
+      "source": "完成了，谢谢。",
+      "prospectiveTask": "Start the next unrelated task.",
+      "expectedNewCategories": []
+    },
+    {
+      "id": "generic-en",
+      "language": "en",
+      "source": "It is generally wise to verify your work.",
+      "prospectiveTask": "Answer a routine formatting request.",
+      "expectedNewCategories": []
+    },
+    {
+      "id": "preference-zh",
+      "language": "zh",
+      "source": "今后给我研究报告时，请先写结论，再列关键证据。",
+      "prospectiveTask": "Prepare another research report.",
+      "expectedNewCategories": [
+        "guidance"
+      ]
+    },
+    {
+      "id": "scoped-en",
+      "language": "en",
+      "source": "For incident reviews, include the exact failed assumption before suggestions. This is our recurring review rule.",
+      "prospectiveTask": "Review the next incident.",
+      "expectedNewCategories": [
+        "guidance"
+      ]
+    },
+    {
+      "id": "decision-zh",
+      "language": "zh",
+      "source": "我们决定暂缓跨设备同步，因为当前只支持单机，冲突解决还没有定义。等冲突规则确认再重新评估。",
+      "prospectiveTask": "Explain why synchronization was deferred.",
+      "expectedNewCategories": [
+        "episode"
+      ]
+    },
+    {
+      "id": "unresolved-en",
+      "language": "en",
+      "source": "We still need to decide whether offline edits win; this blocks enabling synchronization.",
+      "prospectiveTask": "Resume the synchronization design.",
+      "expectedNewCategories": [
+        "question"
+      ]
+    },
+    {
+      "id": "project-en",
+      "language": "en",
+      "source": "This repository requires TypeScript; it is already specified in AGENTS.md.",
+      "prospectiveTask": "Work in a different repository.",
+      "expectedNewCategories": []
+    },
+    {
+      "id": "quotation-zh",
+      "language": "zh",
+      "source": "这段文章说“所有报告都应该更长”；我并不赞同，也没有要求改变报告格式。",
+      "prospectiveTask": "Prepare a short research report.",
+      "expectedNewCategories": []
+    },
+    {
+      "id": "duplicate-en",
+      "language": "en",
+      "source": "The same deferred-sync decision still holds. Nothing changed.",
+      "prospectiveTask": "Recall the decision with the existing dated record.",
+      "expectedNewCategories": []
+    }
+  ]
+}

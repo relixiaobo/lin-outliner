@@ -155,7 +155,8 @@ export class MemoryPipeline {
       if (job.kind === 'phase1') {
         const threadId = payloadThreadId(job.payload);
         const source = this.sources.readSource(threadId);
-        if (!source || source.thread.status.type !== 'idle') return;
+        if (!source) throw new Error('Memory source is unavailable; pending evidence has not been processed');
+        if (source.thread.status.type !== 'idle') return;
         await this.phase1.run(source, controller.signal);
         return;
       }

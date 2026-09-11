@@ -326,6 +326,9 @@ function validateChanges(
     if (change.action === 'create') continue;
     const node = selectedById.get(change.nodeId);
     if (!node) throw new Error(`Memory consolidation targeted an unselected Node: ${change.nodeId}`);
+    if (node.category === 'memory' && change.action === 'update' && change.text !== node.text) {
+      throw new Error('Memory consolidation cannot rewrite structural container text');
+    }
     if (!node.generated && change.action !== 'keep') {
       throw new Error(`Memory consolidation cannot change user-authoritative Node: ${change.nodeId}`);
     }
@@ -380,7 +383,7 @@ function prepareConsolidation(
       if (!parent) continue;
       const validParent = change.category === 'episode'
         ? parent.category === 'memory'
-        : parent.category === 'episode';
+        : parent.category === 'episode' || parent.category === 'memory';
       if (!validParent) {
         throw new Error(`Memory consolidation create has an invalid parent: ${change.temporaryId}`);
       }
@@ -598,11 +601,12 @@ function consolidationPrompt(nodes: readonly MemoryConsolidationNode[]): string 
   return JSON.stringify({
     task: 'Reconcile the selected Daily Timeline Memory graph.',
     rules: [
-      'Keep user-authored or user-edited Nodes unchanged.',
-      'Update concise generated beliefs, questions, guidance, episodes, and headlines only when evidence supports it.',
+      'Keep user-authored or user-edited Nodes unchanged. Keep structural Memory container text unchanged.',
+      'Keep existing supported content unless there is concrete future benefit from a correction or duplicate merge; no routine rewriting or new wrappers.',
+      'Update concise generated beliefs, questions, guidance, and optional episodes only when evidence supports it.',
       'Delete unsupported generated Nodes only when every descendant is also supplied as a generated delete.',
       'Merge duplicate generated episodes by updating the retained episode and deleting the complete duplicate subtree.',
-      'Create an episode or category Node only beneath a supplied or newly created canonical parent.',
+      'Create an episode beneath a memory container, or a category beneath a memory container or episode.',
       'For every create or update, cite supplied sourceNodeIds that carry current evidence.',
       'Use temporary IDs in the form new:<name> for created Nodes. Return one change per supplied or temporary ID.',
     ],

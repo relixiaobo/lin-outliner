@@ -119,7 +119,14 @@ export interface MemoryDirtyJob<T = unknown> {
   readonly attempt: number;
 }
 
+export interface MemoryEvidenceCoverage {
+  readonly originItemIds: readonly ThreadItemId[];
+  readonly hasMore: boolean;
+  readonly batchId: string;
+}
+
 export interface MemoryStage1Finalization {
+  readonly coverage: MemoryEvidenceCoverage;
   readonly publicationId: string;
   readonly threadId: ThreadId;
   readonly sourceVersion: string;
@@ -195,6 +202,9 @@ export class MemoryControlStore {
         turn_id TEXT NOT NULL,
         source_date TEXT NOT NULL,
         content_hash TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS processed_origins (
+        origin_item_id TEXT PRIMARY KEY REFERENCES origin_claims(origin_item_id) ON DELETE CASCADE
       ) STRICT;
       CREATE TABLE IF NOT EXISTS generated_nodes (
         node_id TEXT PRIMARY KEY,
@@ -403,9 +413,9 @@ export class MemoryControlStore {
     } : null;
   }
 
-  finalizeStage1NoOutput(threadId: ThreadId, sourceVersion: string, now = Date.now()): void {
+  finalizeStage1NoOutput(threadId: ThreadId, sourceVersion: string, coverage: MemoryEvidenceCoverage, now = Date.now()): void {
     this.transaction(() => {
-      this.db.prepare('DELETE FROM node_lineage WHERE thread_id = ?').run(threadId);
+      this.acceptCoverage(threadId, coverage, now);
       this.db.prepare(`
         INSERT INTO source_records(thread_id, source_version, status, polluted, updated_at)
         VALUES (?, ?, 'succeededNoOutput', 0, ?)
@@ -415,10 +425,28 @@ export class MemoryControlStore {
           polluted = 0,
           updated_at = excluded.updated_at
       `).run(threadId, sourceVersion, now);
-      this.enqueueJob('phase2:global', 'phase2', { reason: 'stage1-no-output' }, now);
       this.recordSuccess(now);
     });
     this.invalidateMemoryVisibilityCache();
+  }
+
+  processedOrigins(threadId: ThreadId): ReadonlySet<ThreadItemId> {
+    return new Set((this.db.prepare(`
+      SELECT p.origin_item_id FROM processed_origins p
+      JOIN origin_claims o ON o.origin_item_id = p.origin_item_id WHERE o.thread_id = ?
+    `).all(threadId) as Array<{ origin_item_id: string }>).map((row) => row.origin_item_id));
+  }
+
+  private acceptCoverage(threadId: ThreadId, coverage: MemoryEvidenceCoverage, now: number): void {
+    for (const originItemId of coverage.originItemIds) {
+      const claim = this.db.prepare('SELECT thread_id FROM origin_claims WHERE origin_item_id = ?').get(originItemId) as
+        { thread_id: string } | undefined;
+      if (claim?.thread_id !== threadId) throw new Error('Memory coverage has no matching source claim');
+      this.db.prepare('INSERT OR IGNORE INTO processed_origins(origin_item_id) VALUES (?)').run(originItemId);
+    }
+    if (coverage.hasMore) {
+      this.enqueueJob(`phase1:continuation:${coverage.batchId}`, 'phase1', { threadId }, now);
+    }
   }
 
   markThreadPolluted(threadId: ThreadId, now = Date.now()): void {
@@ -559,7 +587,8 @@ export class MemoryControlStore {
 
   finalizeStage1(input: MemoryStage1Finalization, now = Date.now()): void {
     this.transaction(() => {
-      this.db.prepare('DELETE FROM node_lineage WHERE thread_id = ?').run(input.threadId);
+      if (this.publication(input.publicationId)?.status === 'finalized') return;
+      this.acceptCoverage(input.threadId, input.coverage, now);
       this.writeGeneratedNodesAndLineage(input.nodes, input.lineage);
       this.db.prepare(`
         INSERT INTO source_records(thread_id, source_version, status, polluted, updated_at)

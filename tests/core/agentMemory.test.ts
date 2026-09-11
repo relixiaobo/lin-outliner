@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { join } from 'node:path';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import {
   decodeMemoryConsolidationOutput,
   decodeMemoryStage1Output,
@@ -70,13 +72,20 @@ describe('Codex Memory contracts', () => {
     expect(decodeMemoryStage1Output({
       dates: [{
         sourceDate: '2026-07-24',
-        headline: statement('A durable decision'),
         episode: statement('The user selected the clean replacement.'),
         beliefs: [statement('The project is pre-release.')],
         questions: [],
         guidance: [statement('Do not preserve compatibility paths.')],
       }],
     }).dates[0]?.sourceDate).toBe('2026-07-24');
+    expect(decodeMemoryStage1Output({
+      dates: [{
+        sourceDate: '2026-07-24',
+        beliefs: [statement('A direct durable fact.')],
+        questions: [],
+        guidance: [],
+      }],
+    }).dates[0]).toMatchObject({ episode: null });
     expect(() => decodeMemoryStage1Output({ dates: [], extra: true })).toThrow('unknown field');
     expect(() => decodeMemoryStage1Output({ dates: [{ sourceDate: 'July 24' }] })).toThrow();
 
@@ -320,6 +329,20 @@ describe('Codex Memory contracts', () => {
     expect(extension.view().status.strayTaggedNodeCount).toBe(1);
   });
 
+  test('recognizes useful category Nodes directly under the structural Memory container', () => {
+    const projection = memoryProjection();
+    const container = projection.nodes.find((entry) => entry.id === MEMORY_NODE_ID)!;
+    container.children = ['direct:belief', EPISODE_NODE_ID];
+    projection.nodes.push(node('direct:belief', MEMORY_NODE_ID, [], ['tag:d-belief'], 'Direct fact'));
+
+    expect(canonicalMemoryGraph(projection).nodes.map((entry) => entry.node.id)).toEqual([
+      MEMORY_NODE_ID,
+      'direct:belief',
+      EPISODE_NODE_ID,
+      BELIEF_NODE_ID,
+    ]);
+  });
+
   test('routes Memory lookup without injecting prose and counts only an inline citation of an exact get', () => {
     const { extension, store, targetThread, activeTurn, projection } = memoryUsageHarness();
     const context = extension.contributeThreadContext(targetThread);
@@ -495,7 +518,7 @@ describe('Codex Memory contracts', () => {
     expect(content).toContain('"file_path":"/workspace/spec.md"');
   });
 
-  test('fingerprints all eligible evidence while sending only the latest bounded window', () => {
+  test('fingerprints all eligible evidence while sending the oldest complete unprocessed batch', () => {
     const store = memoryStore();
     const turns = Array.from({ length: 501 }, (_, index) => userTurn(
       `evidence ${index}`,
@@ -509,8 +532,9 @@ describe('Codex Memory contracts', () => {
 
     const first = collectMemoryEvidence({ thread, turns }, store);
     expect(first.items).toHaveLength(500);
-    expect(first.items[0]?.originItemId).toBe('item:long:1');
-    expect(first.items.at(-1)?.originItemId).toBe('item:long:500');
+    expect(first.items[0]?.originItemId).toBe('item:long:0');
+    expect(first.items.at(-1)?.originItemId).toBe('item:long:499');
+    expect(first.hasMore).toBe(true);
 
     const next = userTurn(
       'evidence 501',
@@ -522,8 +546,8 @@ describe('Codex Memory contracts', () => {
     store.writeAdmission(admissionSnapshot(next));
     const second = collectMemoryEvidence({ thread, turns: [...turns, next] }, store);
     expect(second.sourceVersion).not.toBe(first.sourceVersion);
-    expect(second.items[0]?.originItemId).toBe('item:long:2');
-    expect(second.items.at(-1)?.originItemId).toBe('item:long:501');
+    expect(second.items[0]?.originItemId).toBe('item:long:0');
+    expect(second.items.at(-1)?.originItemId).toBe('item:long:499');
   });
 
   test('never backfills activity admitted while global or Thread Memory is disabled', () => {
@@ -969,7 +993,7 @@ describe('Codex Memory contracts', () => {
     expect(store.nextJob(10)?.kind).toBe('phase2');
   });
 
-  test('withdraws prior generated lineage when extraction now has no output', () => {
+  test('no-signal coverage preserves unrelated accepted lineage', () => {
     const store = memoryStore();
     expect(store.claimOrigin(ITEM_ID, THREAD_ID, TURN_ID, '2026-07-24', 'hash')).toBe(true);
     store.replaceGeneratedNodes(THREAD_ID, [generatedNode()], [{
@@ -978,14 +1002,14 @@ describe('Codex Memory contracts', () => {
       turnId: TURN_ID,
       originItemId: ITEM_ID,
     }]);
-    store.finalizeStage1NoOutput(THREAD_ID, 'empty-version', 10);
+    store.finalizeStage1NoOutput(THREAD_ID, 'empty-version', { originItemIds: [], hasMore: false, batchId: 'empty' }, 10);
     expect(store.source(THREAD_ID)).toMatchObject({
       sourceVersion: 'empty-version',
       status: 'succeededNoOutput',
     });
-    expect(store.lineageForNode(MEMORY_NODE_ID)).toEqual([]);
-    expect(store.generatedNodeIdsWithoutCurrentSupport()).toEqual([MEMORY_NODE_ID]);
-    expect(store.nextJob(10)?.kind).toBe('phase2');
+    expect(store.lineageForNode(MEMORY_NODE_ID).map((edge) => edge.originItemId)).toEqual([ITEM_ID]);
+    expect(store.generatedNodeIdsWithoutCurrentSupport()).toEqual([]);
+    expect(store.nextJob(10)).toBeNull();
   });
 
   test('treats generated Node moves and tag changes as authoritative user edits', () => {
@@ -1305,7 +1329,6 @@ describe('Codex Memory contracts', () => {
     resolveModel(JSON.stringify({
       dates: [{
         sourceDate: '2026-07-24',
-        headline: statement('Architecture decision', ['item:phase1-user-edit']),
         episode: statement('The user selected the clean architecture.', ['item:phase1-user-edit']),
         beliefs: [statement('The project uses the clean architecture.', ['item:phase1-user-edit'])],
         questions: [],
@@ -1341,7 +1364,6 @@ describe('Codex Memory contracts', () => {
     resolveModel(JSON.stringify({
       dates: [{
         sourceDate: '2026-07-24',
-        headline: statement('Architecture decision', ['item:phase1-user-edit']),
         episode: statement('The user selected the clean architecture.', ['item:phase1-user-edit']),
         beliefs: [statement('Generated replacement belief', ['item:phase1-user-edit'])],
         questions: [],
@@ -1370,7 +1392,6 @@ describe('Codex Memory contracts', () => {
       run: async () => JSON.stringify({
         dates: [{
           sourceDate: '2026-07-24',
-          headline: statement('Durable project choices', ['item:lineage:a', 'item:lineage:b']),
           episode: statement('The user established project constraints.', ['item:lineage:a', 'item:lineage:b']),
           beliefs: [statement('The project uses the selected architecture.', ['item:lineage:a'])],
           questions: [],
@@ -1385,6 +1406,227 @@ describe('Codex Memory contracts', () => {
     const guidance = timeline.graph().nodes.find((entry) => entry.node.content.text === 'Apply the review rule.');
     expect(store.lineageForNode(belief!.node.id).map((edge) => edge.originItemId)).toEqual(['item:lineage:a']);
     expect(store.lineageForNode(guidance!.node.id).map((edge) => edge.originItemId)).toEqual(['item:lineage:b']);
+  });
+
+  test('publishes a useful direct category without inventing daily wrappers', async () => {
+    const store = memoryStore();
+    const timeline = new TimelineMemoryStore(mutableTimelineHost(memoryProjection()).host);
+    const turn = userTurn('remember the direct fact', undefined, { kind: 'user' }, 'turn:direct', 'item:direct');
+    const thread = rootThread([turn]);
+    store.writeAdmission(admissionSnapshot(turn));
+    const phase = new Phase1(store, timeline, {
+      run: async () => JSON.stringify({
+        dates: [{
+          sourceDate: '2026-07-24',
+          episode: null,
+          beliefs: [
+            statement('A direct durable fact.', ['item:direct']),
+            statement('  A   direct durable fact. ', ['item:direct']),
+          ],
+          questions: [],
+          guidance: [],
+        }],
+      }),
+    }, () => true);
+
+    await expect(phase.run({ thread, turns: thread.turns ?? [] }, new AbortController().signal)).resolves.toBe('published');
+    const belief = timeline.graph().nodes.find((entry) => entry.node.content.text === 'A direct durable fact.');
+    expect(belief).toMatchObject({ category: 'belief', episodeId: null, containerId: MEMORY_NODE_ID });
+    expect(timeline.graph().nodes.filter((entry) => entry.category === 'episode')).toHaveLength(1);
+    expect(timeline.graph().nodes.filter((entry) => entry.node.content.text === 'A direct durable fact.')).toHaveLength(1);
+  });
+
+  test('processes bounded batches without revoking older support and resumes durable coverage', async () => {
+    const store = memoryStore();
+    const state = mutableTimelineHost(memoryProjection());
+    const timeline = new TimelineMemoryStore(state.host);
+    const turns = Array.from({ length: 502 }, (_, index) => userTurn(
+      `Evidence ${index}`, undefined, { kind: 'user' }, `turn:batch:${index}`, `item:batch:${index}`,
+    ));
+    for (const turn of turns) store.writeAdmission(admissionSnapshot(turn));
+    const thread = rootThread(turns);
+    let calls = 0;
+    const phase = new Phase1(store, timeline, {
+      run: async ({ prompt }) => {
+        const evidence = JSON.parse(prompt).evidence;
+        calls++;
+        if (calls === 1) {
+          expect(evidence).toHaveLength(500);
+          expect(evidence[0].originItemId).toBe('item:batch:0');
+          return JSON.stringify({ dates: [{ sourceDate: '2026-07-24', episode: null,
+            beliefs: [statement('An early decision retains its reasons.', ['item:batch:0'])], questions: [], guidance: [] }] });
+        }
+        expect(evidence.map((item: { originItemId: string }) => item.originItemId)).toEqual(['item:batch:500', 'item:batch:501']);
+        return '{"dates":[]}';
+      },
+    });
+    await phase.run({ thread, turns }, new AbortController().signal);
+    const retained = timeline.graph().nodes.find((entry) => entry.node.content.text === 'An early decision retains its reasons.')!;
+    expect(store.processedOrigins(THREAD_ID).size).toBe(500);
+    expect(store.status().pendingJobs).toBeGreaterThan(0);
+    await phase.run({ thread, turns }, new AbortController().signal);
+    expect(store.processedOrigins(THREAD_ID).size).toBe(502);
+    expect(store.lineageForNode(retained.node.id).map((edge) => edge.originItemId)).toEqual(['item:batch:0']);
+    expect(state.calls).toHaveLength(1);
+    await expect(phase.run({ thread, turns }, new AbortController().signal)).resolves.toBe('unchanged');
+    expect(calls).toBe(2);
+  });
+
+  test('rejects invalid duplicate evidence before normalization and leaves the batch retryable', async () => {
+    const store = memoryStore();
+    const state = mutableTimelineHost(memoryProjection());
+    const turn = userTurn('Remember a consequential decision.');
+    store.writeAdmission(admissionSnapshot(turn));
+    const thread = rootThread([turn]);
+    let bad = true;
+    const phase = new Phase1(store, new TimelineMemoryStore(state.host), { run: async () => JSON.stringify({ dates: [{
+      sourceDate: '2026-07-24', episode: null,
+      beliefs: [statement('Useful conclusion.'), statement('Useful conclusion.', [bad ? 'missing:origin' : ITEM_ID])],
+      questions: [], guidance: [],
+    }] }) });
+    await expect(phase.run({ thread, turns: [turn] }, new AbortController().signal)).rejects.toThrow('unknown evidence');
+    expect(store.processedOrigins(THREAD_ID).size).toBe(0);
+    expect(state.calls).toHaveLength(0);
+    bad = false;
+    await phase.run({ thread, turns: [turn] }, new AbortController().signal);
+    expect(store.processedOrigins(THREAD_ID).has(ITEM_ID)).toBe(true);
+  });
+
+  test('no-signal or empty date groups create neither a day nor a Memory heading', async () => {
+    const store = memoryStore();
+    const state = mutableTimelineHost(memoryProjection());
+    const turn = userTurn('Thanks, task complete.');
+    store.writeAdmission(admissionSnapshot(turn));
+    const phase = new Phase1(store, new TimelineMemoryStore(state.host), { run: async () => JSON.stringify({
+      dates: [{ sourceDate: '2026-07-24', episode: null, beliefs: [], questions: [], guidance: [] }],
+    }) });
+    await expect(phase.run({ thread: rootThread([turn]), turns: [turn] }, new AbortController().signal)).resolves.toBe('noOutput');
+    expect(state.calls).toHaveLength(0);
+    expect(store.processedOrigins(THREAD_ID).has(ITEM_ID)).toBe(true);
+  });
+
+  test('reuses exact retained statements across source days and preserves independent support', async () => {
+    const store = memoryStore();
+    const state = mutableTimelineHost(memoryProjection());
+    const timeline = new TimelineMemoryStore(state.host);
+    const first = userTurn('Remember the launch decision.', undefined, { kind: 'user' }, 'turn:old', 'item:old');
+    const next = { ...userTurn('The same decision still holds.', undefined, { kind: 'user' }, 'turn:new', 'item:new'),
+      startedAt: new Date(2026, 6, 25).getTime() };
+    for (const turn of [first, next]) store.writeAdmission(admissionSnapshot(turn));
+    const phase = new Phase1(store, timeline, { run: async ({ prompt }) => {
+      const item = JSON.parse(prompt).evidence[0];
+      return JSON.stringify({ dates: [{ sourceDate: item.sourceDate, episode: null,
+        beliefs: [statement('Launch requires the explicit release decision.', [item.originItemId])], questions: [], guidance: [] }] });
+    } });
+    await phase.run({ thread: rootThread([first]), turns: [first] }, new AbortController().signal);
+    await phase.run({ thread: rootThread([first, next]), turns: [first, next] }, new AbortController().signal);
+    const records = timeline.graph().nodes.filter((entry) => entry.node.content.text === 'Launch requires the explicit release decision.');
+    expect(records).toHaveLength(1);
+    expect(records[0]!.sourceDate).toBe('2026-07-24');
+    expect(store.lineageForNode(records[0]!.node.id).map((edge) => edge.originItemId).sort()).toEqual(['item:new', 'item:old']);
+    expect(timeline.graph().containers).toHaveLength(1);
+  });
+
+  test('keeps large complete evidence pending instead of accepting a misleading prefix', async () => {
+    const store = memoryStore();
+    const turn = userTurn('x'.repeat(120_001));
+    store.writeAdmission(admissionSnapshot(turn));
+    const phase = new Phase1(store, new TimelineMemoryStore(readOnlyTimelineHost(memoryProjection())), {
+      run: async () => { throw new Error('Model must not see partial evidence'); },
+    });
+    await expect(phase.run({ thread: rootThread([turn]), turns: [turn] }, new AbortController().signal)).rejects.toThrow('complete-input budget');
+    expect(store.processedOrigins(THREAD_ID).size).toBe(0);
+  });
+
+  test('limits a complete evidence batch to fourteen source dates', () => {
+    const store = memoryStore();
+    const turns = Array.from({ length: 15 }, (_, index) => ({
+      ...userTurn('Useful evidence', undefined, { kind: 'user' }, `turn:date:${index}`, `item:date:${index}`),
+      startedAt: new Date(2020, 0, index + 1).getTime(),
+    }));
+    for (const turn of turns) store.writeAdmission(admissionSnapshot(turn));
+    const batch = collectMemoryEvidence({ thread: rootThread(turns), turns }, store);
+    expect(batch.items).toHaveLength(14);
+    expect(batch.items[0]!.sourceDate).toBe('2020-01-01');
+    expect(batch.hasMore).toBe(true);
+  });
+
+  test('keeps direct category membership equivalent after incremental reparenting', () => {
+    const projection = memoryProjection();
+    const index = new MemoryMutationIndex(projection);
+    applyMemoryIndexDelta(projection, index, [
+      patchProjectionNode(projection, MEMORY_NODE_ID, { children: [EPISODE_NODE_ID, BELIEF_NODE_ID] }),
+      patchProjectionNode(projection, EPISODE_NODE_ID, { children: [] }),
+      patchProjectionNode(projection, BELIEF_NODE_ID, { parentId: MEMORY_NODE_ID }),
+    ]);
+    expect(index.debugSnapshot()).toEqual(fullScanMemoryMutationSnapshot(projection));
+    expect(index.canonicalNodesInGraphOrder().map((entry) => entry.node.id))
+      .toEqual(canonicalMemoryGraph(projection).nodes.map((entry) => entry.node.id));
+  });
+
+  test('accepted coverage survives reopening and is removed with origin invalidation', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'memory-coverage-'));
+    const path = join(directory, 'control.sqlite');
+    let store = new MemoryControlStore(path, new Database(path) as unknown as SqliteDatabase);
+    try {
+      store.claimOrigin(ITEM_ID, THREAD_ID, TURN_ID, '2026-07-24', 'canonical-hash');
+      store.finalizeStage1NoOutput(THREAD_ID, 'source', { originItemIds: [ITEM_ID], hasMore: true, batchId: 'durable' });
+      store.close();
+      store = new MemoryControlStore(path, new Database(path) as unknown as SqliteDatabase);
+      expect(store.processedOrigins(THREAD_ID).has(ITEM_ID)).toBe(true);
+      expect(store.nextJob(Date.now())?.key).toBe('phase1:continuation:durable');
+      store.markThreadPolluted(THREAD_ID);
+      expect(store.processedOrigins(THREAD_ID).size).toBe(0);
+    } finally {
+      store.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test('unavailable source reads retain a durable job without claiming coverage', async () => {
+    const store = memoryStore();
+    const timeline = new TimelineMemoryStore(readOnlyTimelineHost(memoryProjection()));
+    store.enqueueJob('phase1:missing', 'phase1', { threadId: THREAD_ID }, 1);
+    const pipeline = new MemoryPipeline(store, timeline, {} as Phase1, {} as Phase2, {
+      persistentRootThreads: () => [], readSource: () => null,
+    }, { now: () => 1 });
+    await pipeline.start();
+    await waitFor(() => store.status().lastError !== null);
+    await pipeline.close();
+    expect(store.status().pendingJobs).toBe(1);
+    expect(store.status().lastError).toContain('has not been processed');
+    expect(store.processedOrigins(THREAD_ID).size).toBe(0);
+  });
+
+  test('Agent repetition alone cannot establish an independently supported statement', async () => {
+    const store = memoryStore();
+    const turn = completedResponseTurn(userTurn('A temporary request.'), 'The user always wants elaborate reports.');
+    store.writeAdmission(admissionSnapshot(turn));
+    const phase = new Phase1(store, new TimelineMemoryStore(readOnlyTimelineHost(memoryProjection())), {
+      run: async () => JSON.stringify({ dates: [{ sourceDate: '2026-07-24', episode: null,
+        beliefs: [statement('The user always wants elaborate reports.', [turn.items.at(-1)!.id])], questions: [], guidance: [] }] }),
+    });
+    await expect(phase.run({ thread: rootThread([turn]), turns: [turn] }, new AbortController().signal)).rejects.toThrow('not independent');
+    expect(store.processedOrigins(THREAD_ID).size).toBe(0);
+  });
+
+  test('deduplicates equal statements within a multi-date batch without losing either source', async () => {
+    const store = memoryStore();
+    const timeline = new TimelineMemoryStore(mutableTimelineHost(memoryProjection()).host);
+    const first = userTurn('We deferred sync for conflict rules.', undefined, { kind: 'user' }, 'turn:batch-old', 'item:batch-old');
+    const next = { ...userTurn('The decision still holds.', undefined, { kind: 'user' }, 'turn:batch-new', 'item:batch-new'),
+      startedAt: new Date(2026, 6, 25).getTime() };
+    for (const turn of [first, next]) store.writeAdmission(admissionSnapshot(turn));
+    const phase = new Phase1(store, timeline, { run: async () => JSON.stringify({ dates: [
+      { sourceDate: '2026-07-24', episode: null, beliefs: [statement('Sync awaits defined conflict rules.', ['item:batch-old'])], questions: [], guidance: [] },
+      { sourceDate: '2026-07-25', episode: null, beliefs: [statement('Sync awaits defined conflict rules.', ['item:batch-new'])], questions: [], guidance: [] },
+    ] }) });
+    await phase.run({ thread: rootThread([first, next]), turns: [first, next] }, new AbortController().signal);
+    const records = timeline.graph().nodes.filter((entry) => entry.node.content.text === 'Sync awaits defined conflict rules.');
+    expect(records).toHaveLength(1);
+    expect(records[0]!.sourceDate).toBe('2026-07-24');
+    expect(store.lineageForNode(records[0]!.node.id).map((edge) => edge.originItemId).sort()).toEqual(['item:batch-new', 'item:batch-old']);
+    expect(timeline.graph().containers).toHaveLength(1);
   });
 
   test('rebuilds Phase 1 targets after waiting for the write gate', async () => {
@@ -1416,7 +1658,6 @@ describe('Codex Memory contracts', () => {
         return JSON.stringify({
           dates: [{
             sourceDate: '2026-07-24',
-            headline: statement('Architecture decision', ['item:phase1-gate-race']),
             episode: statement('The user selected the clean architecture.', ['item:phase1-gate-race']),
             beliefs: [statement('Generated replacement belief', ['item:phase1-gate-race'])],
             questions: [],
@@ -1625,7 +1866,6 @@ describe('Codex Memory contracts', () => {
       run: async () => JSON.stringify({
         dates: [{
           sourceDate: '2026-07-24',
-          headline: statement('Recovery contract'),
           episode: statement('The Runtime receipt resolves unknown settlement.'),
           beliefs: [statement('Memory publication is idempotent.')],
           questions: [],
@@ -1653,6 +1893,7 @@ describe('Codex Memory contracts', () => {
 
     expect(store.preparedPublications()).toEqual([]);
     expect(store.source(THREAD_ID)?.sourceVersion).toBeDefined();
+    expect(store.processedOrigins(THREAD_ID).has(ITEM_ID)).toBe(true);
     expect(timelineState.calls).toHaveLength(1);
   });
 });
@@ -1907,7 +2148,7 @@ function publication(kind: 'reset', payload: unknown) {
 }
 
 function statement(text: string, originItemIds: readonly string[] = [ITEM_ID]) {
-  return { text, originItemIds };
+  return { text, originItemIds, rationale: { futureUse: 'Avoid repeating the recorded error in the next related task.', novelty: 'An explicit durable decision adds context absent from existing records.' } };
 }
 
 function admissionSnapshot(turn: Turn) {

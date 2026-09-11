@@ -37,10 +37,10 @@ Hitch).
 | --- | --- | --- |
 | **Working memory** | The small-capacity active workspace holding what is in use now; not a durable store. | One Turn's assembled model context. Memory contributes compact routing instructions and, only when the model deliberately retrieves them, bounded Outline CLI results. |
 | **Episodic memory** | Declarative memory for specific experienced events bound to context: what happened, when, and where. | Ordinary `#d-episode` Nodes under a canonical daily `#d-memory` container, with exact statement-level lineage to source Items. |
-| **Semantic memory** | Declarative, context-reduced knowledge such as stable facts and preferences. | Ordinary `#d-belief` Nodes distilled from one or more supported episodes. |
+| **Semantic memory** | Declarative, context-reduced knowledge such as stable facts and preferences. | Ordinary `#d-belief` Nodes supported directly by canonical evidence or distilled from independently useful episodes. An episode wrapper is optional. |
 | **Procedural memory** | Nondeclarative knowledge expressed as skills and procedures. | Skills. Procedural memory is outside the Memory extension and follows `docs/spec/agent-skills.md`. |
 
-`#d-question` and `#d-guidance` are useful product categories inside an episode;
+`#d-question` and `#d-guidance` are useful product categories under a Memory container or an optional episode;
 they are not additional academic memory stores. A question preserves unresolved
 uncertainty. Guidance records a supported instruction for future handling.
 
@@ -48,7 +48,7 @@ uncertainty. Guidance records a supported instruction for future handling.
 
 | Process | Academic meaning | Tenon mapping |
 | --- | --- | --- |
-| **Encoding** | Forming a trace from experience; depth, novelty, and prediction error influence selection. | Phase 1 selects durable signal from eligible canonical Items and produces bounded, source-dated episode groups. |
+| **Encoding** | Forming a trace from experience; depth, novelty, and prediction error influence selection. | Phase 1 selects durable signal from eligible canonical Items and produces bounded, source-dated records with exact accepted Item coverage and optional episode context. |
 | **Consolidation** | Offline replay and integration that stabilizes or generalizes memory. | Phase 2 reconciles the bounded Daily Timeline Memory graph, merges duplicate generated episodes, preserves exact support, and never overwrites user-authoritative Nodes. |
 | **Semanticization** | Repeated episodic content becoming context-reduced knowledge. | Supported episode statements may become or update `#d-belief` Nodes while retaining lineage. |
 | **Retrieval** | Reactivating memory from a cue; cue quality depends on encoding context. | An eligible root Turn receives routing guidance and deliberately uses public `outline find` and `outline get`; no Memory-specific tool or passive prose injection exists. |
@@ -68,8 +68,8 @@ product entities:
   traces rather than copying them. Tenon keeps bounded lineage from public
   Memory statements to canonical source Items.
 - **Autobiographical hierarchy** (Conway, 2000): memory can move from specific
-  events toward more general knowledge. Tenon's episode-to-belief hierarchy
-  reflects that direction while preserving source links.
+  events toward more general knowledge. Tenon preserves that direction and
+  source links without requiring an episode Node for every supported belief.
 - **Complementary Learning Systems** (McClelland, McNaughton, and O'Reilly,
   1995): fast experience recording and slower generalization are distinct.
   Tenon's bounded Phase 1 extraction and Phase 2 consolidation preserve that
