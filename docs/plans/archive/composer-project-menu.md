@@ -21,7 +21,7 @@ Remove the retired conversation-folder reader and writer without a migration.
 - `ProjectDialog` previously preserved an existing conversation's folder unless
   the user checks Use project primary folder. Membership and saved folder were
   separate revisioned settings. The replacement lives in the
-  [Core contract](../spec/agent-core.md#optional-project-catalog).
+  [Core contract](../../spec/agent-core.md#optional-project-catalog).
 - The catalog currently sorts by name; Project `updatedAt` measures edits, not
   use. Do not present that timestamp as recent usage.
 

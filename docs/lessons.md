@@ -2991,3 +2991,13 @@ passed on admission refusal before spawning. Supply all earlier prerequisites,
 prove the child started and remains live, and require the timeout-specific reason.
 A fixture-owned exit marker verifies cleanup; missing-root and missing-executable
 negative controls must fail the timeout assertion.
+
+
+## Async menu failures must retain keyboard ownership
+
+**Move focus before disabling the active control, then restore it after failure.**
+Disabling a focused menu button can move browser focus to the document body,
+leaving a visible menu unable to handle arrows or Escape. Park focus on the menu
+surface during admission and restore an enabled target after failure, unless
+the user moved focus or dismissed the menu. Verify an actually pending request
+and an asynchronous rejection; immediate mocked failures can hide this gap (#679).
