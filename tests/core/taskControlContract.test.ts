@@ -20,6 +20,7 @@ const requests = [
 const corpus: unknown[] = [null, {}, { request: {} }];
 for (const request of requests) {
   corpus.push({ request });
+  corpus.push({ request, '': null }, { request: { ...request, '': null } });
   for (const field of Object.keys(request)) {
     const missing = { ...request } as Record<string, unknown>;
     delete missing[field]; corpus.push({ request: missing });
@@ -34,6 +35,9 @@ corpus.push({ request: { ...requests[0], readiness: [] } },
   { request: { ...requests[0], readiness: [{ ...reference, itemId: null }] } },
   { request: { ...requests[0], expected_revision: Number.MAX_SAFE_INTEGER + 1 } },
   { request: { ...requests[0], action: 'toString' } });
+corpus.push({ request: { ...requests[1], '': null, expected_revision: 0 } },
+  { request: { ...requests[0], readiness: [{ ...reference, '': null }] } },
+  { request: { ...requests[2], request: { ...reference, '': null } } });
 const accepts = (value: unknown) => { try { decodeTaskControlToolInput(value); return true; } catch { return false; } };
 function assertParity(schema: unknown) {
   const validator = compileToolParameters(schema as never);

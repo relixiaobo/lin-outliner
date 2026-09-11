@@ -500,7 +500,8 @@ key order cannot change replay identity; changed values or readiness array order
 still count as different input. `acknowledge` accepts only the common fields and `event_id`.
 Wrong action fields receive `invalid_arguments` with a bounded contract field
 path, required/allowed fields and repair guidance, without echoing rejected
-values or arbitrary keys. Rejection performs no Task mutation. Provider conversion
+values or arbitrary keys. Extra fields, including empty-string keys, are rejected
+before canonical reconstruction at every object depth. Rejection performs no Task mutation. Provider conversion
 preserves the closed action language through the existing Anthropic schema profile
 and normal OpenAI/Google JSON Schema paths; this does not enable strict constrained
 sampling. Historical provider arguments remain immutable.

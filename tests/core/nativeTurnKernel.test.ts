@@ -988,6 +988,41 @@ describe('native turn kernel parity', () => {
     });
   });
 
+  test('rejects empty extra Task keys before canonicalization without entering the executor', async () => {
+    const request = { task_id: 'task', operation_id: 'operation', action: 'acknowledge', event_id: 'event' };
+    const reference = { turnId: 'turn', itemId: 'item', '': null };
+    const malformed = [
+      { request, '': null },
+      { request: { ...request, '': null } },
+      { request: { ...request, '': null, expected_revision: 0 } },
+      { request: { task_id: 'task', operation_id: 'operation', action: 'handoff', expected_revision: 0, readiness: [reference] } },
+      { request: { task_id: 'task', operation_id: 'operation', action: 'start_watch', expected_revision: 0, request: reference } },
+    ];
+    for (const args of malformed) {
+      const executions: unknown[] = [];
+      const control = parameterTool('task_control', TASK_CONTROL_INPUT_SCHEMA, async (_id, input) => {
+        executions.push(input); return toolResult('accepted');
+      });
+      control.prepareArguments = decodeTaskControlToolInput as never;
+      const gateway = new ScriptedGateway([
+        () => terminalStream(assistant([{ type: 'toolCall', id: 'bad', name: 'task_control', arguments: args }], 'toolUse')),
+        () => terminalStream(assistant([{ type: 'text', text: 'done' }])),
+      ]);
+      const runtime = createRuntime(gateway, { tools: [control] });
+      const events: AgentEvent[] = [];
+      runtime.subscribe((event) => events.push(event));
+      await runtime.prompt(USER);
+      expect(executions).toEqual([]);
+      expect(events.some((event) => event.type === 'tool_execution_start')).toBe(false);
+      expect(events.find((event) => event.type === 'tool_call_admission')).toMatchObject({
+        decision: { execute: false, modelCall: { disposition: 'evidenceOnly', reason: 'invalidArguments' } },
+      });
+      expect(events.find((event) => event.type === 'tool_execution_end' && event.isError)).toMatchObject({
+        result: { content: [{ text: expect.stringContaining('field is not allowed') }] },
+      });
+    }
+  });
+
   test('admits exact nested JSON values after preparing arguments exactly once', async () => {
     const argumentsValue = {
       nullable: null,

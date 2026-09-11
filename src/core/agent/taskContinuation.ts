@@ -242,7 +242,7 @@ function inputRecord(value: unknown, path: string, fields: readonly string[]): R
   const missing = fields.find((field) => !Object.hasOwn(r, field));
   if (missing) inputError(`${path}/${missing}`, 'required field is missing', fields);
   const extra = Object.keys(r).find((field) => !fields.includes(field));
-  if (extra) inputError(Object.hasOwn(fieldSchemas, extra) ? `${path}/${extra}` : path,
+  if (extra !== undefined) inputError(Object.hasOwn(fieldSchemas, extra) ? `${path}/${extra}` : path,
     'field is not allowed for this action', fields);
   return r;
 }
