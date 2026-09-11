@@ -546,6 +546,17 @@ handler. Receipts and responsibility commit atomically in the existing Task row;
 a failed write leaves work pending. Retain at most 256 distinct receipts per Task,
 reject new operations at that bound, and preserve old replay identities.
 
+Task status exposes bounded existing execution provenance: source Turn/Item,
+admitted cwd, start/completion times and recorded supervisor/child PIDs.
+`stateObservedAt` dates the Task snapshot separately from a running log observation.
+Missing inspection facts become null. Recorded PIDs are historical owner facts,
+not a live generation check or proof that a matching external process is owned.
+Agents distinguish observed facts, requested outcomes and causal hypotheses;
+paths/names/ports alone establish neither creation nor control authority. Equivalent
+file/version and remote-receipt evidence follows the same attribution rule. Equal
+hashes cannot exclude a same-byte rewrite; missing receipts do not prove no write
+occurred, and a recovered receipt does not disprove earlier reply loss.
+
 Every terminal digest identifies exactly one event: `pending`, `silent` with
 `handed_off`/`watch_revoked`/`stopped`, `handled` with Turn/Item, or `admitted` with
 completion Turn/batch. A handed-over unwatched service exits silently for zero,

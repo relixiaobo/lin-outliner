@@ -535,6 +535,13 @@ describe('native turn kernel parity', () => {
       const { gateway } = await executeToolWithArguments(status, { task_id: taskId });
       const result = gateway.requests[1]!.context.messages.find((message) => message.role === 'toolResult')!;
       const header = JSON.parse((result.content[0] as { text: string }).text);
+      expect(header.data.stateObservedAt).toBeGreaterThanOrEqual(store.read(taskId)!.startedAt);
+      expect(header.data.execution).toMatchObject({
+        source: { turnId: context.turn.id, itemId: 'start-server' },
+        cwd: store.read(taskId)!.executionContext.address.cwd,
+        startedAt: store.read(taskId)!.startedAt,
+        recordedProcess: { childPid: store.read(taskId)!.childPid },
+      });
       expectToolOutputContract('task_status', header.data);
       expect(header).toMatchObject({ ok: true, data: {
         taskId, state: 'running', result: null,
