@@ -739,6 +739,12 @@ is the `tiered` rendition of one immutable image artifact; it is not subject to 
 generic 10 MiB per-image and 20 MiB per-call inline tool-output limits, so detailed 4K
 originals remain intact until storage pressure makes them reclaimable.
 
+All model-image producers decode actual source bytes through the common bounded
+normalizer, including files stored without an image suffix. They preserve
+canonical pixel orientation, aspect ratio and PNG transparency, without
+upscaling or substituting OS thumbnails. Source reads and decoding retain the
+source-byte budget; serialization and cancellation cover every producer.
+
 The same admission creates a model observation at no more than 2,000 px per edge and
 4.5 MiB. The result returns a stable `artifactId`, a rematerializable readable path, the
 source and observation dimensions, source-pixels-per-observation-pixel scales, and the
