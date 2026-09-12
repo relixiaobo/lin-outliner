@@ -12,6 +12,7 @@ interface ProfilePaths {
 }
 
 export interface ProfileTurnSnapshot {
+  readonly threadId: string;
   readonly identity: string | null;
   readonly style: string | null;
   readonly entries: readonly ProfileEntryView[];
@@ -22,7 +23,7 @@ export interface ProfileTurnSnapshot {
 }
 
 /** File observations are fixed at Turn admission; canonical context owns replay. */
-export function captureProfileTurn(store: ProfileFileStore, turnId: string, profileName: string, learned: boolean): ProfileTurnSnapshot {
+export function captureProfileTurn(store: ProfileFileStore, threadId: string, turnId: string, profileName: string, learned: boolean): ProfileTurnSnapshot {
   const prior = store.readTurnSnapshot<ProfileTurnSnapshot>(turnId);
   if (prior) return prior;
   const paths = { user: store.path('user'), identity: store.path('identity', profileName), style: store.path('style', profileName), status: store.statusPath() };
@@ -50,9 +51,9 @@ export function captureProfileTurn(store: ProfileFileStore, turnId: string, prof
       entries.push(entry);
     }
   }
-  const snapshot: ProfileTurnSnapshot = { identity, style, entries, errors, revisions, paths };
+  const snapshot: ProfileTurnSnapshot = { threadId, identity, style, entries, errors, revisions, paths };
   store.saveTurnSnapshot(turnId, snapshot);
-  for (const file of files) store.inspect(file.kind, profileName);
+  store.refreshTurnStatus(turnId, files);
   return snapshot;
 }
 

@@ -47,7 +47,7 @@ function fixture() {
   const project = (turns: readonly Turn[]) => new CanonicalContextProjector(model, resources).projectTurns(turns);
   const state = (learned = true) => {
     const id = uuidV7();
-    captureProfileTurn(store, id, 'default', learned);
+    captureProfileTurn(store, thread.id, id, 'default', learned);
     return profileStateForTurn(store, id, learned);
   };
   const input = async (state: AdditionalContext, initial: readonly ThreadItem[] = []): Promise<Turn> => {
@@ -240,7 +240,7 @@ describe('Profile context through canonical Thread state', () => {
   test('rerun preserves its original Profile while live withdrawal appends a new canonical snapshot', async () => {
     const f = fixture();
     learn(f.store, 'a');
-    captureProfileTurn(f.store, 'original-turn', 'default', true);
+    captureProfileTurn(f.store, thread.id, 'original-turn', 'default', true);
     const original = profileStateForTurn(f.store, 'original-turn', true);
     const first = await f.input(original);
     learn(f.store, 'b', 'NEW FILE VALUE');

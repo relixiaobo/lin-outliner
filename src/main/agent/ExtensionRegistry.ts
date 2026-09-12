@@ -69,6 +69,10 @@ export class ExtensionRegistry {
     await this.invoke((extension) => extension.onThreadStopped?.(thread));
   }
 
+  async threadDeleted(thread: Thread): Promise<void> {
+    await this.invoke((extension) => extension.onThreadDeleted?.(thread));
+  }
+
   historyRollbackExtensions(): readonly AgentCoreExtension[] {
     return this.all().filter((extension) => extension.prepareHistoryRollback);
   }

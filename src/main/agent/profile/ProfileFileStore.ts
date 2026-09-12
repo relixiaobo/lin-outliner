@@ -29,7 +29,7 @@ interface Publication {
   readonly after: DocumentRecord;
   readonly automatic: boolean;
 }
-interface PublicationRow { id: string; state: string; payload: string }
+interface PublicationRow { id: string; state: string; payload: string; request_digest: string | null; updated_at: number }
 
 export interface ProfileResetTarget {
   readonly revision: number;
@@ -57,7 +57,7 @@ export class ProfileFileStore {
       PRAGMA journal_mode = WAL;
       PRAGMA synchronous = FULL;
       CREATE TABLE IF NOT EXISTS profile_documents (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;
-      CREATE TABLE IF NOT EXISTS profile_publications (id TEXT PRIMARY KEY, state TEXT NOT NULL, payload TEXT NOT NULL) STRICT;
+      CREATE TABLE IF NOT EXISTS profile_publications (id TEXT PRIMARY KEY, state TEXT NOT NULL, payload TEXT NOT NULL, request_digest TEXT, updated_at INTEGER NOT NULL) STRICT;
       CREATE TABLE IF NOT EXISTS profile_invalidations (id TEXT PRIMARY KEY, state TEXT NOT NULL, turn_ids TEXT NOT NULL) STRICT;
       CREATE TABLE IF NOT EXISTS profile_turns (turn_id TEXT PRIMARY KEY, snapshot TEXT NOT NULL) STRICT;
     `); } catch (error) { closeSqliteAfterFailure(this.db, error); }
@@ -120,18 +120,83 @@ export class ProfileFileStore {
     return view;
   }
 
+  /** Keep only snapshots whose canonical Turns can still be replayed. */
+  pruneTurnSnapshots(retainedTurnIds: ReadonlySet<string>): void {
+    this.transaction(() => {
+      if (retainedTurnIds.size === 0) {
+        this.db.exec('DELETE FROM profile_turns');
+      } else {
+        const placeholders = [...retainedTurnIds].map(() => '?').join(',');
+        this.db.prepare(`DELETE FROM profile_turns WHERE turn_id NOT IN (${placeholders})`).run(...retainedTurnIds);
+      }
+      this.compactAcceptedPublications();
+    });
+  }
+
+  /** Delete private state that belongs to a conversation removed from history. */
+  deleteThreadState(threadId: string): void {
+    this.transaction(() => {
+      this.db.prepare("DELETE FROM profile_turns WHERE json_extract(snapshot, '$.threadId') = ?").run(threadId);
+      const rows = this.db.prepare("SELECT id, payload FROM profile_publications WHERE state = 'prepared'").all() as Array<{ id: string; payload: string }>;
+      for (const row of rows) {
+        const publication = JSON.parse(row.payload) as Publication;
+        const sources = [...publication.before.entries, ...publication.after.entries].flatMap((entry) => entry.sources);
+        if (sources.some((source) => source.threadId === threadId)) {
+          this.db.prepare("UPDATE profile_publications SET state = 'cancelled', payload = ?, updated_at = ? WHERE id = ?")
+            .run(JSON.stringify({ id: row.id, state: 'cancelled' }), this.now(), row.id);
+        }
+      }
+      this.compactAcceptedPublications();
+    });
+  }
+
+  /** Accepted files no longer need before/after bodies for recovery. */
+  private compactAcceptedPublications(): void {
+    const cutoff = this.now() - 90 * 24 * 60 * 60 * 1_000;
+    this.db.prepare("DELETE FROM profile_publications WHERE state = 'accepted' AND updated_at < ?").run(cutoff);
+    this.db.prepare(`
+      DELETE FROM profile_publications
+      WHERE state = 'accepted' AND id NOT IN (
+        SELECT id FROM profile_publications WHERE state = 'accepted' ORDER BY updated_at DESC LIMIT 512
+      )
+    `).run();
+  }
+
   statusPath(): string { return join(this.userData, 'agent', 'profile-status.json'); }
 
   private writeStatus(view: ProfileFileView): void {
+    this.writeStatusViews([view]);
+  }
+
+  private writeStatusViews(views: readonly ProfileFileView[]): void {
     const path = this.statusPath();
     let files: Record<string, unknown> = {};
     try {
       const previous = JSON.parse(readFileSync(path, 'utf8'));
       if (previous.hostSessionId === this.hostSessionId && previous.files && typeof previous.files === 'object') files = previous.files;
     } catch { /* First observation in this Host session. */ }
-    const { content: _content, entries: _entries, ...status } = view;
-    files[documentKey(view.kind, view.profileName)] = status;
+    for (const view of views) {
+      const { content: _content, entries: _entries, ...status } = view;
+      files[documentKey(view.kind, view.profileName)] = status;
+    }
     writeJsonFileSync(path, { hostSessionId: this.hostSessionId, observedAt: this.now(), files }, { mode: 0o600, directoryMode: 0o700 });
+  }
+
+  /** Publish status from views already captured during Turn admission. */
+  refreshTurnStatus(turnId: string, views: readonly ProfileFileView[]): void {
+    const snapshot = this.readTurnSnapshot<{ revisions: readonly { path: string; revision: number; digest: string | null }[]; errors: readonly string[] }>(turnId);
+    if (!snapshot) return;
+    const refreshed = views.map((view) => {
+      const revision = snapshot.revisions.find((entry) => entry.path === view.path);
+      return {
+        ...view,
+        effective: revision && snapshot.errors.length === 0
+          ? { turnId, revision: revision.revision, digest: revision.digest }
+          : null,
+        activationError: snapshot.errors.join('\n') || null,
+      };
+    });
+    this.writeStatusViews(refreshed);
   }
 
   edit(input: { kind: ProfileFileKind; profileName?: string; expectedDigest: string | null; content: string; author: 'manual' | 'agent'; sources?: readonly ProfileEvidence[]; operationId?: string }): ProfileFileView {
@@ -153,8 +218,11 @@ export class ProfileFileStore {
   applyLearning(operationId: string, expectedRevision: number, changes: readonly ProfileLearningChange[], evidence: readonly ProfileEvidence[]): void {
     const requestDigest = digest(JSON.stringify({ expectedRevision, changes, evidence }))!;
     const pending = this.publication(operationId);
-    if (pending && (JSON.parse(pending.payload) as Publication).requestDigest !== requestDigest) throw new Error('Profile publication ID has different input');
-    if (pending?.state === 'accepted') return;
+    if (pending?.state === 'accepted') {
+      if (pending.request_digest !== requestDigest) throw new Error('Profile publication ID has different input');
+      return;
+    }
+    if (pending && (pending.request_digest ?? (JSON.parse(pending.payload) as Publication).requestDigest) !== requestDigest) throw new Error('Profile publication ID has different input');
     if (pending?.state === 'prepared') { this.settle(JSON.parse(pending.payload) as Publication); return; }
     if (pending) throw new ProfileConflictError('cancelled', 'Profile publication cannot be replayed');
     const before = this.observe('user', 'default');
@@ -203,7 +271,7 @@ export class ProfileFileStore {
   }
 
   private publication(id: string): PublicationRow | null {
-    return this.db.prepare('SELECT id, state, payload FROM profile_publications WHERE id = ?').get(id) as PublicationRow | null;
+    return this.db.prepare('SELECT id, state, payload, request_digest, updated_at FROM profile_publications WHERE id = ?').get(id) as PublicationRow | null;
   }
 
   prepareInvalidation(id: string, turnIds: readonly string[]): void {
@@ -322,19 +390,28 @@ export class ProfileFileStore {
   }
 
   private publish(publication: Publication): void {
-    const existing = this.db.prepare('SELECT state, payload FROM profile_publications WHERE id = ?').get(publication.id) as PublicationRow | undefined;
+    const requestDigest = publication.requestDigest ?? digest(JSON.stringify({
+      key: publication.key, beforeRevision: publication.before.revision, afterRevision: publication.after.revision,
+      afterContent: publication.after.content,
+    }))!;
+    publication = { ...publication, requestDigest };
+    const existing = this.db.prepare('SELECT id, state, payload, request_digest, updated_at FROM profile_publications WHERE id = ?').get(publication.id) as PublicationRow | undefined;
     if (existing) {
-      if (existing.payload !== JSON.stringify(publication)) throw new Error('Profile publication ID has different content');
       if (existing.state === 'accepted') return;
+      if ((existing.request_digest ?? (JSON.parse(existing.payload) as Publication).requestDigest) !== requestDigest) throw new Error('Profile publication ID has different content');
       if (existing.state !== 'prepared') throw new ProfileConflictError('cancelled', 'Profile publication cannot be replayed');
     } else {
-      this.db.prepare("INSERT INTO profile_publications(id, state, payload) VALUES (?, 'prepared', ?)").run(publication.id, JSON.stringify(publication));
+      this.db.prepare("INSERT INTO profile_publications(id, state, payload, request_digest, updated_at) VALUES (?, 'prepared', ?, ?, ?)").run(publication.id, JSON.stringify(publication), requestDigest, this.now());
     }
     this.settle(publication);
   }
 
   private settle(publication: Publication): void {
     const { after, before } = publication;
+    const requestDigest = publication.requestDigest ?? digest(JSON.stringify({
+      key: publication.key, beforeRevision: before.revision, afterRevision: after.revision,
+      afterContent: after.content,
+    }))!;
     const path = this.path(after.kind, after.profileName);
     const current = readText(path);
     if (current !== before.content && current !== after.content) {
@@ -349,13 +426,24 @@ export class ProfileFileStore {
       throw new Error('Profile learning sources were invalidated before publication');
     }
     if (current !== after.content) atomicWriteFileSync(path, after.content ?? '', { mode: 0o600, directoryMode: 0o700 });
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
+    this.transaction(() => {
       this.db.prepare('INSERT INTO profile_documents(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
         .run(publication.key, JSON.stringify(after));
-      this.db.prepare("UPDATE profile_publications SET state = 'accepted' WHERE id = ?").run(publication.id);
+      this.db.prepare("UPDATE profile_publications SET state = 'accepted', payload = ?, request_digest = ?, updated_at = ? WHERE id = ?")
+        .run(JSON.stringify({ id: publication.id, key: publication.key, requestDigest, afterRevision: after.revision, afterDigest: digest(after.content) }), requestDigest, this.now(), publication.id);
+    });
+  }
+
+  private transaction<T>(operation: () => T): T {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const result = operation();
       this.db.exec('COMMIT');
-    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+      return result;
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
   }
 }
 

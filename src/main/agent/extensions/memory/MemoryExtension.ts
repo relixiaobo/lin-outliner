@@ -220,9 +220,12 @@ export class MemoryExtension implements AgentCoreExtension {
     // state. Skip the sweep entirely for that session; the next launch that can
     // read the Thread runs it against the complete set.
     if (!host.hasHiddenRootThreads()) {
-      this.control.deleteOrphanAdmissions(new Set(host.persistentRootThreads().flatMap((thread) => (
+      const retainedTurnIds = new Set(host.persistentRootThreads().flatMap((thread) => (
         host.readThread({ threadId: thread.id, includeTurns: true }).thread.turns?.map((turn) => turn.id) ?? []
-      ))));
+      )));
+      this.control.deleteOrphanAdmissions(retainedTurnIds);
+      try { this.options.profiles?.pruneTurnSnapshots(retainedTurnIds); }
+      catch (error) { this.options.onError?.(error, 'profile-context'); }
     }
     this.lastGraphDigest = this.currentCanonicalGraphDigest();
     await this.requirePipeline().recover();
@@ -436,7 +439,7 @@ export class MemoryExtension implements AgentCoreExtension {
     if (this.options.profiles && !context.thread.ephemeral && context.thread.parentThreadId === null) {
       try {
         if (context.replayedTurnId) captureReplayedProfileTurn(this.options.profiles, context.turnId, context.replayedTurnId);
-        else captureProfileTurn(this.options.profiles, context.turnId, context.configuration.profileName ?? 'default', eligible);
+        else captureProfileTurn(this.options.profiles, context.thread.id, context.turnId, context.configuration.profileName ?? 'default', eligible);
       }
       catch (error) { this.options.onError?.(error, 'profile-context'); }
     }
@@ -543,6 +546,11 @@ export class MemoryExtension implements AgentCoreExtension {
       if (usage.nodeIds.has(nodeId) || !visible.has(nodeId)) continue;
       usage.nodeIds.add(nodeId);
     }
+  }
+
+  onThreadDeleted(thread: Thread): void {
+    try { this.options.profiles?.deleteThreadState(thread.id); }
+    catch (error) { this.options.onError?.(error, 'profile-context'); }
   }
 
   onNotification(notification: AgentCoreRecordedNotification): void {

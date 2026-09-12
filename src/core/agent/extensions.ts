@@ -132,6 +132,7 @@ export interface AgentCoreExtension {
   onThreadResumed?(thread: Thread): void | Promise<void>;
   onThreadIdle?(thread: Thread): void | Promise<void>;
   onThreadStopped?(thread: Thread): void | Promise<void>;
+  onThreadDeleted?(thread: Thread): void | Promise<void>;
   /** Durably prepares extension invalidation before the marker; idempotent by rollbackId. */
   prepareHistoryRollback?(context: ThreadHistoryRollbackContext): void | Promise<void>;
   /** Releases prepared state when no marker exists; Core retries until settled or shutdown. */

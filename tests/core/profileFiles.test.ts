@@ -93,13 +93,13 @@ describe('Profile files', () => {
   test('captures one revision per Turn, applies the next edit later, and omits disabled learned context', () => {
     const { store } = fixture();
     store.applyLearning('learn:a', 0, [proposal()], [source('a')]);
-    captureProfileTurn(store, 'turn:one', 'default', true);
+    captureProfileTurn(store, 'thread:profile', 'turn:one', 'default', true);
     store.applyLearning('learn:b', store.inspect('user').revision, [proposal('b', 'Use a short outline for reports.')], [source('b')]);
-    captureProfileTurn(store, 'turn:one', 'default', true);
+    captureProfileTurn(store, 'thread:profile', 'turn:one', 'default', true);
     expect(profileStateForTurn(store, 'turn:one', true).profile_user_reports?.value).toContain('with the conclusion');
-    captureProfileTurn(store, 'turn:two', 'default', true);
+    captureProfileTurn(store, 'thread:profile', 'turn:two', 'default', true);
     expect(profileStateForTurn(store, 'turn:two', true).profile_user_reports?.value).toContain('short outline');
-    captureProfileTurn(store, 'turn:off', 'default', false);
+    captureProfileTurn(store, 'thread:profile', 'turn:off', 'default', false);
     expect(profileStateForTurn(store, 'turn:off', false).profile_user_reports).toBeUndefined();
   });
 
@@ -162,7 +162,7 @@ describe('Profile files', () => {
     const { store } = fixture();
     store.edit({ kind: 'identity', expectedDigest: null, content: 'Role. '.repeat(600), author: 'manual' });
     store.edit({ kind: 'style', expectedDigest: null, content: 'Style. '.repeat(600), author: 'manual' });
-    const over = captureProfileTurn(store, 'turn:over', 'default', true);
+    const over = captureProfileTurn(store, 'thread:profile', 'turn:over', 'default', true);
     expect(over.errors.join()).toContain('combined');
     expect(over.identity).toBeNull();
     expect(store.inspect('identity').activationError).toContain('combined');
@@ -170,7 +170,7 @@ describe('Profile files', () => {
     store.edit({ kind: 'style', expectedDigest: store.inspect('style').savedDigest, content: 'Be direct.', author: 'manual' });
     const changes = Array.from({ length: 12 }, (_, index) => ({ ...proposal(String(index), `Preference ${index}. `.repeat(20)), key: `preference-${index}` }));
     store.applyLearning('learn:many', 0, changes, changes.map((_, index) => source(String(index))));
-    const admitted = captureProfileTurn(store, 'turn:bounded', 'default', true);
+    const admitted = captureProfileTurn(store, 'thread:profile', 'turn:bounded', 'default', true);
     expect(admitted.entries.length).toBeGreaterThan(0);
     expect(admitted.entries.length).toBeLessThan(12);
     const prompt = profileStateForTurn(store, 'turn:bounded', true)!;
@@ -195,17 +195,51 @@ describe('Profile files', () => {
     expect(() => store.applyLearning('learn:identity', 0, [proposal('b')], [source('b')])).toThrow('different input');
   });
 
+  test('reuses captured views for Turn status without inspecting files a second time', () => {
+    const { store } = fixture();
+    let inspections = 0;
+    const inspect = store.inspect.bind(store);
+    store.inspect = ((...args: Parameters<ProfileFileStore['inspect']>) => {
+      inspections += 1;
+      return inspect(...args);
+    }) as ProfileFileStore['inspect'];
+    captureProfileTurn(store, 'thread:profile', 'turn:single-read', 'default', true);
+    expect(inspections).toBe(3);
+  });
+
+  test('prunes snapshots for deleted history and compacts accepted publication bodies', () => {
+    const { store, db } = fixture();
+    store.applyLearning('learn:compact', 0, [proposal()], [source('a')]);
+    captureProfileTurn(store, 'thread:profile', 'turn:kept', 'default', true);
+    captureProfileTurn(store, 'thread:profile', 'turn:deleted', 'default', true);
+    const publication = db.prepare('SELECT payload FROM profile_publications WHERE id = ?').get('learn:compact') as { payload: string };
+    expect(publication.payload).not.toContain('before');
+    expect(publication.payload).not.toContain('afterContent');
+    store.pruneTurnSnapshots(new Set(['turn:kept']));
+    expect(db.prepare('SELECT COUNT(*) AS count FROM profile_turns').get()).toEqual({ count: 1 });
+    expect(db.prepare('SELECT COUNT(*) AS count FROM profile_publications WHERE state = \'accepted\'').get()).toEqual({ count: 1 });
+  });
+
+  test('deletes a removed Thread snapshot', () => {
+    const { store, db } = fixture();
+    store.applyLearning('learn:removed-thread', 0, [proposal()], [source('a')]);
+    captureProfileTurn(store, 'thread:removed', 'turn:removed', 'default', true);
+    store.deleteThreadState('thread:removed');
+    expect(db.prepare('SELECT COUNT(*) AS count FROM profile_turns WHERE json_extract(snapshot, \'$.threadId\') = ?').get('thread:removed'))
+      .toEqual({ count: 0 });
+  });
+
   test('reopens accepted files, source metadata and the fixed Turn snapshot after restart', () => {
     const root = mkdtempSync(join(tmpdir(), 'tenon-profile-restart-'));
     const databasePath = join(root, 'control.sqlite');
     let store = new ProfileFileStore(root, new Database(databasePath) as unknown as SqliteDatabase, () => 123);
     try {
       store.applyLearning('learn:restart', 0, [proposal()], [source('a')]);
-      const snapshot = captureProfileTurn(store, 'turn:restart', 'default', true);
+      const snapshot = captureProfileTurn(store, 'thread:profile', 'turn:restart', 'default', true);
       store.close();
       store = new ProfileFileStore(root, new Database(databasePath) as unknown as SqliteDatabase, () => 456);
       expect(store.inspect('user').entries[0]).toMatchObject({ authorship: 'learned', sources: [source('a')] });
-      expect(captureProfileTurn(store, 'turn:restart', 'default', true)).toEqual(snapshot);
+      expect(captureProfileTurn(store, 'thread:profile', 'turn:restart', 'default', true)).toEqual(snapshot);
       store.applyLearning('learn:restart', 0, [proposal()], [source('a')]);
       expect(store.inspect('user').revision).toBe(1);
     } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
