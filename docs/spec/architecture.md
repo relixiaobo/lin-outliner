@@ -302,6 +302,14 @@ from the standalone Runtime.
 
 ### Desktop Host lifecycle
 
+Targeted conversation recovery runs inside the Agent Host lifecycle after the
+existing startup issue has identified an unreadable Thread. Its operation journal
+is stored beneath resolved Agent userData. Startup resumes pending operations
+before Thread reconciliation, resource collection, Task admission, scheduled
+dispatch, or Memory work. The recovery coordinator only sequences owner locks and
+durable progress; source decoding, Task settlement, Profile/Memory invalidation,
+publication, and resource retention stay with their existing owners.
+
 The Desktop Host lifecycle owns `constructed -> starting -> started -> quitting
 -> disposed`, plus a recoverable `starting -> failed -> starting` path. Each
 startup attempt is single-flight. Native application setup, security, and

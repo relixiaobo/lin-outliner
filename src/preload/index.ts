@@ -10,6 +10,7 @@ import {
   STARTUP_GET_CHANNEL, STARTUP_QUIT_CHANNEL, STARTUP_RETRY_CHANNEL, STARTUP_STATE_CHANNEL,
   STARTUP_ISSUE_ACTION_CHANNEL, type StartupIssueAction, type StartupState,
 } from '../core/startup';
+import { THREAD_RECOVERY_CHANNEL, type ThreadRecoveryRequest, type ThreadRecoveryResponse } from '../core/threadRecovery';
 import { buildLauncherPreloadApi } from './launcher';
 import { LAUNCHER_PRELOAD_ROLE_ARG } from '../core/launcher/commands';
 import {
@@ -333,6 +334,7 @@ const api = {
     return () => { ipcRenderer.removeListener(SKILL_LIBRARY_CHANGED_CHANNEL, handler); };
   },
   startup: {
+    recovery: (request: ThreadRecoveryRequest) => ipcRenderer.invoke(THREAD_RECOVERY_CHANNEL, request) as Promise<ThreadRecoveryResponse>,
     issueAction: (startupIssueId: string, action: StartupIssueAction) => ipcRenderer.invoke(
       STARTUP_ISSUE_ACTION_CHANNEL, { startupIssueId, action },
     ) as Promise<void>,

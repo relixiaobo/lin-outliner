@@ -770,6 +770,11 @@ export class ThreadCatalogOps {
         historyMode: 'paginated',
       });
       const configuration = lineage.configuration ?? await this.resolveConfiguration(request);
+      for (const candidate of [id, lineage.parentThreadId, lineage.forkedFromId]) {
+        if (candidate && (this.core.recoveryAdmissionBlocked(candidate) || this.core.stoppingThreads.has(candidate))) {
+          throw this.createThreadBusyError('Conversation recovery owns this Thread identity');
+        }
+      }
       const record = {
         thread,
         nameOrigin: lineage.nameOrigin ?? (thread.name === null ? 'none' : 'manual'),

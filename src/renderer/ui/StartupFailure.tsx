@@ -4,6 +4,7 @@ import { SelectControl } from './primitives/SelectControl';
 import { Button } from './primitives/Button';
 import { useId, useState } from 'react';
 import type { StartupIssue, StartupIssueAction } from '../../core/startup';
+import { ThreadRecoveryPanel } from './ThreadRecoveryPanel';
 
 export function StartupFailure(props: {
   readonly failure: { readonly step: string; readonly message: string };
@@ -52,6 +53,7 @@ export function StartupFailure(props: {
         <p>{t.quarantineHelp}</p>
       </> : null}
       {props.onContinue ? <p>{t.notesAvailable}</p> : null}
+      {issue?.recovery ? <ThreadRecoveryPanel key={issue.id} recoveryId={issue.id} /> : null}
       <div className="startup-failure-actions">
         {props.onContinue ? <Button onClick={props.onContinue}>{t.continue}</Button> : null}
         {issue?.retryable !== false ? <Button onClick={props.onRetry} disabled={props.retrying}>

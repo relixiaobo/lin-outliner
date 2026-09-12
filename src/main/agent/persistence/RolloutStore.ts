@@ -277,6 +277,41 @@ export class RolloutStore {
     return readEntries(this.pathFor(threadId), false);
   }
 
+  /** Recovery cannot treat the valid prefix of a torn file as a complete original. */
+  async readForRecovery(threadId: ThreadId): Promise<readonly RolloutEntry[]> {
+    const entries = await this.readSnapshot(threadId);
+    const size = await stat(this.pathFor(threadId)).then((value) => value.size, (error) => {
+      if (isNotFound(error)) return 0;
+      throw error;
+    });
+    const last = entries.at(-1);
+    if ((last ? last.byteOffset + last.byteLength : 0) !== size) throw new Error('Rollout has an incomplete trailing record');
+    return entries;
+  }
+
+  async retainRecovery(threadId: ThreadId, evidence: import('../recovery/RecoveryEvidence').RecoveryEvidence): Promise<void> {
+    await this.waitForThread(threadId);
+    await evidence.file(`rollouts/${threadId}.jsonl`, this.pathFor(threadId));
+  }
+
+  async installRecovery(threadId: ThreadId, retainedPath: string): Promise<void> {
+    assertThreadId(threadId);
+    await this.serialized(threadId, async () => {
+      const entries = await readEntries(retainedPath, false);
+      const bytes = await readFile(retainedPath);
+      const last = entries.at(-1);
+      if (!last || last.byteOffset + last.byteLength !== bytes.length
+        || entries.some((entry, ordinal) => entry.ordinal !== ordinal || entry.event.threadId !== threadId)) {
+        throw new Error('Staged recovery rollout is incomplete');
+      }
+      const current = this.openFiles.get(threadId);
+      if (current) await this.closeOpenFile(threadId, current, false);
+      const { writeRecoveryFile } = await import('../recovery/RecoveryEvidence');
+      await writeRecoveryFile(this.pathFor(threadId), bytes);
+      this.nextOrdinals.set(threadId, entries.length);
+    });
+  }
+
   async delete(threadId: ThreadId): Promise<void> {
     assertThreadId(threadId);
     await this.serialized(threadId, async () => {

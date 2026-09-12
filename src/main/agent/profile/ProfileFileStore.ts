@@ -65,6 +65,22 @@ export class ProfileFileStore {
 
   close(): void { this.db.close(); }
 
+  recoveryState(): unknown {
+    return {
+      documents: this.db.prepare('SELECT * FROM profile_documents ORDER BY key').all(),
+      publications: this.db.prepare('SELECT * FROM profile_publications ORDER BY id').all(),
+      invalidations: this.db.prepare('SELECT * FROM profile_invalidations ORDER BY id').all(),
+      turns: this.db.prepare('SELECT * FROM profile_turns ORDER BY turn_id').all(),
+    };
+  }
+
+  async retainRecovery(evidence: import('../recovery/RecoveryEvidence').RecoveryEvidence): Promise<void> {
+    await evidence.sqlite('profiles.sqlite', this.db);
+    await evidence.file('profiles/USER.md', this.path('user'));
+    // Identity and style files are preserved in place; accepted revisions and
+    // pending source-specific publications are captured by their owning store.
+  }
+
   path(kind: ProfileFileKind, profileName = 'default'): string {
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(profileName)) throw new Error('Invalid Profile component name');
     return kind === 'user' ? join(this.userData, 'agent', 'user', 'USER.md')

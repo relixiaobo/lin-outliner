@@ -28,6 +28,7 @@ import type {
 } from './RolloutStore';
 import { closeSqliteAfterFailure, openSqlite, type SqliteDatabase, type SqliteValue } from './sqlite';
 import { applyThreadItemDelta } from '../itemDelta';
+import type { RecoveryEvidence } from '../recovery/RecoveryEvidence';
 
 interface TurnRow {
   thread_id: string;
@@ -101,6 +102,17 @@ export class ThreadHistoryProjectionStore {
   private readonly db: SqliteDatabase;
   private readonly streamingItems = new Map<ThreadId, StreamingItemsByTurn>();
   private streamingUndoActions: Array<() => void> | null = null;
+
+  recoveryState(threadIds: readonly ThreadId[]): unknown {
+    return threadIds.map((id) => ({
+      turns: this.db.prepare('SELECT * FROM thread_turns WHERE thread_id = ? ORDER BY position').all(id),
+      items: this.db.prepare('SELECT * FROM thread_items WHERE thread_id = ? ORDER BY turn_position, item_index').all(id),
+      rollbacks: this.db.prepare('SELECT * FROM history_rollbacks WHERE thread_id = ? ORDER BY marker_ordinal').all(id),
+      watermark: this.watermark(id),
+    }));
+  }
+
+  retainRecovery(evidence: RecoveryEvidence): Promise<void> { return evidence.sqlite('history.sqlite', this.db); }
 
   constructor(path: string, database?: SqliteDatabase) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });

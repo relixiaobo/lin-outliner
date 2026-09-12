@@ -467,6 +467,33 @@ equivalent audit edge in Thread history.
 
 ## Lifecycle
 
+### Targeted conversation recovery
+
+When startup cannot decode a persistent user conversation, the Host records a
+session-scoped issue with the exact Thread identity and its catalog descendants.
+The renderer can inspect that issue, but it cannot supply a path, deletion scope,
+or backup. Inspection derives the closure from catalog lineage and asks the
+existing Task, scheduled-task, Delegation, Memory/Profile, resource, and
+publication owners for blockers. Unknown ownership or live work makes the
+action unavailable.
+
+Rebuild is offered only when the complete original Rollout validates against a
+staged normal reader. If the Rollout is absent, a complete retained projection
+may provide a reconstructed source; its recovery provenance does not recreate
+the original event order or missing payloads. Removal does not require readable
+history, but it retains and verifies catalog, history, Rollout, payload, resource,
+Task, Memory/Profile, scheduled-task, and Delegation evidence before mutation.
+
+Confirmation binds the exact inspection digest. A changed scope, new blocker, or
+duplicate submission cannot widen or repeat the operation. One durable operation
+records `retaining` and `applying` progress in resolved userData. It fences Thread
+admission, queued publication, Task delivery, and owner locks, and resumes from
+the last committed step after restart. Retained originals use private files and
+WAL-aware SQLite snapshots with hash verification. Successful removal deletes
+only the confirmed closure; successful rebuild reinstalls the staged Rollout,
+rebuilds the projection, and reopens normal publication. Delayed publication and
+late execution cannot resurrect a removed Thread.
+
 `TurnLifecycle`, reached through the unchanged `ThreadService` facade, is the
 only lifecycle coordinator. It serializes acceptance per Thread, enforces one
 active Turn, and deduplicates renderer submissions by stable client message ID.

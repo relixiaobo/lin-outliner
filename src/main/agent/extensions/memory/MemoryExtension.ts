@@ -553,6 +553,38 @@ export class MemoryExtension implements AgentCoreExtension {
     catch (error) { this.options.onError?.(error, 'profile-context'); }
   }
 
+  recoveryParticipant(): import('../../recovery/ThreadRecoveryService').ThreadRecoveryParticipant {
+    return {
+      name: 'memory-and-profile',
+      withLock: (_ids, operation) => this.timeline.withWriteGate(operation),
+      inspect: async (ids) => {
+        const blockers: string[] = [];
+        if (!this.options.profiles) blockers.push('Profile ownership is unavailable; recovery cannot verify pending learning.');
+        if (this.control.activeRollbacks().some((entry) => ids.includes(entry.threadId))) {
+          blockers.push('Memory rollback is pending for this conversation.');
+        }
+        for (const publication of this.control.preparedPublications()) {
+          const threadId = (publication.payload as { threadId?: string }).threadId;
+          if (publication.kind === 'stage1' && threadId && ids.includes(threadId)
+            && await this.timeline.hasPublication(publication.id, publication.digest)) {
+            blockers.push('A published Memory update must finish its owner reconciliation before recovery.');
+          }
+        }
+        return { state: { memory: this.control.recoveryState(ids), profiles: this.options.profiles?.recoveryState() ?? null }, blockers };
+      },
+      retain: async (_ids, evidence) => {
+        if (!this.options.profiles) throw new Error('Profile recovery owner is unavailable');
+        await this.control.retainRecovery(evidence);
+        await this.options.profiles.retainRecovery(evidence);
+      },
+      remove: async (ids) => {
+        if (!this.options.profiles) throw new Error('Profile recovery owner is unavailable');
+        this.control.removeRecoverySources(ids);
+        for (const id of ids) this.options.profiles.deleteThreadState(id);
+      },
+    };
+  }
+
   onNotification(notification: AgentCoreRecordedNotification): void {
     if (notification.type !== 'turn/completed') return;
     const usage = this.turnMemoryUsage.get(notification.turnId);

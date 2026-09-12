@@ -621,6 +621,49 @@ export class AgentResourceStore {
     });
   }
 
+  recoveryState(threadIds: readonly ThreadId[]): { readonly rows: readonly unknown[]; readonly count: number; readonly uploads: number } {
+    const rows = threadIds.map((id) => ({
+      links: this.database.prepare(`SELECT links.*, refs.* FROM resource_links links
+        JOIN resource_references refs USING(reference_id) WHERE links.thread_id = ? ORDER BY reference_id`).all(id),
+      citations: this.database.prepare('SELECT * FROM final_citations WHERE thread_id = ? ORDER BY item_id, marker_ordinal').all(id),
+    }));
+    return { rows, count: rows.reduce((sum, row) => sum + row.links.length, 0),
+      uploads: [...this.uploads.values()].filter((upload) => threadIds.includes(upload.threadId)).length };
+  }
+
+  async retainRecovery(threadIds: readonly ThreadId[], evidence: import('../recovery/RecoveryEvidence').RecoveryEvidence): Promise<void> {
+    await evidence.sqlite('resources.sqlite', this.database);
+    await this.withMutation(async () => {
+      const captured = new Set<string>();
+      for (const threadId of threadIds) {
+        const rows = this.database.prepare(`SELECT refs.* FROM resource_references refs
+          JOIN resource_links links USING(reference_id) WHERE links.thread_id = ? ORDER BY reference_id`).all(threadId) as ResourceRow[];
+        for (const row of rows) {
+          if (captured.has(row.reference_id)) continue;
+          captured.add(row.reference_id);
+          const ref = publicReference(row.reference_id, row.display_name, row.media_type, row.revision_byte_length ?? 0);
+          const bytes = await this.readExact(ref);
+          const name = `resources/${row.reference_id.replace(':', '-')}`;
+          await evidence.json(`${name}.json`, { ...row, retained: bytes !== null });
+          if (bytes) await evidence.bytes(`${name}.blob`, bytes);
+          // Missing original bytes are an explicit evidence fact. Shared links and
+          // exact anchors remain in the retained SQLite snapshot.
+        }
+      }
+    });
+  }
+
+  async removeRecoveryLinks(threadIds: readonly ThreadId[]): Promise<void> {
+    await this.withMutation(async () => {
+      for (const id of threadIds) {
+        this.database.prepare('DELETE FROM final_citations WHERE thread_id = ?').run(id);
+        this.database.prepare('DELETE FROM resource_links WHERE thread_id = ?').run(id);
+      }
+      // Reclamation waits for a complete startup reference inventory. A broken
+      // sibling must not lose its evidence during this conversation's removal.
+    });
+  }
+
   async reconcileAnchors(): Promise<readonly string[]> {
     const rows = this.database.prepare(`
       SELECT * FROM resource_references

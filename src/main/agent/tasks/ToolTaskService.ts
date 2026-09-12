@@ -273,6 +273,7 @@ export class ToolTaskService {
   }
 
   async start(input: StartToolTaskInput): Promise<ToolTaskRecord> {
+    if (this.recoveryOwners.has(input.ownerThreadId)) throw new Error('Conversation recovery prevents Task admission');
     if (this.closing) throw new Error('Tool Task admission is closed');
     if (!this.initialized) throw new Error('Tool Task recovery has not completed');
     if (!this.host?.ownerExists(input.ownerThreadId)) throw new Error('Tool Task owner does not exist');
@@ -534,6 +535,7 @@ export class ToolTaskService {
     readonly signal?: AbortSignal;
   }): Promise<T> {
     if (this.closing || !this.initialized) throw new Error('Tool Task admission is unavailable');
+    if (this.recoveryOwners.has(input.ownerThreadId)) throw new Error('Conversation recovery prevents Task admission');
     if (!this.host?.ownerExists(input.ownerThreadId)) throw new Error('Tool Task owner does not exist');
     this.validateExecutionInheritance(input.ownerThreadId, input.parentTaskId);
     await revalidateExecutionContext(input.executionContext);
@@ -985,6 +987,10 @@ export class ToolTaskService {
     await Promise.allSettled([...this.reconciliationRuns.values()]);
   }
 
+  private readonly recoveryOwners = new Set<string>();
+  fenceRecovery(threadIds: readonly string[]): void { for (const id of threadIds) this.recoveryOwners.add(id); }
+  releaseRecovery(threadIds: readonly string[]): void { for (const id of threadIds) this.recoveryOwners.delete(id); }
+
   async deleteOwner(threadId: ThreadId): Promise<void> {
     const tasks = this.store.listAll(threadId);
     if (tasks.some((task) => !isToolTaskTerminal(task.state)
@@ -997,6 +1003,17 @@ export class ToolTaskService {
       await rm(task.detailPath, { recursive: true, force: true });
     }));
     this.store.deleteOwner(threadId);
+  }
+
+  async retainRecovery(threadIds: readonly ThreadId[], evidence: import('../recovery/RecoveryEvidence').RecoveryEvidence): Promise<void> {
+    for (const id of threadIds) {
+      for (const task of this.store.listAll(id)) {
+        if (!task.detailPath.startsWith(`${this.detailRoot}/`) || task.detailPath.includes('/../')) {
+          throw new Error('Tool Task detail ownership is not verifiable');
+        }
+        await evidence.directory(`tasks/${task.taskId}`, task.detailPath);
+      }
+    }
   }
 
   async clearEligibleDetails(ownerThreadId: ThreadId): Promise<{
@@ -1053,6 +1070,7 @@ export class ToolTaskService {
   }
 
   private async reconcileTaskOnce(task: ToolTaskRecord): Promise<void> {
+    if (this.recoveryOwners.has(task.ownerThreadId)) return;
     if (this.hostOperations.has(task.taskId)) return;
     if (isToolTaskTerminal(task.state)) {
       this.clearMonitor(task.taskId);
@@ -1601,6 +1619,7 @@ export class ToolTaskService {
     task: ToolTaskRecord,
     reason: 'expired' | 'cleared' | 'storage_pressure',
   ): Promise<void> {
+    if (this.recoveryOwners.has(task.ownerThreadId)) return;
     const expired = this.store.expireDetail(task.taskId, reason, this.now());
     this.publish(expired);
     try {

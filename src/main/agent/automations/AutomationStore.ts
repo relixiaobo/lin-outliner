@@ -99,6 +99,40 @@ export class AutomationStore {
     this.projectResolver = resolve;
   }
 
+  recoveryState(threadIds: readonly string[]): { readonly state: unknown; readonly runs: readonly AutomationRun[] } {
+    const runs = (this.db.prepare('SELECT * FROM automation_runs ORDER BY id').all() as AutomationRunRow[])
+      .map((row) => this.readRun(row.id)!)
+      .filter((run) => (run.threadId !== null && threadIds.includes(run.threadId))
+        || (run.snapshot.destination.kind === 'existingThread' && threadIds.includes(run.snapshot.destination.threadId)));
+    const ids = new Set(runs.map((run) => run.automationId));
+    const definitions = this.list().filter((definition) => ids.has(definition.id)
+      || (definition.destination.kind === 'existingThread' && threadIds.includes(definition.destination.threadId)));
+    return { runs, state: {
+      runs, definitions,
+      receipts: this.db.prepare('SELECT * FROM automation_operation_receipts ORDER BY request_id').all(),
+      acknowledgements: runs.flatMap((run) => this.db.prepare('SELECT * FROM automation_issue_acknowledgements WHERE run_id = ? ORDER BY issue_key').all(run.id)),
+      missed: definitions.flatMap((definition) => this.db.prepare('SELECT * FROM automation_missed_occurrences WHERE automation_id = ? ORDER BY context_hint_id, scheduled_for').all(definition.id)),
+    } };
+  }
+
+  retainRecovery(evidence: import('../recovery/RecoveryEvidence').RecoveryEvidence): Promise<void> {
+    return evidence.sqlite('scheduled-tasks.sqlite', this.db);
+  }
+
+  removeRecoveryThreads(threadIds: readonly string[], now = Date.now()): void {
+    this.transaction(() => {
+      for (const definition of this.list()) {
+        if (definition.destination.kind === 'existingThread' && threadIds.includes(definition.destination.threadId)
+          && definition.status === 'active') this.setStatus(definition.id, 'paused', definition.revision, now);
+      }
+      for (const run of this.recoveryState(threadIds).runs) {
+        if (run.state === 'pending') this.markFailed(run.id, 'The destination conversation was removed by confirmed recovery.', now);
+        // Dispatched associations, acknowledgements and operation receipts remain
+        // auditable. Their unavailable transcript is never a new pending request.
+      }
+    });
+  }
+
   private captureSnapshot(automation: Automation, binding: AutomationContextHint | null): AutomationRunConfigurationSnapshot {
     const snapshot = runSnapshot(automation, binding);
     if (binding?.source.kind !== 'project') return snapshot;

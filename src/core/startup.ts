@@ -19,6 +19,7 @@ export interface StartupIssue {
   readonly actions: readonly StartupIssueAction[];
   readonly threadId?: string;
   readonly retryable?: false;
+  readonly recovery?: true;
   readonly source?: 'preferences' | 'agent';
   readonly format?: { readonly found: number; readonly expected: number };
 }
