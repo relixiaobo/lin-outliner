@@ -1249,3 +1249,13 @@ The Agent dock follows the shared design system:
 All user-facing copy comes from typed i18n messages. UI nouns are Thread, Turn,
 Item, Goal, and Tool Task. Agent Session and launcher appear only in delegation
 Settings or CLI results, not as conversation participants.
+
+### Scheduled brief editing
+
+The scheduled-task editor reuses `ThreadComposerEditor` with a task-specific
+adapter for shared node/file markup. It opts out of chat submission, slash
+commands, conversation reference lookup and transient attachment import. Newline
+Enter, inline source positions and optional local draft undo/redo stay in the
+editing primitive. Modal callers identify their nested suggestion layer so it
+stays above the sheet and does not trigger backdrop dismissal. Conversation
+callers retain their existing submission and history behavior.

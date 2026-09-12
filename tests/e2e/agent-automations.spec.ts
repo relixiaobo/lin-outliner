@@ -6,6 +6,7 @@ async function createTask(page: Page, name = 'Repository review') {
   await page.getByRole('button', { name: 'New task', exact: true }).click();
   const sheet = page.getByRole('dialog', { name: 'New task' });
   await sheet.getByRole('textbox', { name: 'Task', exact: true }).fill('Review the repository and report important changes.');
+  await sheet.locator('.scheduled-editor-options').filter({ has: page.locator('summary', { hasText: 'More options' }) }).locator('summary').click();
   await sheet.getByRole('textbox', { name: 'Name', exact: true }).fill(name);
   await sheet.getByRole('button', { name: 'Create task', exact: true }).click();
   await expect(sheet).toHaveCount(0);
@@ -129,9 +130,10 @@ test.describe('Scheduled tasks in Agent Deck', () => {
     await page.locator('.scheduled-task-detail').getByRole('button', { name: 'Edit task', exact: true }).click();
     const sheet = page.getByRole('dialog', { name: 'Edit task' });
     await sheet.getByRole('textbox', { name: 'Task', exact: true }).fill('Keep this unsaved instruction while pausing.');
-    await sheet.getByRole('button', { name: 'Pause schedule', exact: true }).click();
-    await expect(sheet.getByRole('textbox', { name: 'Task', exact: true })).toHaveValue('Keep this unsaved instruction while pausing.');
-    await sheet.getByRole('button', { name: 'Save', exact: true }).click();
+    await sheet.getByRole('button', { name: 'Saved schedule actions', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Pause saved schedule', exact: true }).click();
+    await expect(sheet.getByRole('textbox', { name: 'Task', exact: true })).toHaveText('Keep this unsaved instruction while pausing.');
+    await sheet.getByRole('button', { name: 'Save changes', exact: true }).click();
     await expect(sheet).toHaveCount(0);
     const update = (await commandCalls(page)).find((call) => call.cmd === 'automation/update');
     expect(update?.args.expectedRevision).toBe(2);
@@ -162,12 +164,12 @@ test.describe('Scheduled tasks in Agent Deck', () => {
       const task = (await window.lin!.automationRequest('list', {})).data[0]!;
       await window.lin!.automationRequest('update', { id: task.id, expectedRevision: task.revision, prompt: 'Externally saved instructions' });
     });
-    await sheet.getByRole('button', { name: 'Save', exact: true }).click();
-    await expect(sheet.getByRole('textbox', { name: 'Task', exact: true })).toHaveValue('Unsent local instructions');
-    await sheet.getByText('Saved task changed', { exact: true }).click();
-    await expect(sheet.getByText('Externally saved instructions', { exact: true })).toBeVisible();
+    await expect(sheet.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled();
+    await expect(sheet.getByRole('textbox', { name: 'Task', exact: true })).toHaveText('Unsent local instructions');
+    await sheet.getByRole('button', { name: 'Review saved version', exact: true }).click();
+    await expect(sheet.getByText('Saved version: Externally saved instructions', { exact: true })).toBeVisible();
     await sheet.getByRole('button', { name: 'Reload saved task', exact: true }).click();
-    await expect(sheet.getByRole('textbox', { name: 'Task', exact: true })).toHaveValue('Externally saved instructions');
+    await expect(sheet.getByRole('textbox', { name: 'Task', exact: true })).toHaveText('Externally saved instructions');
   });
 
   test('dirty close requires an explicit discard and restores the opener', async ({ page }) => {
@@ -179,7 +181,7 @@ test.describe('Scheduled tasks in Agent Deck', () => {
     const discard = page.getByRole('dialog', { name: 'Discard changes?' });
     await expect(discard).toBeVisible();
     await discard.getByRole('button', { name: 'Keep editing', exact: true }).click();
-    await expect(sheet.getByRole('textbox', { name: 'Task', exact: true })).toHaveValue('A draft');
+    await expect(sheet.getByRole('textbox', { name: 'Task', exact: true })).toHaveText('A draft');
     await sheet.getByRole('button', { name: 'Cancel', exact: true }).click();
     await discard.getByRole('button', { name: 'Discard changes', exact: true }).click();
     await expect(sheet).toHaveCount(0);
@@ -195,7 +197,7 @@ test.describe('Scheduled tasks in Agent Deck', () => {
     await expect(page.getByRole('textbox', { name: 'Message this Thread' })).toBeVisible();
     await page.locator('.thread-dock-header').getByRole('button', { name: 'Scheduled tasks', exact: true }).click();
     await expect(sheet).toBeVisible();
-    await expect(sheet.getByRole('textbox', { name: 'Task', exact: true })).toHaveValue('Keep this unfinished task draft.');
+    await expect(sheet.getByRole('textbox', { name: 'Task', exact: true })).toHaveText('Keep this unfinished task draft.');
     await expect(sheet).toBeFocused();
   });
 
@@ -204,10 +206,6 @@ test.describe('Scheduled tasks in Agent Deck', () => {
     const sheet = page.getByRole('dialog', { name: 'New task' });
     await expect(sheet.getByRole('combobox', { name: 'Destination' })).toHaveCount(0);
     await expect(sheet.getByRole('button', { name: 'Add project' })).toHaveCount(0);
-    await sheet.getByRole('button', { name: 'Add material', exact: true }).click();
-    await sheet.getByRole('combobox', { name: 'Kind', exact: true }).selectOption('url');
-    await sheet.getByRole('textbox', { name: 'Reference', exact: true }).fill('https://example.com/release-notes');
-    await expect(sheet.getByRole('checkbox', { name: 'Required', exact: true })).toBeChecked();
     const repeat = sheet.getByRole('combobox', { name: 'Repeat', exact: true });
     await repeat.selectOption('once');
     await sheet.getByRole('button', { name: 'Date', exact: true }).click();
@@ -217,10 +215,10 @@ test.describe('Scheduled tasks in Agent Deck', () => {
     await sheet.getByRole('button', { name: 'Choose time', exact: true }).click();
     await expect(page.getByRole('dialog', { name: 'Time picker' })).toBeVisible();
     await page.keyboard.press('Escape');
-    await repeat.selectOption('custom');
-    await sheet.getByRole('combobox', { name: 'Repeats', exact: true }).selectOption('yearly');
+    await repeat.selectOption('yearly');
     await expect(sheet.getByRole('combobox', { name: 'In', exact: true })).toBeVisible();
     await expect(sheet.getByRole('button', { name: 'On days', exact: true })).toBeVisible();
+    await sheet.locator('.scheduled-editor-options summary', { hasText: 'More options' }).click();
     await expect(sheet.getByText('/mock/workspace', { exact: true })).toBeVisible();
     await sheet.locator('.automation-editor-scroll').evaluate((element) => { element.scrollTop = 0; });
     await page.screenshot({ animations: 'disabled', path: testInfo.outputPath('scheduled-task-editor.png') });

@@ -1,3 +1,4 @@
+import { scheduledBriefMaterials } from '../../../core/agent/scheduledBrief';
 import { AutomationRevisionConflict } from './AutomationRevisionConflict';
 import { ScheduledRunOwnership } from './ScheduledRunOwnership';
 import { checkScheduledMaterials } from './ScheduledMaterials';
@@ -498,7 +499,7 @@ export class AutomationService {
   }
 
   private async validateDefinition(input: AutomationCreateInput): Promise<AutomationCreateInput> {
-    await checkScheduledMaterials(input.materials ?? [], (id) => this.options.threads.scheduledNoteAvailable(id));
+    await checkScheduledMaterials(scheduledBriefMaterials(input.prompt, input.materials ?? []), (id) => this.options.threads.scheduledNoteAvailable(id));
     const bindings = input.contextHints ?? [];
     await Promise.all(bindings.map((binding) => validateContextHint(binding, this.options.resolveProjectHint)));
     const configuration: AutomationConfiguration = {

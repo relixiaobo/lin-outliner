@@ -1,3 +1,4 @@
+import { scheduledBriefMaterials } from '../../../core/agent/scheduledBrief';
 import { ScheduledRunOwnership } from './ScheduledRunOwnership';
 import { checkScheduledMaterials, scheduledMaterialInstructions } from './ScheduledMaterials';
 import { realpath } from 'node:fs/promises';
@@ -118,7 +119,8 @@ export class AutomationDispatcher {
         }
       }
       const snapshot = prepared.snapshot;
-      const materialWarnings = await checkScheduledMaterials(snapshot.materials, (id) => this.options.threads.scheduledNoteAvailable(id));
+      const materials = scheduledBriefMaterials(snapshot.prompt, snapshot.materials);
+      const materialWarnings = await checkScheduledMaterials(materials, (id) => this.options.threads.scheduledNoteAvailable(id));
       let dispatchContext: AutomationDispatchContextPayload;
       if (prepared.dispatchSnapshotRef) {
         const stored = await this.options.threads.readFeatureContext(prepared.id, prepared.dispatchSnapshotRef);
@@ -208,7 +210,7 @@ export class AutomationDispatcher {
       }
       const turn = await this.options.threads.tryStartTurnIfIdle({
         threadId: thread.id,
-        input: [{ type: 'text', text: snapshot.prompt + scheduledMaterialInstructions(snapshot.materials)
+        input: [{ type: 'text', text: snapshot.prompt + scheduledMaterialInstructions(materials)
           + (materialWarnings.length ? `\nOptional material availability at admission: ${JSON.stringify(materialWarnings)}` : '') }],
         clientUserMessageId: prepared.id,
         initialContext: { storageOwner: prepared.id, refs: [prepared.dispatchSnapshotRef!] },

@@ -16,6 +16,14 @@ one primary Project/directory location and no conversation destination picker.
 
 An assignment contains a UUIDv7 identity, name, durable prompt, zero or more
 explicit materials, one time plan, configuration selections and a revision.
+The prompt uses shared inline reference markup. Reference positions and repeated
+occurrences live only in that text. `scheduledBriefMaterials` derives distinct
+required Outline/file sources and overlays explicit `materials` policies/context;
+UI, CLI Host admission and dispatch use the same source interpretation. The combined
+source set is limited to 32, even when the explicit array is empty. No material
+copy of a default inline source is required. Plain HTTP(S) URLs remain instruction
+text unless separately supplied as material. Display labels do not identify sources.
+
 CLI creation also captures the exact originating Thread, Turn and Tool Item as
 inspection references; later runs do not replay that conversation.
 Materials are typed file, note or HTTP(S) URL references, required by default,
@@ -284,8 +292,27 @@ Native task notices open the exact assignment in the Deck. Discuss result return
 to an ordinary conversation with an explicit result reference, staged after that
 exact conversation's composer initializes so mounting cannot clear the handoff.
 View process uses the shared Agent Trajectory inspector without replacing the task surface.
-Create/edit uses a modal sheet with shared focus trapping and restoration.
-Dirty close requires explicit discard. Live result updates do not replace the
+Create/edit uses a window-level centered sheet with shared focus trapping and
+restoration. Task content reuses the Agent editor's inline references and `@`
+suggestions; Enter creates a newline. File selection inserts an exact path at the
+caret without importing a conversation attachment. A small adapter round-trips
+shared reference markup, preserving duplicate positions and plain text. Optional
+local draft history restores reference atoms together with text. Stale blur timers
+cannot close suggestions after focus has returned to the editor.
+
+The normal form has Task and When. Pending file/folder pickers disable Save; late
+file results cannot populate a closed or different draft. Transient file drops
+keep the text and direct the user to a durable local reference. Name is suggested locally until customized;
+folder/Project, separate Git copy and model/reasoning live in More options. Reference
+options retain existing detached context and source-level optionality. Removing a
+last inline occurrence removes its derived requirement, while undo retains its
+policy. Unsupported custom schedules require explicit replacement before their
+structure changes. Preview loading/error/empty are distinct; a stale preview cannot
+enable Save for edited timing. Saved-plan Pause is separate from Save. The Host
+validates folder/Git/model constraints; selecting a reference is not an access grant.
+Dirty close requires explicit discard. Conflict comparison freezes the inspected
+revision; a newer remote edit requires another review before the draft can be
+applied, even if the user presses the earlier comparison's apply action. Live result updates do not replace the
 form draft. A successful local pause updates the editor's base revision while
 retaining its draft; an unrelated external edit still conflicts. Save submits
 only definition fields, never copied run or attention state.

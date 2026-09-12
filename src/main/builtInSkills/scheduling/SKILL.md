@@ -30,6 +30,15 @@ Read using `schedule list --output json`, `schedule show TASK_ID --output json`,
 Use the returned `nextBefore` with `--before CURSOR` before `--output json`.
 Load `schedule schema` only when the public contract is needed.
 
+Task prompts may contain the shared `[[node://...]]` and `[[file:///...]]`
+references in their original sentence positions. Preserve those identities and
+occurrences when editing: names alone are not references. The Host derives
+required sources from the prompt and deduplicates validation. `materials` adds
+explicit context or overrides a matching source with `required: false`; it does
+not replace the prompt. Plain HTTP(S) URLs remain ordinary instruction text.
+Do not convert conversation references or temporary uploaded attachments into
+saved task materials.
+
 Every mutation needs a new `requestId`. Reuse that exact identity and input if a
 reply is lost, including after restart; never invent a new request to retry an
 uncertain create or run. Existing-task edits, pause/resume, archive/restore and

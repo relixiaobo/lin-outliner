@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom';
 import { basenameForPath } from '../../../core/referenceMarkup';
 import type { ToolTaskProjection } from '../../../core/agent/protocol';
 import { ToolTaskStrip } from '../components/ToolTaskStrip';
@@ -393,16 +394,16 @@ export function ScheduledTasksView({ onOpenProcess, onDiscussResult, onBackToCon
         </details>
       </> : <EmptyState size="inline" loading={snapshot.loading} title={snapshot.loading ? t.loading : w.results.unavailable} />}
     </div>
-    {editor !== null ? <Dialog backdropClassName="confirm-dialog-backdrop" surfaceClassName="scheduled-editor-sheet" label={editor === 'create' ? t.new : w.edit} focusKey={Number(active)}
+    {editor !== null ? createPortal(<div hidden={!active}><Dialog backdropClassName="confirm-dialog-backdrop" surfaceClassName="scheduled-editor-sheet" label={editor === 'create' ? t.new : w.edit} focusKey={Number(active)}
       onEscapeKeyDown={closeEditor} onBackdropMouseDown={closeEditor} restoreFocus={() => opener.current}>
       <header className="scheduled-task-heading"><h2>{editor === 'create' ? t.new : w.edit}</h2></header>
-      <AutomationEditor notes={notes} onPause={edited ? (expectedRevision) => perform(async () => (await api.automationRequest('pause', { id: edited.id, expectedRevision, requestId: crypto.randomUUID() })).automation) : undefined} key={editor} automation={edited} actionError={error} busy={busy} providerSettings={provider}
+      <AutomationEditor indexStore={indexStore} onPause={edited ? (expectedRevision) => perform(async () => (await api.automationRequest('pause', { id: edited.id, expectedRevision, requestId: crypto.randomUUID() })).automation) : undefined} key={editor} automation={edited} actionError={error} busy={busy} providerSettings={provider}
         onDirtyChange={setDirty} onCancel={closeEditor}
         onCreate={async (input) => { const task = await perform(() => automationStore.create(input)); setDirty(false); setEditor(null); setDetailVisible(true); remember(task.id, null, true); return task; }}
         onUpdate={async (input) => { const task = await perform(() => automationStore.update(input)); setDirty(false); setEditor(null); return task; }} />
-    </Dialog> : null}
-    {discard ? <ConfirmDialog title={t.discardTitle} message={t.discardConfirm} confirmLabel={t.discard} cancelLabel={t.keepEditing}
-      onCancel={() => setDiscard(false)} onConfirm={() => { setDiscard(false); setDirty(false); setEditor(null); }} /> : null}
+    </Dialog></div>, document.body) : null}
+    {discard ? createPortal(<ConfirmDialog title={t.discardTitle} message={t.discardConfirm} confirmLabel={t.discard} cancelLabel={t.keepEditing}
+      onCancel={() => setDiscard(false)} onConfirm={() => { setDiscard(false); setDirty(false); setEditor(null); }} />, document.body) : null}
     </div>
   </section>;
 }

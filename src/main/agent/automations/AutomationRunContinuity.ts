@@ -1,4 +1,5 @@
 import type { AutomationRun } from '../../../core/agent/automation';
+import { scheduledInlineMaterials } from '../../../core/agent/scheduledBrief';
 import { scheduledRunResult, type ScheduledResultReader } from './AutomationRunResult';
 
 export const RECENT_AUTOMATION_RUN_COUNT = 3;
@@ -60,7 +61,8 @@ export async function recentAutomationRuns(current: AutomationRun, reader: Autom
       scheduledFor: new Date(run.scheduledFor).toISOString(),
       finishedAt: result.finishedAt != null ? new Date(result.finishedAt).toISOString() : null,
       status, recordPath, requestedWorkLocation: run.snapshot.contextHint,
-      materialsChanged: JSON.stringify(run.snapshot.materials) !== JSON.stringify(current.snapshot.materials),
+      materialsChanged: JSON.stringify([scheduledInlineMaterials(run.snapshot.prompt ?? ''), run.snapshot.materials])
+        !== JSON.stringify([scheduledInlineMaterials(current.snapshot.prompt ?? ''), current.snapshot.materials]),
       locationChanged: JSON.stringify(run.snapshot.contextHint) !== JSON.stringify(current.snapshot.contextHint),
     });
     if (delivered && issues >= RECENT_AUTOMATION_RUN_COUNT) break;

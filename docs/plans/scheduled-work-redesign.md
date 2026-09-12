@@ -409,25 +409,41 @@ a newer question or another run's cause. Scheduling adds no question timer,
 answer ledger, text-based outcome inference, or automatic re-ask. Generic
 recovery continues to own stale questions and unknown effects.
 
-**SCREEN-3: Create/edit sheet.** A compact modal form contains task text,
-materials, and a readable time builder; Advanced is collapsed. Once, hourly,
-daily, selected weekdays, monthly dates, and yearly dates share one time model.
-The form always previews the next concrete local date/time and timezone. Invalid
-calendar combinations either explain the next valid occurrence or reject when
-none exists. Custom protocol text
-is not required. Calendar and time entry reuse native-feeling shared controls.
+**SCREEN-3: Create/edit sheet.** A window-level modal, bounded to the viewport,
+contains two primary blocks: Task and When. Task reuses the Agent editor with
+inline Outline/file references, newline Enter behavior and local draft undo/redo.
+`@` and the `+` control insert references at the caret; the native file picker is
+another entry into that same representation. No chat Turn, conversation attachment
+upload, separate task document format or automatic run accompanies editing.
+Names derive locally until explicitly edited; existing names remain unchanged.
 
-Create validates before activation. Edit saves one revision; conflict preserves
-the draft and offers comparison/reload, not last-writer-wins overwrite. Close
-with dirty content offers Keep editing / Discard. Saving changes future
-unaccepted work; an accepted run keeps its original brief. The edit sheet includes
-a saved-plan Pause schedule action that remains usable independently of the
-draft. Pausing retains the draft and updates only the saved timing state.
-Save submits edited definition fields against the accepted revision, never a
-stale copy of run/attention state. A successful local pause updates the editor's
-base revision without overwriting its draft; unrelated external changes still
-conflict. Live run updates preserve unsaved text, selection, and focus. Closing
-an unchanged form needs no discard prompt. Closing a modal restores its opener.
+The saved prompt uses existing `[[node://...]]` and `[[file:///...]]` markup.
+Repeated occurrences retain their sentence positions. Host admission and dispatch
+derive and deduplicate required sources from that text. Existing `materials`
+retain attached context and explicit per-source policy; default inline sources are
+not copied into that array. Removing the last inline occurrence removes its derived
+dependency; undo restores it. Previously detached CLI context is never silently
+removed. Reference options expose Continue if unavailable without creating a
+second editable instruction list. Plain URLs remain text, not implicit attachments.
+
+When uses one repeat selector with standard calendar choices and only relevant
+controls. Monthly/yearly presets and custom intervals share the same evaluator.
+Timezone is a compact disclosure. Next-run preview distinguishes loading, invalid
+and no-future states. Save revalidates; old preview data never certifies new timing.
+Unsupported saved rules remain unchanged until explicit replacement. Other edits
+to an exhausted schedule do not rearm it. More options owns Name, one working
+folder/Project, separate Git copy and model/reasoning overrides. Summaries show
+non-default location/model/isolation. Choosing a path does not grant access;
+Git compatibility and configuration validity are checked by the Host on Save.
+
+Create activates only after validation. Edit saves one revision and leaves a
+paused task paused. Accepted execution retains its captured brief. Conflicts keep
+the draft and compare saved values; reloading or explicitly applying the draft to
+the inspected revision is a deliberate action. The saved-plan Pause action lives
+in a separate menu, retains dirty content and advances only the accepted revision.
+Saving never copies timing status or execution/attention state from the form.
+Dirty close, modal/nested-menu layering and focus restoration use shared owners.
+File picker cancellation and late completion cannot populate a closed draft.
 
 **SCREEN-4: Result handoff.** Discuss result opens an ordinary user conversation
 with an exact run/result reference and the user's question. It uses shared

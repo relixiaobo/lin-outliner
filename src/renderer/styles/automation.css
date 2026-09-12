@@ -991,3 +991,47 @@ button.scheduled-plan-link:hover { color: var(--text-primary); }
 
 .scheduled-prose { font-size: var(--font-content); line-height: var(--line-content); }
 .scheduled-prose .thread-markdown > * + * { margin-block-start: var(--space-5); }
+
+/* Window-level task editing; the Agent rail no longer constrains the sheet. */
+.scheduled-editor-sheet {
+  width: min(560px, calc(100vw - var(--space-xl)));
+  height: auto;
+  max-height: calc(100dvh - var(--space-xl));
+  padding: 0;
+}
+.scheduled-editor-sheet > .scheduled-task-heading { padding: var(--space-lg) var(--space-lg) var(--space-6); }
+.scheduled-editor-v2 .automation-editor-scroll { gap: var(--space-8); padding: var(--space-4) var(--space-lg) var(--space-8); }
+.scheduled-editor-v2 .automation-editor-actions { padding: var(--space-6) var(--space-lg); gap: var(--space-4); }
+.scheduled-editor-v2 .automation-editor-actions > p { flex: 1; font-size: var(--font-ui-xs); line-height: var(--line-ui-sm); color: var(--text-secondary); margin: 0; }
+.scheduled-edit-status { display: flex; align-items: center; padding-inline: var(--space-lg); color: var(--text-secondary); font-size: var(--font-ui-sm); }
+.scheduled-edit-status > span { flex: 1; }
+.scheduled-edit-status:empty { display: none; }
+.scheduled-brief-input { background: var(--fill-1); border-radius: var(--radius-md); min-width: 0; }
+.scheduled-brief-input .thread-composer-editor { padding: var(--space-6); min-height: 100px; max-height: 240px; overflow: auto; }
+.scheduled-brief-toolbar { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); }
+.scheduled-brief-toolbar > span { margin-inline-start: auto; color: var(--text-secondary); font-size: var(--font-ui-sm); }
+.scheduled-preview, .scheduled-setting-note { margin: var(--space-3) 0; color: var(--text-secondary); font-size: var(--font-ui-sm); }
+.scheduled-editor-options { border-top: var(--space-hairline) solid var(--separator); padding-block: var(--space-6); }
+.scheduled-editor-options > summary { font-size: var(--font-ui-sm); color: var(--text-secondary); user-select: none; }
+.scheduled-editor-options > summary > span { float: right; max-width: 65%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scheduled-editor-options > .automation-editor-section { gap: var(--space-6); margin-block-start: var(--space-6); }
+.scheduled-reference-policy { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-4); margin-block-start: var(--space-5); font-size: var(--font-ui-sm); }
+.scheduled-reference-policy > span { flex: 1; min-width: 100px; overflow-wrap: anywhere; }
+.scheduled-conflict-fields { font-size: var(--font-ui-sm); overflow-wrap: anywhere; }
+.scheduled-conflict-fields section { margin-block: var(--space-6); }
+.scheduled-saved-rule { font-size: var(--font-ui-sm); color: var(--text-secondary); }
+.scheduled-saved-rule + .automation-settings-group { display: none; }
+.scheduled-timezone { padding: var(--space-3) var(--space-5); font-size: var(--font-ui-sm); }
+.scheduled-timezone-trigger { padding: 0; color: var(--text-secondary); background: transparent; border: 0; }
+.scheduled-timezone > div { display: flex; gap: var(--space-4); margin-block: var(--space-4); }
+.scheduled-timezone input, .scheduled-timezone select { min-width: 0; max-width: 100%; }
+
+/* Portaled child menus share modal stacking, after their owning sheet. */
+.scheduled-editor-menu,
+.thread-composer-trigger-popover.is-dialog-menu { z-index: var(--z-modal); }
+.scheduled-editor-v2 .automation-editor-intro h3 { margin: 0; font-size: var(--title-group); line-height: var(--line-ui-sm); }
+.scheduled-brief-input .thread-composer-editor { margin-inline: 0; }
+.scheduled-brief-input .thread-composer-editor.is-empty::before { top: var(--space-6); left: var(--space-6); }
+:root[data-input-modality="keyboard"] .scheduled-brief-input:focus-within { box-shadow: var(--focus-ring-shadow); }
+.scheduled-editor-options > summary:focus-visible,
+.scheduled-timezone-trigger:focus-visible { outline: none; box-shadow: var(--focus-ring-shadow); }

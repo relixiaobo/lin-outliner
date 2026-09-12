@@ -35,6 +35,7 @@ import type { SqliteDatabase } from '../../src/main/agent/persistence/sqlite';
 import type { ThreadService } from '../../src/main/agent/ThreadService';
 import type { Project } from '../../src/core/agent/project';
 import { uuidV7 } from '../../src/main/agent/uuid';
+import { formatFileReferenceMarker } from '../../src/core/referenceMarkup';
 
 const execFileAsync = promisify(execFile);
 const stores: AutomationStore[] = [];
@@ -804,6 +805,66 @@ describe('Automation service serialization', () => {
 });
 
 describe('Automation Thread dispatch', () => {
+  test('continuity labels changed inline sources even when explicit materials remain empty', async () => {
+    const now = Date.parse('2026-07-24T09:00:00Z');
+    const root = await tempRoot('scheduled-inline-continuity-');
+    const firstFile = join(root, 'first.md');
+    const secondFile = join(root, 'second.md');
+    await Promise.all([writeFile(firstFile, 'First source'), writeFile(secondFile, 'Second source')]);
+    const store = automationStore();
+    const task = store.create({ ...definition('20260724T100000'), prompt: `Review ${formatFileReferenceMarker(firstFile)}` }, now);
+    const host = threadHost();
+    const dispatcher = dispatcherFor(store, host, now + 1);
+    const first = await dispatcher.dispatch(store.claimNow(task, null, now + 2));
+    host.transcriptPaths.set(first.threadId!, `/records/${first.threadId}.md`);
+    host.finishTurn(first.turnId!, { status: 'failed', completedAt: now + 3, error: { code: 'test', message: 'Inspect prior work' } });
+    const changed = store.update({ id: task.id, expectedRevision: task.revision, prompt: `Review ${formatFileReferenceMarker(secondFile)}` }, now + 4);
+    await dispatcher.dispatch(store.claimNow(changed, null, now + 5));
+    expect(JSON.parse(host.turnCalls.at(-1)!.dispatchContext.info).recentRuns[0]).toMatchObject({ automationRunId: first.id, materialsChanged: true });
+  });
+  test('inline file sources retain sentence order across restart and are checked again at dispatch', async () => {
+    const now = Date.parse('2026-07-24T09:00:00Z');
+    const root = await tempRoot('scheduled-inline-source-');
+    const file = join(root, 'brief.md ');
+    await writeFile(file, 'Current source');
+    const database = join(root, 'scheduled.sqlite');
+    const store = automationStore(database);
+    const marker = formatFileReferenceMarker(file);
+    const prompt = `Read ${marker}, then update ${marker} with the findings.`;
+    const service = automationServiceFor(store, now);
+    const { automation } = await service.request('create', { ...definition('20260724T100000'), prompt });
+    store.close(); stores.splice(stores.indexOf(store), 1);
+    const reopened = automationStore(database);
+    const saved = reopened.read(automation.id, now)!;
+    expect(saved.prompt).toBe(prompt);
+    expect(saved.materials).toEqual([]);
+    const host = threadHost();
+    const dispatcher = dispatcherFor(reopened, host, now + 1);
+    const accepted = await dispatcher.dispatch(reopened.claimNow(saved, null, now + 2));
+    expect(accepted.state).toBe('dispatched');
+    expect(accepted.snapshot.prompt).toBe(prompt);
+    await rm(file);
+    const failed = await dispatcher.dispatch(reopened.claimNow(saved, null, now + 3));
+    expect(failed.state).toBe('failed');
+    expect(failed.error).toContain(file);
+    expect(host.turnCalls).toHaveLength(1);
+  });
+
+  test('inline source requirements apply at save and can be explicitly made optional', async () => {
+    const now = Date.parse('2026-07-24T09:00:00Z');
+    const store = automationStore();
+    const root = await tempRoot('scheduled-inline-missing-');
+    const file = join(root, 'missing.md');
+    const prompt = `Review ${formatFileReferenceMarker(file)} if it is available.`;
+    const service = automationServiceFor(store, now);
+    await expect(service.request('create', { ...definition('20260724T100000'), prompt })).rejects.toThrow('Material unavailable');
+    const { automation } = await service.request('create', { ...definition('20260724T100000'), prompt,
+      materials: [{ kind: 'file', reference: file, required: false }] });
+    const host = threadHost();
+    const dispatched = await dispatcherFor(store, host, now + 1).dispatch(store.claimNow(automation, null, now + 2));
+    expect(dispatched.state).toBe('dispatched');
+    expect(dispatched.snapshot.materials).toEqual([{ kind: 'file', reference: file, required: false }]);
+  });
   test('binds standalone and existing-Thread runs through immutable Turn provenance', async () => {
     const now = Date.parse('2026-07-24T09:00:00Z');
     const store = automationStore();

@@ -12,7 +12,6 @@ import { composeProviderQualifiedModel, parseProviderQualifiedModel } from '../.
 import { REASONING_EFFORTS, type ReasoningEffort } from '../../../core/agent/configuration';
 import type { AgentProviderSettingsView } from '../../api/types';
 import { useT } from '../../i18n/I18nProvider';
-import { CloseIcon } from '../../ui/icons';
 import { formatProviderName } from '../../ui/agent/providerNames';
 import { buildModelChoices, flattenModelChoices, type ModelChoiceGroup } from '../../ui/agent/modelChoices';
 import { Button } from '../../ui/primitives/Button';
@@ -20,28 +19,35 @@ import { Field } from '../../ui/primitives/Field';
 import { IconButton } from '../../ui/primitives/IconButton';
 import { Input } from '../../ui/primitives/Input';
 import { SelectControl } from '../../ui/primitives/SelectControl';
-import { Textarea } from '../../ui/primitives/Textarea';
+import { ScheduledBriefInput } from './ScheduledBriefInput';
+import type { DocumentIndexStore } from '../../state/documentIndexStore';
+import { scheduledBriefMaterials, scheduledInlineMaterials, scheduledMaterialKey } from '../../../core/agent/scheduledBrief';
+import { splitReferenceMarkers, basenameForPath } from '../../../core/referenceMarkup';
+import { textOf } from '../../ui/shared';
+import { ConfirmDialog } from '../../ui/primitives/ConfirmDialog';
+import { MoreIcon } from '../../ui/icons';
+import { AnchoredActionMenu } from '../../ui/primitives/AnchoredActionMenu';
 import { AutomationScheduleEditor } from './AutomationScheduleEditor';
 import { useProjectCatalog } from '../projects/useProjectCatalog';
 import {
   automationScheduleRrule,
+  canEditAutomationSchedule,
   createAutomationScheduleDraft,
   isAutomationScheduleDraftValid,
   type AutomationScheduleDraft,
 } from './AutomationScheduleDraft';
 
-type ProjectMode = 'none' | 'local' | 'worktree';
 type ContextHintDraft = {
   readonly projectId?: string;
   readonly id: string;
   readonly contextHintId?: string;
   readonly cwd: string;
-  readonly executionMode: Exclude<ProjectMode, 'none'>;
+  readonly executionMode: AutomationContextHintInput['executionMode'];
 };
 
 interface AutomationEditorProps {
+  readonly indexStore: DocumentIndexStore;
   readonly actionError: string | null;
-  readonly notes?: readonly { id: string; title: string }[];
   readonly onPause?: (expectedRevision: number) => Promise<Automation>;
   readonly automation: Automation | null;
   readonly busy: boolean;
@@ -53,212 +59,193 @@ interface AutomationEditorProps {
 }
 
 export function AutomationEditor(props: AutomationEditorProps) {
-  const t = useT().agent.automations;
-  const projectLabels = useT().agent.projects;
+  const messages = useT();
+  const t = messages.agent.automations;
+  const e = t.editor;
+  const projectLabels = messages.agent.projects;
   const projects = useProjectCatalog();
-  const automationKey = props.automation?.id ?? 'create';
-  const initial = useMemo(() => editorState(props.automation), [automationKey]);
-  const [state, setState] = useState(initial);
-  const [baselineSignature, setBaselineSignature] = useState(() => stateSignature(initial));
+  const [state, setState] = useState(() => editorState(props.automation));
+  const [baseline, setBaseline] = useState(state);
+  const [revision, setRevision] = useState(props.automation?.revision ?? null);
   const [error, setError] = useState<string | null>(null);
-  const [preview, setPreview] = useState<{ nextOccurrenceAt: number | null; defaultWorkLocation: string } | null>(null);
-  const [previewError, setPreviewError] = useState<string | null>(null);
-  const promptRef = useRef<HTMLTextAreaElement | null>(null);
-  const [noteSearch, setNoteSearch] = useState('');
+  const [taskError, setTaskError] = useState(false);
+  const [briefValid, setBriefValid] = useState(true);
+  const [briefPending, setBriefPending] = useState(false);
+  const [preview, setPreview] = useState<{ key: string; nextOccurrenceAt: number | null; defaultWorkLocation: string } | null>(null);
+  const [previewError, setPreviewError] = useState<{ key: string; message: string } | null>(null);
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [replaceSchedule, setReplaceSchedule] = useState(false);
+  const [referenceOptionsOpen, setReferenceOptionsOpen] = useState(false);
+  const [review, setReview] = useState<Automation | null>(null);
+  const [nameEdited, setNameEdited] = useState(Boolean(props.automation));
+  const menuRef = useRef<HTMLButtonElement | null>(null);
+  const formRef = useRef<HTMLFormElement | null>(null);
+  const alive = useRef(true);
+  const [picking, setPicking] = useState(false);
   const operationRef = useRef({ signature: '', requestId: crypto.randomUUID() });
-  const revisionRef = useRef(props.automation?.revision ?? null);
-  const dirty = stateSignature(state) !== baselineSignature;
-
-  useEffect(() => {
-    setState(initial);
-    setBaselineSignature(stateSignature(initial));
-    setError(null);
-    revisionRef.current = props.automation?.revision ?? null;
-  }, [automationKey, initial]);
-
-  useEffect(() => {
-    props.onDirtyChange(dirty);
-  }, [dirty, props.onDirtyChange]);
-
-  useEffect(() => {
-    if (!props.automation || props.automation.id !== automationKey || dirty) return;
-    const incoming = editorState(props.automation);
-    const incomingSignature = stateSignature(incoming);
-    if (incomingSignature !== baselineSignature) {
-      setState(incoming);
-      setBaselineSignature(incomingSignature);
-    }
-    revisionRef.current = props.automation.revision;
-  }, [automationKey, baselineSignature, dirty, props.automation]);
-
-  const choices = useMemo(
-    () => buildModelChoices(props.providerSettings, { modelProvider: state.modelProvider, model: state.model }),
-    [props.providerSettings, state.model, state.modelProvider],
-  );
-  // A native select cannot truncate, so the provider grouping collapses fully.
+  // Retain source policies through deletion/undo, but never submit an orphaned
+  // inline policy as newly attached context.
+  const inlineKeys = useRef(new Set(scheduledInlineMaterials(state.prompt).map(scheduledMaterialKey)));
+  const attachedKeys = useRef(new Set(state.materials.filter((item) => !inlineKeys.current.has(scheduledMaterialKey(item))).map(scheduledMaterialKey)));
+  const effectiveExplicit = (value: EditorState) => {
+    const present = new Set(scheduledInlineMaterials(value.prompt).map(scheduledMaterialKey));
+    return value.materials.filter((item) => !inlineKeys.current.has(scheduledMaterialKey(item)) || attachedKeys.current.has(scheduledMaterialKey(item)) || present.has(scheduledMaterialKey(item)));
+  };
+  const dirty = stateSignature({ ...state, materials: effectiveExplicit(state) }) !== stateSignature(baseline);
+  const conflict = Boolean(props.automation && dirty && revision !== props.automation.revision);
+  const choices = useMemo(() => buildModelChoices(props.providerSettings, { modelProvider: state.modelProvider, model: state.model }), [props.providerSettings, state.model, state.modelProvider]);
   const modelChoices = useMemo(() => flattenModelChoices(choices), [choices]);
   const showProviderLabel = choices.showProviderLabel;
-  // Memoized and keyed on the groups, not the flattened models: this only needs
-  // the handful of provider ids, and an unmemoized Set over an OpenRouter-sized
-  // catalog would be rebuilt on every keystroke in the name/prompt fields.
-  const selectedModel = useMemo(
-    () => automationModelValue(state.modelProvider, state.model, choices.groups),
-    [choices.groups, state.model, state.modelProvider],
-  );
-  const knownModelValues = useMemo(
-    () => new Set(modelChoices.map((choice) => choice.value)),
-    [modelChoices],
-  );
-  const timezones = useMemo(() => automationTimezones(state.timezone), [state.timezone]);
+  const reasoningChoices = choices.resolvedOption ? REASONING_EFFORTS.filter((effort) => choices.resolvedOption!.supportedThinkingLevels.includes(effort)) : [];
+  const showReasoning = Boolean(state.reasoningEffort) || Boolean(choices.resolvedOption?.reasoning);
 
+  const selectedModel = useMemo(() => automationModelValue(state.modelProvider, state.model, choices.groups), [choices.groups, state.model, state.modelProvider]);
+  const knownModelValues = useMemo(() => new Set(modelChoices.map((choice) => choice.value)), [modelChoices]);
+  const timezones = useMemo(() => automationTimezones(state.timezone), [state.timezone]);
+  const binding = state.contextHints[0];
+  const folderLabel = binding?.projectId ? projects.view.projects.find((item) => item.id === binding.projectId)?.name ?? projectLabels.unavailable : binding?.cwd ? basenameForPath(binding.cwd) : e.defaultFolder;
+  const optionsSummary = [binding ? folderLabel : null, binding?.executionMode === 'worktree' ? e.copy : null, state.model || (state.modelProvider ? formatProviderName(state.modelProvider) : null), state.reasoningEffort ? `${e.reasoning}: ${messages.agent.composer.reasoningLevels[state.reasoningEffort]}` : null].filter(Boolean).join(' · ') || e.defaults;
+  const preservedSchedule = !canEditAutomationSchedule(state.schedule);
+  const scheduleKey = JSON.stringify([state.schedule, state.timezone]);
+  const previewPending = preview?.key !== scheduleKey && previewError?.key !== scheduleKey;
+  const noFuture = preview?.key === scheduleKey && preview.nextOccurrenceAt === null;
+  let timingChanged = true;
+  try { timingChanged = !props.automation || automationScheduleRrule(state.schedule) !== props.automation.schedule.rrule || state.timezone !== props.automation.schedule.timezone; } catch { /* The preview owns invalid-time feedback. */ }
+  let materials: readonly ScheduledMaterial[] = [];
+  let materialError = '';
+  try { materials = scheduledBriefMaterials(state.prompt, effectiveExplicit(state)); } catch { materialError = e.sourceLimit; }
+
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  useEffect(() => { props.onDirtyChange(dirty); }, [dirty, props.onDirtyChange]);
+  useEffect(() => {
+    if (!props.automation || dirty) return;
+    const incoming = editorState(props.automation);
+    if (stateSignature(incoming) !== stateSignature(baseline)) { setState(incoming); setBaseline(incoming); }
+    setRevision(props.automation.revision);
+  }, [props.automation, dirty, baseline]);
   useEffect(() => {
     let stale = false;
     const timer = setTimeout(() => {
       try {
         void api.automationRequest('preview', { rrule: automationScheduleRrule(state.schedule), timezone: state.timezone })
-          .then((value) => { if (!stale) { setPreview(value); setPreviewError(null); } })
-          .catch((reason) => { if (!stale) { setPreview(null); setPreviewError(errorMessage(reason)); } });
-      } catch (reason) { if (!stale) { setPreview(null); setPreviewError(errorMessage(reason)); } }
+          .then((value) => { if (!stale) { setPreview({ key: scheduleKey, nextOccurrenceAt: value.nextOccurrenceAt, defaultWorkLocation: value.defaultWorkLocation }); setPreviewError(null); } })
+          .catch((reason) => { if (!stale) setPreviewError({ key: scheduleKey, message: errorMessage(reason) }); });
+      } catch (reason) { if (!stale) setPreviewError({ key: scheduleKey, message: errorMessage(reason) }); }
     }, 150);
     return () => { stale = true; clearTimeout(timer); };
-  }, [state.schedule, state.timezone]);
+  }, [scheduleKey]);
 
-  async function submit(event: React.FormEvent) {
-    event.preventDefault();
-    setError(null);
+  function sourceLabel(item: ScheduledMaterial): string {
+    return item.kind === 'note' ? textOf(props.indexStore.getCurrent().byId.get(item.reference)) || e.unavailableReference
+      : item.kind === 'file' ? basenameForPath(item.reference) : item.reference;
+  }
+  function briefChanged(prompt: string) {
+    for (const item of scheduledInlineMaterials(prompt)) inlineKeys.current.add(scheduledMaterialKey(item));
+    const display = splitReferenceMarkers(prompt).map((part) => part.type === 'text' ? part.text : sourceLabel(part.target.kind === 'node' ? { kind: 'note', reference: part.target.nodeId, required: true } : { kind: 'file', reference: part.target.path, required: true })).join('');
+    setTaskError(false);
+    setState((previous) => ({ ...previous, prompt, name: nameEdited ? previous.name : display.trim().split('\n')[0].slice(0, 80) }));
+  }
+  async function chooseFolder() {
+    if (picking || props.busy) return;
+    setPicking(true);
     try {
-      if (
-        !state.name.trim()
-        || !state.prompt.trim()
-        || !isAutomationScheduleDraftValid(state.schedule)
-      ) throw new Error(t.required);
-      const destination = { kind: 'standalone' as const };
-      const contextHints = state.contextHints.map((binding) => toAutomationContextHintInput(
-        binding,
-        binding.projectId ? '' : required(binding.cwd, t.fieldRequired({ field: t.cwd })),
-      ));
+      const { paths } = await api.agentCoreRequest('project/pickFolders', {});
+      if (!alive.current || !paths[0]) return;
+      setState((value) => ({ ...value, contextHints: [{ id: value.contextHints[0]?.id ?? crypto.randomUUID(), contextHintId: value.contextHints[0]?.contextHintId,
+        cwd: paths[0]!, executionMode: value.contextHints[0]?.executionMode ?? 'local' }] }));
+    } catch (reason) { if (alive.current) setError(errorMessage(reason)); }
+    finally { if (alive.current) setPicking(false); }
+  }
+  async function submit(event: React.FormEvent) {
+    event.preventDefault(); setError(null);
+    const instructions = splitReferenceMarkers(state.prompt).filter((part) => part.type === 'text').map((part) => part.text).join('').trim();
+    if (!instructions) { setTaskError(true); formRef.current?.querySelector<HTMLElement>('[role="textbox"]')?.focus(); return; }
+    if (!briefValid || briefPending || picking || previewPending || previewError?.key === scheduleKey || (timingChanged && noFuture) || conflict || materialError) return;
+    try {
+      if (!isAutomationScheduleDraftValid(state.schedule)) throw new Error(e.previewInvalid);
       const definition: AutomationCreateInput = {
-        name: state.name.trim(),
-        prompt: state.prompt.trim(),
-        materials: state.materials,
-        schedule: {
-          rrule: automationScheduleRrule(state.schedule),
-          timezone: required(state.timezone, t.fieldRequired({ field: t.timezone })),
-        },
-        destination,
-        contextHints,
-        configuration: {
-          modelProvider: nullable(state.modelProvider),
-          model: nullable(state.model),
-          reasoningEffort: state.reasoningEffort || null,
-        },
+        name: state.name.trim() || instructions.split('\n')[0].slice(0, 80), prompt: state.prompt,
+        materials: effectiveExplicit(state), schedule: { rrule: automationScheduleRrule(state.schedule), timezone: state.timezone },
+        destination: { kind: 'standalone' }, contextHints: state.contextHints.map((hint) => toAutomationContextHintInput(hint, hint.projectId ? '' : required(hint.cwd, e.folderMissing))),
+        configuration: { modelProvider: nullable(state.modelProvider), model: nullable(state.model), reasoningEffort: state.reasoningEffort || null },
       };
-      const signature = JSON.stringify([definition, revisionRef.current]);
+      const signature = JSON.stringify([definition, revision]);
       if (operationRef.current.signature !== signature) operationRef.current = { signature, requestId: crypto.randomUUID() };
-      const requestId = operationRef.current.requestId;
-      let saved: Automation;
-      if (props.automation) {
-        saved = await props.onUpdate({
-          id: props.automation.id,
-          expectedRevision: revisionRef.current ?? props.automation.revision,
-          ...definition,
-          requestId,
-        });
-      } else {
-        saved = await props.onCreate({ ...definition, requestId });
-      }
-      revisionRef.current = saved.revision;
-      setBaselineSignature(stateSignature(state));
-      props.onDirtyChange(false);
-    } catch (submitError) {
-      setError(errorMessage(submitError));
+      const saved = props.automation ? await props.onUpdate({ ...definition, id: props.automation.id, expectedRevision: revision!, requestId: operationRef.current.requestId })
+        : await props.onCreate({ ...definition, requestId: operationRef.current.requestId });
+      setRevision(saved.revision); setBaseline(editorState(saved)); props.onDirtyChange(false);
+    } catch (reason) {
+      const message = errorMessage(reason);
+      const source = message.startsWith('Material unavailable') ? materials.find((item) => message.includes(item.reference)) : undefined;
+      if (source) { setReferenceOptionsOpen(true); setError(`${sourceLabel(source)}: ${e.unavailableReference}`); }
+      else setError(message);
     }
   }
+  function describe(value: EditorState): Record<string, string> {
+    const source = value.contextHints[0];
+    const project = projects.view.projects.find((item) => item.id === source?.projectId);
+    const folder = source?.projectId ? project ? `${project.name} · ${project.primaryFolder ?? projectLabels.unavailable}` : projectLabels.unavailable : source?.cwd ?? e.defaultFolder;
+    const brief = splitReferenceMarkers(value.prompt).map((part) => part.type === 'text' ? part.text : sourceLabel(part.target.kind === 'node' ? { kind: 'note', reference: part.target.nodeId, required: true } : { kind: 'file', reference: part.target.path, required: true })).join('');
+    return { [e.task]: brief, [e.name]: value.name,
+      [e.when]: `${!canEditAutomationSchedule(value.schedule) ? e.custom : value.schedule.mode === 'custom' ? `${t.every} ${value.schedule.interval} ${t.intervalUnit({ frequency: value.schedule.customFrequency, count: value.schedule.interval })}` : t.frequencies[value.schedule.mode]} · ${value.schedule.startAt.replace('T', ' ')} · ${value.timezone}${value.schedule.mode === 'weekly' || value.schedule.customFrequency === 'weekly' ? ` · ${value.schedule.weekdays.map((day) => t.weekdayShort[day]).join(', ')}` : ''}${value.schedule.mode === 'custom' && ['monthly', 'yearly'].includes(value.schedule.customFrequency) ? ` · ${value.schedule.monthDays.join(', ')}${value.schedule.customFrequency === 'yearly' ? ` ${t.months[value.schedule.month - 1]}` : ''}` : ''}`,
+      [e.referenceSettings]: value.materials.map((item) => `${sourceLabel(item)}${item.required ? '' : ` (${e.continueMissing})`}`).join(', ') || e.emptyReferences,
+      [e.folder]: `${folder}${source?.executionMode === 'worktree' ? ` · ${e.copy}` : ''}`,
+      [e.model]: `${value.model || e.defaults}${value.modelProvider ? ` · ${formatProviderName(value.modelProvider)}` : ''}${value.reasoningEffort ? ` · ${value.reasoningEffort}` : ''}` };
+  }
+  const savedState = review ? editorState(review) : props.automation ? editorState(props.automation) : null;
+  const localDescription = describe(state);
+  const remoteDescription = savedState ? describe(savedState) : {};
+  const differences = savedState ? [[e.task, state.prompt, savedState.prompt], [e.name, state.name, savedState.name],
+    [e.when, [state.schedule, state.timezone], [savedState.schedule, savedState.timezone]], [e.referenceSettings, state.materials, savedState.materials],
+    [e.folder, state.contextHints, savedState.contextHints], [e.model, [state.modelProvider, state.model, state.reasoningEffort], [savedState.modelProvider, savedState.model, savedState.reasoningEffort]]]
+    .filter(([, local, remote]) => JSON.stringify(local) !== JSON.stringify(remote)).map(([label]) => label as string) : [];
 
-  return (
-    <form className="automation-editor" onSubmit={(event) => void submit(event)}>
-      <div className="automation-editor-scroll">
-        <section className="automation-editor-intro">
-          <Field className="automation-name-field" label={t.name} labelClassName="automation-field-label">
-            <Input
-              autoComplete="off"
-              className="automation-name-input"
-              disabled={props.busy}
-              label={t.name}
-              onChange={(event) => setState({ ...state, name: event.target.value })}
-              placeholder={t.name}
-              variant="bare"
-              value={state.name}
-            />
-          </Field>
-          <Field className="automation-prompt-field" label={t.prompt} labelClassName="automation-field-label">
-            <Textarea ref={promptRef}
-              className="automation-prompt-input"
-              disabled={props.busy}
-              label={t.prompt}
-              onChange={(event) => { const prompt = event.target.value; setState({ ...state, prompt, name: state.name === state.prompt.split('\n')[0].slice(0, 80) || !state.name ? prompt.split('\n')[0].slice(0, 80) : state.name }); }}
-              rows={5}
-              value={state.prompt}
-            />
-          </Field>
-        </section>
-
-        <section className="automation-editor-section">
-          <h3>{t.work.materials}</h3>
-          {state.materials.map((material, index) => <div className="scheduled-material" key={index}>
-            <SelectControl label={t.work.materialKind} value={material.kind} disabled={props.busy}
-              onChange={(event) => setState({ ...state, materials: state.materials.map((entry, at) => at === index ? { ...entry, kind: event.target.value as ScheduledMaterial['kind'], reference: '' } : entry) })}>
-              <option value="file">{t.work.file}</option><option value="url">{t.work.url}</option><option value="note">{t.work.note}</option>
-            </SelectControl>
-            {material.kind === 'note' ? <>
-              <Input disabled={props.busy} label={t.search} placeholder={t.search} value={noteSearch} onChange={(event) => setNoteSearch(event.target.value)} />
-              <SelectControl disabled={props.busy} label={t.work.reference} value={material.reference} onChange={(event) => setState({ ...state, materials: state.materials.map((entry, at) => at === index ? { ...entry, reference: event.target.value } : entry) })}>
-                <option value="">{t.work.reference}</option>
-                {(props.notes ?? []).filter((note) => note.id === material.reference || note.title.toLocaleLowerCase().includes(noteSearch.toLocaleLowerCase())).slice(0, 100)
-                  .map((note) => <option key={note.id} value={note.id}>{note.title}</option>)}
-                {material.reference && !props.notes?.some((note) => note.id === material.reference) ? <option value={material.reference}>{projectLabels.unavailable}</option> : null}
-              </SelectControl>
-            </> : <Input label={t.work.reference} value={material.reference} disabled={props.busy}
-              onChange={(event) => setState({ ...state, materials: state.materials.map((entry, at) => at === index ? { ...entry, reference: event.target.value } : entry) })} />}
-            <CheckboxControl className="scheduled-material-required" checked={material.required} disabled={props.busy} onCheckedChange={(required) => setState({ ...state,
-              materials: state.materials.map((entry, at) => at === index ? { ...entry, required } : entry) })}>{t.work.requiredMaterial}</CheckboxControl>
-            <Button size="sm" variant="ghost" onClick={() => setState({ ...state, materials: state.materials.filter((_, at) => at !== index) })}>{t.work.removeMaterial}</Button>
-          </div>)}
-          <Button size="sm" variant="ghost" disabled={props.busy || state.materials.length >= 32}
-            onClick={() => setState({ ...state, materials: [...state.materials, { kind: 'file', reference: '', required: true }] })}>{t.work.addMaterial}</Button>
-        </section>
-
-        <section className="automation-editor-section">
-          <h3>{t.work.location}</h3>
-          {!state.contextHints.length ? <p>{preview?.defaultWorkLocation ?? t.inherited}</p> : null}
-          <div className="automation-settings-group">
-            <Field className="automation-setting-row" label={t.project} labelClassName="automation-setting-label">
-              <SelectControl
-                className="automation-setting-value"
-                disabled={props.busy}
-                label={t.project}
-                onChange={(event) => {
-                  const projectMode = event.target.value as ProjectMode;
-                  setState({
-                    ...state,
-                    contextHints: projectMode === 'none'
-                      ? []
-                      : state.contextHints.length === 0
-                        ? [{ id: crypto.randomUUID(), cwd: '', executionMode: projectMode }]
-                        : state.contextHints.map((binding, index) => (
-                            index === 0 ? { ...binding, executionMode: projectMode } : binding
-                          )),
-                  });
-                }}
-                value={state.contextHints[0]?.executionMode ?? 'none'}
-                variant="popup"
-              >
-                <option value="none">{t.projects.none}</option>
-                <option value="local">{t.projects.local}</option>
-                <option value="worktree">{t.projects.worktree}</option>
-              </SelectControl>
-            </Field>
-            <details className="scheduled-advanced"><summary>{t.work.advanced}</summary>
+  return <form className="automation-editor scheduled-editor-v2" ref={formRef} onSubmit={(event) => void submit(event)}>
+    <div className="scheduled-edit-status">
+      {props.automation ? <span>{props.automation.status === 'paused' ? e.paused : e.future}</span> : null}
+      {props.automation?.status === 'active' && props.onPause ? <>
+        <IconButton icon={MoreIcon} label={e.actions} ref={menuRef} aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((value) => !value)} />
+        {menuOpen ? <AnchoredActionMenu anchorRef={menuRef} onClose={() => setMenuOpen(false)} ariaLabel={e.actions}
+          className="thread-action-menu scheduled-editor-menu" surfaceProps={{ 'data-dialog-nested-overlay': 'true' }} actions={[{ label: e.pauseSaved, disabled: props.busy,
+            onSelect: () => { void props.onPause!(revision!).then((task) => setRevision(task.revision)).catch((reason) => setError(errorMessage(reason))); } }]} /> : null}
+      </> : null}
+    </div>
+    <div className="automation-editor-scroll">
+      <section className="automation-editor-intro">
+        <h3>{e.task}</h3>
+        <ScheduledBriefInput indexStore={props.indexStore} value={state.prompt} disabled={props.busy} onChange={briefChanged} onValidityChange={setBriefValid} onPendingChange={setBriefPending} onError={setError} />
+        {taskError ? <p className="automation-error" role="alert">{e.taskRequired}</p> : null}
+      </section>
+      <section className="automation-editor-section">
+        <h3>{e.when}</h3>
+        {preservedSchedule ? <div className="scheduled-saved-rule"><span>{e.custom}</span><p>{e.customHelp}</p>
+          <Button size="sm" variant="ghost" onClick={() => setReplaceSchedule(true)}>{e.replaceSchedule}</Button></div> : null}
+        <AutomationScheduleEditor disabled={props.busy || preservedSchedule} schedule={state.schedule} timezone={state.timezone} timezones={timezones}
+          onChange={(schedule) => setState({ ...state, schedule })} onTimezoneChange={(timezone) => setState({ ...state, timezone })} />
+        <p className="scheduled-preview" aria-live="polite">{previewPending ? e.previewLoading : previewError?.key === scheduleKey ? previewError.message
+          : noFuture ? t.noNext : `${props.automation?.status === 'paused' ? e.ifResumed : e.next}${new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short', timeZone: state.timezone }).format(preview!.nextOccurrenceAt!)}`}</p>
+        {timingChanged && noFuture ? <p className="automation-error" role="alert">{e.previewInvalid}</p> : null}
+      </section>
+      <details className="scheduled-editor-options" open={optionsOpen} onToggle={(event) => setOptionsOpen(event.currentTarget.open)}>
+        <summary>{e.options}<span>{optionsSummary}</span></summary>
+        <div className="automation-editor-section">
+          <Field label={e.name}><Input label={e.name} value={state.name} disabled={props.busy} onChange={(event) => { setNameEdited(true); setState({ ...state, name: event.target.value }); }} /></Field>
+          <h3>{e.folder}</h3>
+          <SelectControl label={e.folder} value={binding?.projectId ?? (binding ? 'directory' : 'default')} disabled={props.busy || picking} onChange={(event) => {
+            const value = event.target.value;
+            if (value === 'directory') { void chooseFolder(); return; }
+            if (value === 'default' && binding?.executionMode === 'worktree') { setError(e.isolationChange); return; }
+            setState({ ...state, contextHints: value === 'default' ? [] : [{ id: binding?.id ?? crypto.randomUUID(), contextHintId: binding?.contextHintId,
+              cwd: binding?.cwd ?? '', executionMode: binding?.executionMode ?? 'local', ...(value === 'directory' ? {} : { projectId: value }) }] });
+          }}><option value="default">{e.defaultFolder}</option><option value="directory">{e.chooseFolder}</option>
+            {binding?.projectId && !projects.view.projects.some((item) => item.id === binding.projectId) ? <option value={binding.projectId}>{projectLabels.unavailable}</option> : null}
+            {projects.view.projects.map((item) => <option key={item.id} value={item.id} disabled={!item.primaryFolder}>{item.name}</option>)}
+          </SelectControl>
+          <p className="scheduled-setting-note">{binding?.projectId ? projects.view.projects.find((item) => item.id === binding.projectId)?.primaryFolder ?? projectLabels.unavailable
+            : binding?.cwd || preview?.defaultWorkLocation || e.defaultFolder}</p>
+          {binding && !binding.projectId ? <Button size="sm" variant="ghost" disabled={props.busy || picking} onClick={() => void chooseFolder()}>{e.chooseFolder}</Button> : null}
+          {binding ? <><CheckboxControl checked={binding.executionMode === 'worktree'} disabled={props.busy} onCheckedChange={(enabled) => setState({ ...state, contextHints: [{ ...binding, executionMode: enabled ? 'worktree' : 'local' }] })}>{e.separateCopy}</CheckboxControl><p className="scheduled-setting-note">{e.copyHelp}</p></> : null}
             <Field className="automation-setting-row" label={t.model} labelClassName="automation-setting-label">
               <SelectControl
                 className="automation-setting-value"
@@ -277,10 +264,10 @@ export function AutomationEditor(props: AutomationEditorProps) {
                 value={selectedModel}
                 variant="popup"
               >
-                {/* "Inherit" overrides nothing — it stores null for BOTH provider and
+                {/* Default overrides nothing — it stores null for BOTH provider and
                     model. It is not the composer's "always newest", which pins a
                     provider; keep the two distinct. */}
-                <option value="">{t.inherited}</option>
+                <option value="">{e.defaults}</option>
                 {selectedModel && !knownModelValues.has(selectedModel) ? (
                   <option value={selectedModel}>{state.model}</option>
                 ) : null}
@@ -293,131 +280,50 @@ export function AutomationEditor(props: AutomationEditorProps) {
                 ))}
               </SelectControl>
             </Field>
-            <Field className="automation-setting-row" label={t.reasoning} labelClassName="automation-setting-label">
+            {showReasoning ? <Field className="automation-setting-row" label={e.reasoning} labelClassName="automation-setting-label">
               <SelectControl
                 className="automation-setting-value"
                 disabled={props.busy}
-                label={t.reasoning}
+                label={e.reasoning}
                 onChange={(event) => setState({ ...state, reasoningEffort: event.target.value as ReasoningEffort | '' })}
                 value={state.reasoningEffort}
                 variant="popup"
               >
-                <option value="">{t.inherited}</option>
-                {REASONING_EFFORTS.map((effort) => <option key={effort} value={effort}>{effort}</option>)}
+                <option value="">{e.defaults}</option>
+                {state.reasoningEffort && !reasoningChoices.includes(state.reasoningEffort) ? <option value={state.reasoningEffort}>{messages.agent.composer.reasoningLevels[state.reasoningEffort]} · {projectLabels.unavailable}</option> : null}
+                {reasoningChoices.map((effort) => <option key={effort} value={effort}>{choices.resolvedOption?.thinkingLevelLabels?.[effort] ?? messages.agent.composer.reasoningLevels[effort]}</option>)}
               </SelectControl>
-            </Field>
-            </details>
-          </div>
+            </Field> : null}
 
-          {state.contextHints.length > 0 ? (
-            <div className="automation-project-details">
-              {projects.error ? <p className="automation-error" role="alert">{projects.error}</p> : null}
-              {state.contextHints.map((binding, index) => (
-                <div className={`automation-project-binding${index === 0 ? ' is-primary' : ''}`} key={binding.id || index}>
-                  {index > 0 ? (
-                    <SelectControl
-                      disabled={props.busy}
-                      label={t.projectMode({ index: index + 1 })}
-                      onChange={(event) => setState({
-                        ...state,
-                        contextHints: replaceBinding(state.contextHints, index, {
-                          ...binding,
-                          executionMode: event.target.value as ContextHintDraft['executionMode'],
-                        }),
-                      })}
-                      value={binding.executionMode}
-                      variant="boxed"
-                    >
-                      <option value="local">{t.projects.local}</option>
-                      <option value="worktree">{t.projects.worktree}</option>
-                    </SelectControl>
-                  ) : null}
-                  <Field label={projectLabels.title}>
-                    <SelectControl label={projectLabels.title} value={binding.projectId ?? ''}
-                      disabled={props.busy || projects.loading || !!projects.error} variant="boxed"
-                      onChange={(event) => setState({ ...state, contextHints: replaceBinding(state.contextHints, index, {
-                        ...binding, projectId: event.target.value || undefined,
-                      }) })}>
-                      <option value="">{projectLabels.directory}</option>
-                      {binding.projectId && !projects.view.projects.some((project) => project.id === binding.projectId)
-                        ? <option value={binding.projectId}>{projectLabels.unavailable}</option> : null}
-                      {projects.view.projects.map((project) => <option key={project.id} value={project.id} disabled={!project.primaryFolder}>{project.name}</option>)}
-                    </SelectControl>
-                  </Field>
-                  {binding.projectId ? <p className="project-path">{projects.view.projects.find((project) => project.id === binding.projectId)?.primaryFolder ?? projectLabels.unavailable}</p> : <Field label={t.projectPath({ index: index + 1 })}>
-                    <Input
-                      disabled={props.busy}
-                      label={t.projectPath({ index: index + 1 })}
-                      onChange={(event) => setState({
-                        ...state,
-                        contextHints: replaceBinding(state.contextHints, index, {
-                          ...binding,
-                          cwd: event.target.value,
-                        }),
-                      })}
-                      value={binding.cwd}
-                    />
-                  </Field>}
-                  {index > 0 ? (
-                    <IconButton
-                      disabled={props.busy}
-                      icon={CloseIcon}
-                      label={t.removeProject({ index: index + 1 })}
-                      onClick={() => setState({
-                        ...state,
-                        contextHints: state.contextHints.filter((_, candidate) => candidate !== index),
-                      })}
-                      variant="message"
-                    />
-                  ) : null}
-                </div>
-              ))}
-
-            </div>
-          ) : null}
-        </section>
-
-        <section className="automation-editor-section">
-          <h3>{t.frequency}</h3>
-          <p>{t.work.local}</p>
-          <p>{preview?.nextOccurrenceAt == null ? t.noNext : new Intl.DateTimeFormat(undefined, { dateStyle: 'full', timeStyle: 'short', timeZone: state.timezone }).format(preview.nextOccurrenceAt)} · {state.timezone}</p>
-          {previewError ? <p role="alert">{previewError}</p> : null}
-          <AutomationScheduleEditor
-            disabled={props.busy}
-            onChange={(schedule) => setState({ ...state, schedule })}
-            onTimezoneChange={(timezone) => setState({ ...state, timezone })}
-            schedule={state.schedule}
-            timezone={state.timezone}
-            timezones={timezones}
-          />
-        </section>
-
-
-
-        {props.automation && dirty && !props.busy && revisionRef.current !== props.automation.revision ? <details className="scheduled-revision-conflict">
-          <summary>{t.work.changed}</summary>
-          <strong>{props.automation.name}</strong><p>{props.automation.prompt}</p>
-          <Button size="sm" variant="ghost" onClick={() => {
-            const saved = editorState(props.automation);
-            setState(saved); setBaselineSignature(stateSignature(saved)); revisionRef.current = props.automation!.revision;
-            setError(null); props.onDirtyChange(false); promptRef.current?.focus();
-          }}>{t.work.reload}</Button>
-        </details> : null}
-
-        {error || props.actionError ? (
-          <p className="automation-error" role="alert">{error ?? props.actionError}</p>
-        ) : null}
-      </div>
-      <footer className="automation-editor-actions">
-        {props.automation && props.onPause && props.automation.status === 'active' ? <Button variant="ghost" disabled={props.busy}
-          onClick={() => { void props.onPause!(revisionRef.current ?? props.automation!.revision).then((task) => { revisionRef.current = task.revision; }).catch((reason) => setError(errorMessage(reason))); }}>{t.work.pause}</Button> : null}
-        <Button disabled={props.busy} onClick={props.onCancel} variant="ghost">{t.cancel}</Button>
-        <Button disabled={props.busy || (Boolean(props.automation) && !dirty)} type="submit" variant="primary">
-          {props.automation ? t.save : t.create}
-        </Button>
-      </footer>
-    </form>
-  );
+        </div>
+      </details>
+      {materials.length ? <details className="scheduled-editor-options" open={referenceOptionsOpen} onToggle={(event) => setReferenceOptionsOpen(event.currentTarget.open)}><summary>{e.referenceSettings}</summary>
+        <p className="scheduled-setting-note">{e.requiredHelp}</p>
+        {materials.map((item) => {
+          const key = scheduledMaterialKey(item);
+          const inline = scheduledInlineMaterials(state.prompt).some((value) => scheduledMaterialKey(value) === key);
+          return <div className="scheduled-reference-policy" key={key}>
+            <span title={item.reference}>{sourceLabel(item)}{inline ? '' : ` · ${e.attached}`}</span>
+            <CheckboxControl checked={!item.required} disabled={props.busy} onCheckedChange={(optional) => setState({ ...state, materials: [...state.materials.filter((value) => scheduledMaterialKey(value) !== key), { ...item, required: !optional }] })}>{e.continueMissing}</CheckboxControl>
+            {!inline ? <Button size="sm" variant="ghost" disabled={props.busy} onClick={() => setState({ ...state, materials: state.materials.filter((value) => scheduledMaterialKey(value) !== key) })}>{e.remove}</Button> : null}
+          </div>;
+        })}
+      </details> : null}
+      {conflict ? <section className="scheduled-revision-conflict" role="alert"><p>{e.changed}</p>
+        <Button size="sm" variant="ghost" onClick={() => setReview((value) => value ? null : props.automation)}>{e.reviewSaved}</Button>
+        {review ? <><div className="scheduled-conflict-fields">{differences.map((label) => <section key={label}><h3>{label}</h3><p>{e.yours}: {localDescription[label]}</p><p>{e.saved}: {remoteDescription[label]}</p></section>)}</div>
+          <Button size="sm" variant="ghost" onClick={() => { const saved = editorState(props.automation); setState(saved); setBaseline(saved); setRevision(props.automation!.revision); setError(null); setReview(null); }}>{t.work.reload}</Button>
+          <p className="scheduled-setting-note">{e.applyHelp}</p><Button size="sm" variant="ghost" onClick={() => { setRevision(review!.revision); setBaseline(editorState(review)); setError(null); setReview(null); }}>{e.applyDraft}</Button>
+        </> : null}
+      </section> : null}
+      {error || props.actionError || materialError ? <p className="automation-error" role="alert">{error ?? props.actionError ?? materialError}</p> : null}
+    </div>
+    <footer className="automation-editor-actions"><p>{e.local}</p><Button disabled={props.busy} onClick={props.onCancel} variant="ghost">{t.cancel}</Button>
+      <Button disabled={props.busy || !briefValid || briefPending || picking || previewPending || previewError?.key === scheduleKey || Boolean(materialError) || (timingChanged && noFuture) || conflict || (Boolean(props.automation) && !dirty)} type="submit" variant="primary">{props.automation ? e.save : t.create}</Button>
+    </footer>
+    {replaceSchedule ? <ConfirmDialog title={e.replaceTitle} message={e.replaceHelp} confirmLabel={e.replace} cancelLabel={e.keepSchedule}
+      onCancel={() => setReplaceSchedule(false)} onConfirm={() => { setState({ ...state, schedule: { ...state.schedule, sourceRrule: null } }); setReplaceSchedule(false); }} /> : null}
+  </form>;
 }
 
 interface EditorState {
@@ -478,14 +384,6 @@ function editorState(automation: Automation | null): EditorState {
 
 function stateSignature(state: EditorState): string {
   return JSON.stringify(state);
-}
-
-function replaceBinding(
-  bindings: readonly ContextHintDraft[],
-  index: number,
-  value: ContextHintDraft,
-): readonly ContextHintDraft[] {
-  return bindings.map((binding, candidate) => candidate === index ? value : binding);
 }
 
 /** Convert editor state to the closed Core contract; UI row ids never cross this boundary. */

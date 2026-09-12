@@ -1,3 +1,4 @@
+import { scheduledInlineMaterials, scheduledMaterialKey } from '../../../core/agent/scheduledBrief';
 import { AutomationRevisionConflict } from './AutomationRevisionConflict';
 import { decodeScheduleInput } from '../../../schedule/schemas';
 import type { Automation, AutomationRun, AutomationMethod } from '../../../core/agent/automation';
@@ -115,7 +116,7 @@ export class ScheduleCliService {
 
 function taskReference(task: Automation) {
   return { id: task.id, name: task.name, revision: task.revision, status: task.status,
-    nextOccurrenceAt: task.nextOccurrenceAt, archivedAt: task.archivedAt, materialCount: task.materials.length };
+    nextOccurrenceAt: task.nextOccurrenceAt, archivedAt: task.archivedAt, materialCount: new Set([...scheduledInlineMaterials(task.prompt), ...task.materials].map(scheduledMaterialKey)).size };
 }
 function runReference(run: AutomationRun) {
   return { id: run.id, automationId: run.automationId, automationRevision: run.automationRevision,

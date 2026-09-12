@@ -1,7 +1,8 @@
 import { expect, test } from '@playwright/test';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { rm } from 'node:fs/promises';
+import { rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { launchSmokeApp, closeSmokeApp, type SmokeApp } from './electronApp';
 import { configureSmokeProvider } from './configurationHelpers';
 
@@ -66,6 +67,27 @@ test('scheduled assignment created through Bash survives restart and delivers to
     await page.locator('.thread-dock-header').getByRole('button', { name: 'Scheduled tasks', exact: true }).click();
     await page.locator('.scheduled-task-row', { hasText: task.name }).click();
     await expect(page.locator('.scheduled-result')).toContainText('Scheduled delivery proof from the real Host.');
+    const sourceFile = join(smoke.userDataDir, 'scheduled-source.txt');
+    await writeFile(sourceFile, 'Read this current source at the next execution.');
+    // Stub only the OS picker response. The IPC, file admission and saved task
+    // use their real owners and disposable paths.
+    await smoke.app.evaluate(({ dialog }, path) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] });
+    }, sourceFile);
+    await page.locator('.scheduled-task-detail').getByRole('button', { name: 'Edit task', exact: true }).click();
+    const editor = page.getByRole('dialog', { name: 'Edit task', exact: true });
+    await editor.getByRole('textbox', { name: 'Task', exact: true }).fill('Read ');
+    await editor.getByRole('button', { name: 'Choose files', exact: true }).click();
+    await expect(editor.locator('[data-thread-file-ref]')).toHaveCount(1);
+    await expect(editor.getByRole('button', { name: 'Save changes', exact: true })).toBeEnabled();
+    await page.screenshot({ path: testInfo.outputPath('native-scheduled-editor.png'), animations: 'disabled' });
+    await editor.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await expect(editor).toHaveCount(0);
+    const edited = (await page.evaluate((id) => window.lin!.automationRequest('read', { id }), task.id)).automation!;
+    expect(edited.prompt).toContain('[[file://');
+    expect(edited.prompt).toContain('scheduled-source.txt');
+    expect(edited.materials).toEqual([]);
+    expect(edited.status).toBe('paused');
     for (const theme of ['light', 'dark'] as const) {
       await smoke.app.evaluate(({ nativeTheme }, theme) => { nativeTheme.themeSource = theme; }, theme);
       await page.emulateMedia({ colorScheme: theme });
@@ -78,6 +100,7 @@ test('scheduled assignment created through Bash survives restart and delivers to
       id: task.id, expectedRevision: task.revision, requestId: 'native-manual',
     }), paused);
     expect(replay.runs[0]!.id).toBe(association.id);
+    expect((await smoke.window.evaluate((id) => window.lin!.automationRequest('read', { id }), task.id)).automation?.prompt).toBe(edited.prompt);
     expect((await smoke.window.evaluate(async () => (await window.lin!.automationRequest('list', {})).data[0]!)).status).toBe('paused');
   } finally {
     if (smoke) await closeSmokeApp(smoke);

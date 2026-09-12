@@ -20,6 +20,14 @@ function invocation(stdin: string, operation = command): DelegateCapabilityExecu
 }
 
 describe('Packaged scheduling CLI admission', () => {
+  test('task summaries count distinct inline sources together with explicit context', async () => {
+    const task = { id: taskId, name: 'Review', revision: 1, status: 'paused', nextOccurrenceAt: null, archivedAt: null,
+      prompt: 'Read [[file:///tmp/brief.md]] and update [[file:///tmp/brief.md]].',
+      materials: [{ kind: 'file', reference: '/tmp/brief.md', required: false }, { kind: 'url', reference: 'https://example.com', required: true }] };
+    const service = new ScheduleCliService(() => ({ request: async () => ({ data: [task] }) }) as unknown as AutomationService, async () => undefined);
+    const result = await service.execute(invocation('', parseScheduleCommand(['list', '--output', 'json'])));
+    expect(result).toMatchObject({ data: [{ id: taskId, materialCount: 2 }] });
+  });
   test('one command parser defines the public spelling and broker command', () => {
     expect(canonicalDelegateCommand(command)).toBe('schedule create --input - --output json');
     expect(decodeDelegateStateCommand(command)).toEqual(command);
