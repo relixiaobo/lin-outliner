@@ -3854,7 +3854,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const run = method === 'result' ? mockAutomationRuns.find((run) => run.id === input.id)
             : mockAutomationRuns.filter((run) => run.automationId === input.id).at(-1);
           const result = run ? { run, state: 'completed', answer: 'The scheduled review was delivered.',
-            parts: [{ text: 'The scheduled review was delivered.', itemId: 'mock-answer', turnId: run.turnId, finalCitations: [] }], answerTruncated: false,
+            parts: [{ text: 'The scheduled review was delivered.', itemId: mockTurns.get(run.threadId!)?.find((turn) => turn.id === run.turnId)?.items.find((item) => item.type === 'agentMessage')?.id ?? 'mock-answer', turnId: run.turnId, finalCitations: [] }], answerTruncated: false,
             resultTurnId: run.turnId, startedAt: run.createdAt, finishedAt: run.createdAt + 20,
             recordPath: '/mock/record.md', issues: [], issue: null, issueKey: null, acknowledged: false, ...scheduledResults.get(run.id) } : null;
           const attentionCount = mockAutomationRuns.filter((run) => run.automationId === input.id).reduce((count, run) => count + (scheduledResults.get(run.id)?.issues ?? []).filter((issue) => !issue.acknowledged).length, 0);

@@ -11,7 +11,7 @@ import {
 import { createPortal } from 'react-dom';
 import { Fragment, Schema, Slice, type Node as PMNode } from 'prosemirror-model';
 import { EditorState, NodeSelection, Selection, TextSelection } from 'prosemirror-state';
-import { EditorView } from 'prosemirror-view';
+import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
 import type { AgentSlashCommandView, NodeId } from '../../api/types';
 import type { ThreadReferenceSearchResult } from '../../../core/agent/protocol';
 import type { DocumentIndex } from '../../state/document';
@@ -143,6 +143,7 @@ export interface ThreadComposerEditorHandle {
 }
 
 interface ThreadComposerEditorProps {
+  placeholderAtCaret?: boolean;
   ariaLabel?: string;
   initialContent?: readonly ThreadComposerDraftContent[];
   draftHistory?: boolean;
@@ -800,6 +801,12 @@ export const ThreadComposerEditor = forwardRef<ThreadComposerEditorHandle, Threa
       const undoStates = draftUndoRef.current;
       const redoStates = draftRedoRef.current;
       const view = new EditorView(mount, {
+        decorations(state) {
+          if (!propsRef.current.placeholderAtCaret || state.doc.childCount !== 1 || state.doc.firstChild!.content.size !== 0) return null;
+          return DecorationSet.create(state.doc, [Decoration.node(0, state.doc.firstChild!.nodeSize, {
+            class: 'composer-placeholder', 'data-placeholder': propsRef.current.placeholder,
+          })]);
+        },
         attributes: {
           'aria-multiline': 'true',
           'aria-label': editorAriaLabelRef.current,
@@ -919,6 +926,11 @@ export const ThreadComposerEditor = forwardRef<ThreadComposerEditorHandle, Threa
         handleKeyDown(viewInstance, event) {
           if (propsRef.current.disabled) return true;
           if (event.isComposing || event.keyCode === 229) return false;
+          if (propsRef.current.draftHistory && (event.key === 'Backspace' || event.key === 'Delete') && !viewInstance.state.selection.empty) {
+            event.preventDefault();
+            viewInstance.dispatch(viewInstance.state.tr.deleteSelection().scrollIntoView());
+            return true;
+          }
           if (propsRef.current.draftHistory && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
             event.preventDefault(); event.stopPropagation();
             const source = event.shiftKey ? redoStates : undoStates;
@@ -1119,7 +1131,7 @@ export const ThreadComposerEditor = forwardRef<ThreadComposerEditorHandle, Threa
       <>
         <div
           ref={mountRef}
-          className={`thread-composer-editor ${isEmpty ? 'is-empty' : ''}`}
+          className={`thread-composer-editor ${isEmpty ? 'is-empty' : ''}${props.placeholderAtCaret ? ' has-paragraph-placeholder' : ''}`}
           data-placeholder={props.placeholder}
         />
         {menu ? createPortal(menu, document.body) : null}

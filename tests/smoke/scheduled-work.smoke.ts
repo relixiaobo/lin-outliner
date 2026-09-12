@@ -66,7 +66,9 @@ test('scheduled assignment created through Bash survives restart and delivers to
       .toMatchObject({ state: 'completed', answer: 'Scheduled delivery proof from the real Host.' });
     await page.locator('.thread-dock-header').getByRole('button', { name: 'Scheduled tasks', exact: true }).click();
     await page.locator('.scheduled-task-row', { hasText: task.name }).click();
-    await expect(page.locator('.scheduled-result')).toContainText('Scheduled delivery proof from the real Host.');
+    await page.locator('.scheduled-run-row').first().click();
+    await expect(page.locator('.scheduled-run-conversation')).toContainText('Scheduled delivery proof from the real Host.');
+    await page.getByRole('button', { name: 'Back to task', exact: true }).click();
     const sourceFile = join(smoke.userDataDir, 'scheduled-source.txt');
     await writeFile(sourceFile, 'Read this current source at the next execution.');
     // Stub only the OS picker response. The IPC, file admission and saved task
@@ -74,20 +76,43 @@ test('scheduled assignment created through Bash survives restart and delivers to
     await smoke.app.evaluate(({ dialog }, path) => {
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] });
     }, sourceFile);
-    await page.locator('.scheduled-task-detail').getByRole('button', { name: 'Edit task', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Task details', exact: true }).getByRole('button', { name: 'Edit', exact: true }).click();
     const editor = page.getByRole('dialog', { name: 'Edit task', exact: true });
     await editor.getByRole('textbox', { name: 'Task', exact: true }).fill('Read ');
-    await editor.getByRole('button', { name: 'Choose files', exact: true }).click();
+    await editor.getByRole('button', { name: 'Add', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Add attachment', exact: true }).click();
     await expect(editor.locator('[data-thread-file-ref]')).toHaveCount(1);
     await expect(editor.getByRole('button', { name: 'Save changes', exact: true })).toBeEnabled();
     await page.screenshot({ path: testInfo.outputPath('native-scheduled-editor.png'), animations: 'disabled' });
-    await editor.getByRole('button', { name: 'Save changes', exact: true }).click();
-    await expect(editor).toHaveCount(0);
+    await editor.getByRole('button', { name: 'Save and run once', exact: true }).click();
+    await expect(editor).toBeHidden();
     const edited = (await page.evaluate((id) => window.lin!.automationRequest('read', { id }), task.id)).automation!;
     expect(edited.prompt).toContain('[[file://');
     expect(edited.prompt).toContain('scheduled-source.txt');
     expect(edited.materials).toEqual([]);
     expect(edited.status).toBe('paused');
+    expect(edited.schedule).toEqual(paused.schedule);
+    await expect.poll(() => page.evaluate(async (id) => (await window.lin!.automationRequest('runs', { automationId: id })).data[0]?.automationRevision, task.id))
+      .toBe(edited.revision);
+    const rerun = (await page.evaluate((id) => window.lin!.automationRequest('runs', { automationId: id }), task.id)).data[0]!;
+    expect(rerun.id).not.toBe(association.id);
+    await expect.poll(() => page.evaluate((id) => window.lin!.automationRequest('result', { id }), rerun.id), { timeout: 40_000 })
+      .toMatchObject({ state: 'completed', answer: 'Scheduled delivery proof from the real Host.' });
+    await page.getByRole('button', { name: 'Back to task', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Task details', exact: true }).getByRole('button', { name: 'Edit', exact: true }).click();
+    await expect(editor.getByRole('textbox', { name: 'Task', exact: true })).toContainText('scheduled-source.txt');
+    await editor.getByRole('button', { name: 'Run once', exact: true }).click();
+    await expect(editor).toBeHidden();
+    await expect.poll(() => page.evaluate(async (id) => (await window.lin!.automationRequest('runs', { automationId: id })).data[0]?.id, task.id))
+      .not.toBe(rerun.id);
+    const nextRun = (await page.evaluate((id) => window.lin!.automationRequest('runs', { automationId: id }), task.id)).data[0]!;
+    await expect.poll(() => page.evaluate((id) => window.lin!.automationRequest('result', { id }), nextRun.id), { timeout: 40_000 })
+      .toMatchObject({ state: 'completed' });
+    expect((await page.evaluate((id) => window.lin!.automationRequest('read', { id }), task.id)).automation?.status).toBe('paused');
+    await page.getByRole('button', { name: 'Back to task', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Task details', exact: true }).getByRole('button', { name: 'Edit', exact: true }).click();
+    await editor.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(page.getByRole('dialog', { name: 'Task details', exact: true })).toBeVisible();
     for (const theme of ['light', 'dark'] as const) {
       await smoke.app.evaluate(({ nativeTheme }, theme) => { nativeTheme.themeSource = theme; }, theme);
       await page.emulateMedia({ colorScheme: theme });
@@ -150,14 +175,15 @@ test('an expired scheduled question retains its draft and foreground slot until 
     await page.locator('.scheduled-task-row', { hasText: 'Question review' }).click();
     const admitted = await page.evaluate(async (task) => window.lin!.automationRequest('startNow', { id: task.id, expectedRevision: task.revision, requestId: 'question-first' }), task);
     const association = admitted.runs[0]!;
-    await expect(page.locator('.scheduled-workspace .thread-user-input-other')).toBeVisible();
-    await page.locator('.scheduled-workspace .thread-user-input-other').fill('Keep this unsent answer.');
+    await page.locator('.scheduled-run-row').first().click();
+    await expect(page.locator('.scheduled-run-conversation .thread-user-input-other')).toBeVisible();
+    await page.locator('.scheduled-run-conversation .thread-user-input-other').fill('Keep this unsent answer.');
     const pending = await page.evaluate((threadId) => window.lin!.agentCoreRequest('userInput/read', { threadId: threadId! }), association.threadId);
     expect(pending.state.pending?.autoResolutionMs).toBe(60_000);
     // Exercise the real shared 60-second Host deadline, without a separate scheduling timer.
     await expect.poll(() => followupWaiting, { timeout: 75_000 }).toBe(true);
-    await expect(page.locator('.scheduled-workspace .thread-user-input')).toHaveCount(0);
-    await expect(page.locator('.scheduled-workspace .thread-user-input-recovery')).toContainText('Keep this unsent answer.');
+    await expect(page.locator('.scheduled-run-conversation .thread-user-input')).toHaveCount(0);
+    await expect(page.locator('.scheduled-run-conversation .thread-user-input-recovery')).toContainText('Keep this unsent answer.');
     const replay = await page.evaluate(async (task) => window.lin!.automationRequest('startNow', { id: task.id, expectedRevision: task.revision, requestId: 'question-repeat' }), task);
     expect(replay.runs[0]!.id).toBe(association.id);
     const input = await page.evaluate((threadId) => window.lin!.agentCoreRequest('userInput/read', { threadId: threadId! }), association.threadId);

@@ -1,356 +1,190 @@
 import { expect, test, type Page } from '@playwright/test';
-import type { ScheduledRunResult } from '../../src/core/agent/scheduledResult';
 import { commandCalls, openMockedApp } from './outlinerMock';
 
-async function createTask(page: Page, name = 'Repository review') {
+async function start(page: Page) {
+  await openMockedApp(page);
+  await page.getByRole('button', { name: 'Scheduled tasks', exact: true }).click();
+}
+async function createTask(page: Page) {
   await page.getByRole('button', { name: 'New task', exact: true }).click();
-  const sheet = page.getByRole('dialog', { name: 'New task' });
-  await sheet.getByRole('textbox', { name: 'Task', exact: true }).fill('Review the repository and report important changes.');
-  await sheet.locator('.scheduled-editor-options').filter({ has: page.locator('summary', { hasText: 'More options' }) }).locator('summary').click();
-  await sheet.getByRole('textbox', { name: 'Name', exact: true }).fill(name);
-  await sheet.getByRole('button', { name: 'Create task', exact: true }).click();
-  await expect(sheet).toHaveCount(0);
-  await expect(page.locator('.scheduled-header h2')).toHaveText(name);
+  const editor = page.getByRole('dialog', { name: 'New task', exact: true });
+  await editor.getByRole('textbox', { name: 'Name', exact: true }).fill('Repository review');
+  await editor.getByRole('textbox', { name: 'Task', exact: true }).fill('Review the repository and report important changes.');
+  await editor.getByRole('button', { name: 'Create task', exact: true }).click();
+  const task = page.getByRole('dialog', { name: 'Task details', exact: true });
+  await expect(task).toBeVisible();
+  return task;
 }
 
-async function setResult(page: Page, runId: string, result: Partial<ScheduledRunResult>) {
-  await page.evaluate(({ runId, result }) => {
-    (window as unknown as { __LIN_E2E__: { setScheduledResult: (id: string, result: Partial<ScheduledRunResult>) => void } }).__LIN_E2E__.setScheduledResult(runId, result);
-  }, { runId, result });
+test('list selection opens the unified task window read-only; editing and canceling stay in that window', async ({ page }) => {
+  await start(page);
+  const task = await createTask(page);
+  await expect(task.getByText('Review the repository and report important changes.', { exact: true })).toBeVisible();
+  await expect(task.getByRole('textbox', { name: 'Task', exact: true })).toHaveCount(0);
+  await expect(task.getByRole('heading', { name: 'Run history', exact: true })).toBeVisible();
+  await task.getByRole('button', { name: 'Edit', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: 'Edit task', exact: true });
+  await editor.getByRole('textbox', { name: 'Task', exact: true }).fill('Unsaved instructions');
+  await editor.getByRole('button', { name: 'Cancel', exact: true }).click();
+  const discard = page.getByRole('dialog', { name: 'Discard changes?', exact: true });
+  await discard.getByRole('button', { name: 'Discard changes', exact: true }).click();
+  await expect(task).toBeVisible();
+  await expect(task).not.toContainText('Unsaved instructions');
+  await task.getByRole('button', { name: 'Close task', exact: true }).last().click();
+  await expect(task).toBeHidden();
+  const row = page.locator('.scheduled-task-row', { hasText: 'Repository review' });
+  await row.click();
+  await expect(task.getByRole('button', { name: 'Edit', exact: true })).toBeVisible();
+  expect((await commandCalls(page)).filter((call) => call.cmd === 'automation/update')).toHaveLength(0);
+});
+
+test('pause keeps dirty editing intact and the final save returns to the same task window', async ({ page }) => {
+  await start(page); const task = await createTask(page);
+  await task.getByRole('button', { name: 'Edit', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: 'Edit task', exact: true });
+  await editor.getByRole('textbox', { name: 'Task', exact: true }).fill('Keep this instruction while pausing.');
+  await editor.getByRole('button', { name: 'Saved schedule actions', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Pause saved schedule', exact: true }).click();
+  await expect(editor.getByRole('textbox', { name: 'Task', exact: true })).toHaveText('Keep this instruction while pausing.');
+  await editor.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(task).toContainText('Keep this instruction while pausing.');
+  await expect(task.getByText('Paused', { exact: true })).toBeVisible();
+  const update = (await commandCalls(page)).find((call) => call.cmd === 'automation/update')!;
+  expect(update.args.expectedRevision).toBe(2); expect(update.args).not.toHaveProperty('status');
+});
+
+test('Run once enters the canonical conversation and Back restores the task window without changing the original chat draft', async ({ page }) => {
+  await openMockedApp(page);
+  await page.getByRole('textbox', { name: 'Message this Thread', exact: true }).fill('Keep my chat draft.');
+  await page.getByRole('button', { name: 'Scheduled tasks', exact: true }).click();
+  const task = await createTask(page);
+  await task.getByRole('button', { name: 'Task actions', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Pause schedule', exact: true }).click();
+  await task.getByRole('button', { name: 'Run once', exact: true }).click();
+  await expect(task).toBeHidden();
+  const conversation = page.locator('.scheduled-run-conversation');
+  await expect(conversation).toContainText('Automation completed in the canonical Thread.');
+  await conversation.getByRole('button', { name: 'Back to task', exact: true }).click();
+  await expect(task).toBeVisible();
+  await expect(task.getByText('Paused', { exact: true })).toBeVisible();
+  await expect(task.locator('.scheduled-run-entry')).toHaveCount(1);
+  await task.getByRole('button', { name: 'Close task', exact: true }).last().click();
+  await page.getByRole('button', { name: 'Back to Threads', exact: true }).click();
+  await expect(page.getByRole('textbox', { name: 'Message this Thread', exact: true })).toHaveText('Keep my chat draft.');
+});
+
+test('an opened task does not mark history read; clicking a run targets the owned completion Turn', async ({ page }) => {
+  await start(page); const task = await createTask(page);
+  const run = await page.evaluate(async () => {
+    const task = (await window.lin!.automationRequest('list', {})).data[0]!;
+    const run = (await window.lin!.automationRequest('startNow', { id: task.id, expectedRevision: task.revision, requestId: 'history' })).runs[0]!;
+    const history = await window.lin!.agentCoreRequest('thread/turns/list', { threadId: run.threadId!, limit: 100, itemsView: 'full' });
+    const original = history.data[0]!;
+    const completion = { ...original, id: '01930000-0000-7000-8000-000000000090', startedAt: original.startedAt + 10,
+      items: [{ type: 'agentMessage', id: 'completion-answer', text: 'The owned completion result.', phase: 'final_answer', provenance: { originThreadId: run.threadId, originTurnId: '01930000-0000-7000-8000-000000000090', originItemId: 'completion-answer' } }] };
+    const host = (window as unknown as { __LIN_E2E__: { setMockThreadTurns: (id: string, turns: unknown[]) => void; setScheduledResult: (id: string, result: unknown) => void } }).__LIN_E2E__;
+    host.setMockThreadTurns(run.threadId!, [original, completion]);
+    host.setScheduledResult(run.id, { resultTurnId: completion.id, parts: [{ text: 'The owned completion result.', itemId: 'completion-answer', turnId: completion.id, finalCitations: [] }] });
+    return { ...run, target: completion.id };
+  });
+  await expect(task.locator('.scheduled-run-entry')).toHaveCount(1);
+  expect((await commandCalls(page)).filter((call) => call.cmd === 'automation/runMarkRead')).toHaveLength(0);
+  await task.locator('.scheduled-run-row').click();
+  await expect(page.locator(`.scheduled-run-conversation [data-thread-turn-row="${run.target}"]`)).toBeVisible();
+  await expect(page.locator('.scheduled-run-conversation [data-thread-item-id="completion-answer"]')).toBeInViewport();
+  await expect.poll(async () => (await commandCalls(page)).filter((call) => call.cmd === 'automation/runMarkRead' && call.args.id === run.id).length).toBeGreaterThan(0);
+});
+
+test('unavailable conversations keep the task window open with an explicit error', async ({ page }) => {
+  await start(page); const task = await createTask(page);
+  await page.evaluate(async () => {
+    const task = (await window.lin!.automationRequest('list', {})).data[0]!;
+    await window.lin!.automationRequest('startNow', { id: task.id, expectedRevision: task.revision, requestId: 'unavailable-run' });
+    const request = window.lin!.agentCoreRequest;
+    window.lin!.agentCoreRequest = (async (method: string, input: unknown) => {
+      if (method === 'thread/read') throw new Error('Conversation is unavailable');
+      return request(method as never, input as never);
+    }) as typeof request;
+    const host = (window as unknown as { __LIN_E2E__: { setMockThreadTurns: (id: string, turns: unknown[]) => void } }).__LIN_E2E__;
+    const run = (await window.lin!.automationRequest('runs', {})).data[0]!;
+    host.setMockThreadTurns(run.threadId!, []);
+  });
+  await expect(task.locator('.scheduled-run-row')).toHaveCount(1);
+  await task.locator('.scheduled-run-row').click();
+  await expect(task).toBeVisible();
+  await expect(task.getByRole('alert')).toContainText('unavailable');
+  await expect(page.locator('.scheduled-run-conversation')).toHaveCount(0);
+});
+
+for (const colorScheme of ['light', 'dark'] as const) {
+  test(`task window and list hover remain understandable and stable in ${colorScheme}`, async ({ page }, info) => {
+    await page.emulateMedia({ colorScheme }); await start(page);
+    const task = await createTask(page);
+    await page.screenshot({ path: info.outputPath(`task-window-${colorScheme}.png`), animations: 'disabled' });
+    await task.getByRole('button', { name: 'Close task', exact: true }).last().click();
+    const row = page.locator('.scheduled-task-row', { hasText: 'Repository review' });
+    const rect = await row.boundingBox(); await row.hover(); expect(await row.boundingBox()).toEqual(rect);
+    expect(await row.evaluate((element) => parseFloat(getComputedStyle(element).borderTopLeftRadius))).toBeGreaterThan(0);
+    await page.screenshot({ path: info.outputPath(`list-hover-${colorScheme}.png`), animations: 'disabled' });
+  });
 }
 
-test.describe('Scheduled tasks in Agent Deck', () => {
-  test.beforeEach(async ({ page }) => {
-    await openMockedApp(page);
-    await page.locator('.thread-dock-header').getByRole('button', { name: 'Scheduled tasks', exact: true }).click();
-    await expect(page.locator('.scheduled-workspace')).toBeVisible();
-    await expect(page.locator('.sidebar-primary-nav').getByRole('button', { name: 'Scheduled tasks', exact: true })).toHaveCount(0);
-    await expect(page.locator('.agent-dock .scheduled-workspace')).toBeVisible();
+test('a historical message is located inside a long virtualized run conversation', async ({ page }) => {
+  await start(page); const task = await createTask(page);
+  await page.evaluate(async () => {
+    const task = (await window.lin!.automationRequest('list', {})).data[0]!;
+    const run = (await window.lin!.automationRequest('startNow', { id: task.id, expectedRevision: task.revision, requestId: 'long-history' })).runs[0]!;
+    const { data } = await window.lin!.agentCoreRequest('thread/turns/list', { threadId: run.threadId!, limit: 100, itemsView: 'full' });
+    const template = data[0]!;
+    const turns = Array.from({ length: 24 }, (_, i) => ({ ...template, id: `01930000-0000-7000-8000-${String(i + 1).padStart(12, '0')}`,
+      startedAt: template.startedAt + i * 100, completedAt: template.startedAt + i * 100 + 10,
+      items: [{ type: 'agentMessage', id: `answer-${i}`, phase: 'final_answer', text: `Canonical result ${i}\n\n` + 'Detailed work evidence.\n\n'.repeat(8), provenance: { originThreadId: run.threadId, originTurnId: template.id, originItemId: `answer-${i}` } }] }));
+    const host = (window as unknown as { __LIN_E2E__: { setMockThreadTurns: (id: string, turns: unknown[]) => void; setScheduledResult: (id: string, result: unknown) => void } }).__LIN_E2E__;
+    host.setMockThreadTurns(run.threadId!, turns);
+    host.setScheduledResult(run.id, { resultTurnId: turns[12]!.id, parts: [{ itemId: 'answer-12', turnId: turns[12]!.id, text: 'Canonical result 12', finalCitations: [] }] });
   });
+  await task.locator('.scheduled-run-row').click();
+  await expect(page.locator('.scheduled-run-conversation [data-thread-item-id="answer-12"]')).toBeInViewport();
+  await expect(page.locator('.scheduled-run-conversation .thread-transcript-turns')).toHaveAttribute('data-virtualized', 'true');
+});
 
-  test('task navigation and conversation drafts survive switching without changing Outline panes', async ({ page }) => {
-    const layout = await page.evaluate(() => localStorage.getItem('lin-outliner:workspace-layout:v7'));
-    const backToConversation = page.locator('.thread-dock-header').getByRole('button', { name: 'Back to Threads', exact: true });
-    await backToConversation.click();
-    const composer = page.getByRole('textbox', { name: 'Message this Thread' });
-    await composer.fill('Keep my conversation draft.');
-    await page.locator('.thread-dock-header').getByRole('button', { name: 'Scheduled tasks', exact: true }).click();
-    await createTask(page);
-    await page.locator('.scheduled-task-detail').getByRole('button', { name: 'Run now', exact: true }).click();
-    await expect(page.locator('.scheduled-result')).toContainText('The scheduled review was delivered.');
-    await page.getByRole('button', { name: 'Back to tasks', exact: true }).click();
-    await page.getByRole('button', { name: 'Search scheduled tasks', exact: true }).click();
-    await page.locator('.scheduled-search').fill('Repository');
-    await page.locator('.scheduled-task-row').click();
-    await page.getByRole('button', { name: 'Back to tasks', exact: true }).click();
-    await backToConversation.click();
-    await expect(composer).toHaveText('Keep my conversation draft.');
-    await page.locator('.thread-dock-header').getByRole('button', { name: 'Scheduled tasks', exact: true }).click();
-    await expect(page.locator('.scheduled-search')).toHaveValue('Repository');
-    await page.locator('.scheduled-task-row').click();
-    await expect(page.locator('.scheduled-header h2')).toHaveText('Repository review');
-    await expect(page.locator('.scheduled-result')).toContainText('The scheduled review was delivered.');
-    expect(await page.evaluate(() => localStorage.getItem('lin-outliner:workspace-layout:v7'))).toBe(layout);
+test('confirmed Run once actions use distinct requests without resaving the task', async ({ page }) => {
+  await start(page); const task = await createTask(page);
+  await task.getByRole('button', { name: 'Run once', exact: true }).click();
+  await page.getByRole('button', { name: 'Back to task', exact: true }).click();
+  await task.getByRole('button', { name: 'Run once', exact: true }).click();
+  await page.getByRole('button', { name: 'Back to task', exact: true }).click();
+  const calls = await commandCalls(page); const runs = calls.filter((call) => call.cmd === 'automation/startNow');
+  expect(runs).toHaveLength(2); expect(runs[0]!.args.requestId).not.toBe(runs[1]!.args.requestId);
+  expect(calls.filter((call) => call.cmd === 'automation/create')).toHaveLength(1);
+});
+
+test('View current run returns to the unchanged editing draft without silently saving it', async ({ page }) => {
+  await start(page); const task = await createTask(page);
+  await page.evaluate(async () => {
+    const task = (await window.lin!.automationRequest('list', {})).data[0]!;
+    const run = (await window.lin!.automationRequest('startNow', { id: task.id, expectedRevision: task.revision, requestId: 'already-running' })).runs[0]!;
+    (window as unknown as { __LIN_E2E__: { setScheduledResult: (id: string, result: unknown) => void } }).__LIN_E2E__.setScheduledResult(run.id, { state: 'running' });
   });
+  await task.getByRole('button', { name: 'Edit', exact: true }).click();
+  const edit = page.getByRole('dialog', { name: 'Edit task', exact: true });
+  await edit.getByRole('textbox', { name: 'Task', exact: true }).fill('My pending draft.');
+  await edit.getByRole('button', { name: 'View current run', exact: true }).click();
+  await expect(page.locator('.scheduled-run-conversation')).toBeVisible();
+  await page.getByRole('button', { name: 'Back to task', exact: true }).click();
+  await expect(edit.getByRole('textbox', { name: 'Task', exact: true })).toHaveText('My pending draft.');
+  expect((await commandCalls(page)).filter((call) => call.cmd === 'automation/update')).toHaveLength(0);
+  expect((await commandCalls(page)).filter((call) => call.cmd === 'automation/startNow')).toHaveLength(1);
+});
 
-  test('a task notice opens its assignment in a collapsed Deck without navigating the Outline', async ({ page }) => {
-    await createTask(page);
-    const layout = await page.evaluate(() => localStorage.getItem('lin-outliner:workspace-layout:v7'));
-    await page.getByRole('button', { name: 'Collapse agent', exact: true }).click();
-    await expect(page.locator('.agent-dock')).toHaveAttribute('data-rail-state', 'collapsed');
-    await page.evaluate(async () => {
-      const task = (await window.lin!.automationRequest('list', {})).data[0]!;
-      const testHost = (window as unknown as { __LIN_E2E__: { emitAutomationNotification: (event: unknown) => void } }).__LIN_E2E__;
-      testHost.emitAutomationNotification({ type: 'automation/open', automationId: task.id });
-    });
-    await expect(page.locator('.agent-dock')).toHaveAttribute('data-rail-state', 'open');
-    await expect(page.locator('.scheduled-header h2')).toHaveText('Repository review');
-    expect(await page.evaluate(() => localStorage.getItem('lin-outliner:workspace-layout:v7'))).toBe(layout);
-  });
-
-  test('Discuss result switches to an ordinary conversation and retains the task for return', async ({ page }) => {
-    await createTask(page);
-    await page.locator('.scheduled-task-detail').getByRole('button', { name: 'Run now', exact: true }).click();
-    await expect(page.locator('.scheduled-result')).toContainText('The scheduled review was delivered.');
-    const starts = (await commandCalls(page)).filter((call) => call.cmd === 'thread/start').length;
-    await page.getByRole('button', { name: 'Discuss result', exact: true }).click();
-    await expect(page.getByRole('textbox', { name: 'Message this Thread' })).toBeVisible();
-    await expect(page.locator('.scheduled-workspace')).toBeHidden();
-    expect((await commandCalls(page)).filter((call) => call.cmd === 'thread/start')).toHaveLength(starts + 1);
-    await expect(page.locator('.thread-composer-contexts')).toContainText('Repository review');
-    await page.getByRole('textbox', { name: 'Message this Thread' }).fill('Explain this result.');
-    await page.getByRole('button', { name: 'Send', exact: true }).click();
-    await expect.poll(async () => (await commandCalls(page)).filter((call) => call.cmd === 'turn/submit').length).toBe(1);
-    const send = (await commandCalls(page)).findLast((call) => call.cmd === 'turn/submit');
-    const run = (await page.evaluate(() => window.lin!.automationRequest('runs', {}))).data[0]!;
-    const context = (send?.args.additionalContext as Record<string, { kind: string; value: string }>)[`scheduled-result:${run.id}`]!;
-    expect(context.kind).toBe('untrusted');
-    expect(JSON.parse(context.value)).toMatchObject({ automationRunId: run.id, threadId: run.threadId, turnId: run.turnId });
-    expect(context.value).not.toContain('The scheduled review was delivered.');
-    await page.locator('.thread-dock-header').getByRole('button', { name: 'Scheduled tasks', exact: true }).click();
-    await expect(page.locator('.scheduled-header h2')).toHaveText('Repository review');
-    await expect(page.locator('.scheduled-result')).toContainText('The scheduled review was delivered.');
-  });
-
-  test('a hidden task surface leaves new results unread until the Deck is reopened', async ({ page }) => {
-    await createTask(page);
-    await page.getByRole('button', { name: 'Collapse agent', exact: true }).click();
-    const runId = await page.evaluate(async () => {
-      const task = (await window.lin!.automationRequest('list', {})).data[0]!;
-      const response = await window.lin!.automationRequest('startNow', { id: task.id, expectedRevision: task.revision, requestId: 'hidden-run' });
-      return response.runs[0]!.id;
-    });
-    expect((await commandCalls(page)).filter((call) => call.cmd === 'automation/runMarkRead' && call.args.id === runId)).toHaveLength(0);
-    await page.getByRole('button', { name: 'Expand agent', exact: true }).click();
-    await expect(page.locator('.scheduled-result')).toContainText('The scheduled review was delivered.');
-    await expect.poll(async () => (await commandCalls(page)).filter((call) => call.cmd === 'automation/runMarkRead' && call.args.id === runId).length).toBe(1);
-  });
-
-  test('creates an assignment, runs while paused, reads its result and restores an archive paused', async ({ page }) => {
-    await createTask(page);
-    const detail = page.locator('.scheduled-task-detail');
-    await page.getByRole('button', { name: 'Task actions', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Pause schedule', exact: true }).click();
-    await expect(detail.getByRole('button', { name: 'Edit task', exact: true })).toHaveText('Paused');
-    await detail.getByRole('button', { name: 'Run now', exact: true }).click();
-    await expect(detail.getByText('The scheduled review was delivered.', { exact: true })).toBeVisible();
-    await expect(detail.getByRole('button', { name: 'Edit task', exact: true })).toHaveText('Paused');
-    const run = (await commandCalls(page)).find((call) => call.cmd === 'automation/startNow');
-    expect(run?.args.expectedRevision).toBe(2);
-    await page.getByRole('button', { name: 'Task actions', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Archive', exact: true }).click();
-    await expect(detail.getByRole('button', { name: 'Restore', exact: true })).toBeVisible();
-    await detail.getByRole('button', { name: 'Restore', exact: true }).click();
-    await expect(detail.getByRole('button', { name: 'Edit task', exact: true })).toHaveText('Paused');
-    await expect(detail.getByText('The scheduled review was delivered.', { exact: true })).toBeVisible();
-  });
-
-  test('a local pause preserves dirty instructions and saves against the accepted revision', async ({ page }) => {
-    await createTask(page);
-    await page.locator('.scheduled-task-detail').getByRole('button', { name: 'Edit task', exact: true }).click();
-    const sheet = page.getByRole('dialog', { name: 'Edit task' });
-    await sheet.getByRole('textbox', { name: 'Task', exact: true }).fill('Keep this unsaved instruction while pausing.');
-    await sheet.getByRole('button', { name: 'Saved schedule actions', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Pause saved schedule', exact: true }).click();
-    await expect(sheet.getByRole('textbox', { name: 'Task', exact: true })).toHaveText('Keep this unsaved instruction while pausing.');
-    await sheet.getByRole('button', { name: 'Save changes', exact: true }).click();
-    await expect(sheet).toHaveCount(0);
-    const update = (await commandCalls(page)).find((call) => call.cmd === 'automation/update');
-    expect(update?.args.expectedRevision).toBe(2);
-    expect(update?.args.prompt).toBe('Keep this unsaved instruction while pausing.');
-    expect(update?.args).not.toHaveProperty('status');
-  });
-
-  test('process inspection retains the exact task in the Deck and preserves its selected run', async ({ page }) => {
-    await createTask(page);
-    await page.locator('.scheduled-task-detail').getByRole('button', { name: 'Run now', exact: true }).click();
-    await expect(page.locator('.scheduled-result')).toContainText('The scheduled review was delivered.');
-    await page.locator('.scheduled-result').getByRole('button', { name: 'View process', exact: true }).click();
-    await expect(page.locator('.thread-trajectory-panel')).toBeVisible();
-    await expect(page.locator('.agent-dock .scheduled-header h2')).toHaveText('Repository review');
-    await page.locator('.thread-trajectory-panel').getByRole('button', { name: 'Previous page', exact: true }).click();
-    await expect(page.locator('.scheduled-header h2')).toHaveText('Repository review');
-    await expect(page.locator('.scheduled-result')).toContainText('The scheduled review was delivered.');
-    await expect(page.locator('.scheduled-result')).toHaveAttribute('data-run-id', /.+/);
-    await expect(page.locator('.scheduled-history')).toHaveCount(0);
-  });
-
-  test('external edits preserve the draft and require an explicit reload or deliberate revision', async ({ page }) => {
-    await createTask(page);
-    await page.locator('.scheduled-task-detail').getByRole('button', { name: 'Edit task', exact: true }).click();
-    const sheet = page.getByRole('dialog', { name: 'Edit task' });
-    await sheet.getByRole('textbox', { name: 'Task', exact: true }).fill('Unsent local instructions');
-    await page.evaluate(async () => {
-      const task = (await window.lin!.automationRequest('list', {})).data[0]!;
-      await window.lin!.automationRequest('update', { id: task.id, expectedRevision: task.revision, prompt: 'Externally saved instructions' });
-    });
-    await expect(sheet.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled();
-    await expect(sheet.getByRole('textbox', { name: 'Task', exact: true })).toHaveText('Unsent local instructions');
-    await sheet.getByRole('button', { name: 'Review saved version', exact: true }).click();
-    await expect(sheet.getByText('Saved version: Externally saved instructions', { exact: true })).toBeVisible();
-    await sheet.getByRole('button', { name: 'Reload saved task', exact: true }).click();
-    await expect(sheet.getByRole('textbox', { name: 'Task', exact: true })).toHaveText('Externally saved instructions');
-  });
-
-  test('dirty close requires an explicit discard and restores the opener', async ({ page }) => {
-    const opener = page.getByRole('button', { name: 'New task', exact: true });
-    await opener.click();
-    const sheet = page.getByRole('dialog', { name: 'New task' });
-    await sheet.getByRole('textbox', { name: 'Task', exact: true }).fill('A draft');
-    await sheet.getByRole('button', { name: 'Cancel', exact: true }).click();
-    const discard = page.getByRole('dialog', { name: 'Discard changes?' });
-    await expect(discard).toBeVisible();
-    await discard.getByRole('button', { name: 'Keep editing', exact: true }).click();
-    await expect(sheet.getByRole('textbox', { name: 'Task', exact: true })).toHaveText('A draft');
-    await sheet.getByRole('button', { name: 'Cancel', exact: true }).click();
-    await discard.getByRole('button', { name: 'Discard changes', exact: true }).click();
-    await expect(sheet).toHaveCount(0);
-    await expect(opener).toBeFocused();
-  });
-
-  test('an unfinished task editor survives a global new-conversation shortcut', async ({ page }) => {
-    await page.getByRole('button', { name: 'New task', exact: true }).click();
-    const sheet = page.getByRole('dialog', { name: 'New task' });
-    await sheet.getByRole('textbox', { name: 'Task', exact: true }).fill('Keep this unfinished task draft.');
-    await page.keyboard.press('Meta+Shift+O');
-    await expect(sheet).toBeHidden();
-    await expect(page.getByRole('textbox', { name: 'Message this Thread' })).toBeVisible();
-    await page.locator('.thread-dock-header').getByRole('button', { name: 'Scheduled tasks', exact: true }).click();
-    await expect(sheet).toBeVisible();
-    await expect(sheet.getByRole('textbox', { name: 'Task', exact: true })).toHaveText('Keep this unfinished task draft.');
-    await expect(sheet).toBeFocused();
-  });
-
-  test('supports shared date/time controls, materials and one primary location', async ({ page }, testInfo) => {
-    await page.getByRole('button', { name: 'New task', exact: true }).click();
-    const sheet = page.getByRole('dialog', { name: 'New task' });
-    await expect(sheet.getByRole('combobox', { name: 'Destination' })).toHaveCount(0);
-    await expect(sheet.getByRole('button', { name: 'Add project' })).toHaveCount(0);
-    const repeat = sheet.getByRole('combobox', { name: 'Repeat', exact: true });
-    await repeat.selectOption('once');
-    await sheet.getByRole('button', { name: 'Date', exact: true }).click();
-    await expect(page.getByRole('dialog', { name: 'Date picker' })).toBeVisible();
-    await page.keyboard.press('Escape');
-    await repeat.selectOption('daily');
-    await sheet.getByRole('button', { name: 'Choose time', exact: true }).click();
-    await expect(page.getByRole('dialog', { name: 'Time picker' })).toBeVisible();
-    await page.keyboard.press('Escape');
-    await repeat.selectOption('yearly');
-    await expect(sheet.getByRole('combobox', { name: 'In', exact: true })).toBeVisible();
-    await expect(sheet.getByRole('button', { name: 'On days', exact: true })).toBeVisible();
-    await sheet.locator('.scheduled-editor-options summary', { hasText: 'More options' }).click();
-    await expect(sheet.getByText('/mock/workspace', { exact: true })).toBeVisible();
-    await sheet.locator('.automation-editor-scroll').evaluate((element) => { element.scrollTop = 0; });
-    await page.screenshot({ animations: 'disabled', path: testInfo.outputPath('scheduled-task-editor.png') });
-  });
-
-  test('the list has one title, on-demand search and keyboard-accessible archive discovery', async ({ page }) => {
-    await expect(page.getByRole('heading', { name: 'Scheduled tasks', exact: true })).toHaveCount(1);
-    await expect(page.locator('.scheduled-search')).toHaveCount(0);
-    await expect(page.getByRole('button', { name: /Needs attention/ })).toHaveCount(0);
-    await expect(page.getByText('No scheduled tasks yet.', { exact: true })).toBeVisible();
-    await page.keyboard.press('Meta+f');
-    await expect(page.locator('.scheduled-search')).toBeFocused();
-    await page.locator('.scheduled-search').fill('No such assignment');
-    await expect(page.getByText('No matching tasks', { exact: true })).toBeVisible();
-    await page.keyboard.press('Escape');
-    await expect(page.locator('.scheduled-search')).toHaveCount(0);
-    const more = page.getByRole('button', { name: 'Task list options', exact: true });
-    await more.focus(); await page.keyboard.press('Enter');
-    const archive = page.getByRole('menuitem', { name: 'Show archived tasks', exact: true });
-    await expect(archive).toBeFocused();
-    await page.keyboard.press('Enter');
-    await expect(page.getByRole('heading', { name: 'Archived tasks', exact: true })).toBeVisible();
-    await expect(page.getByText('No archived tasks.', { exact: true })).toBeVisible();
-  });
-
-  test('results lead the detail and older issues stay reachable after a newer success', async ({ page }, testInfo) => {
-    await createTask(page, 'AI morning brief');
-    await page.getByRole('button', { name: 'Run now', exact: true }).click();
-    const first = (await page.evaluate(() => window.lin!.automationRequest('runs', {}))).data[0]!;
-    await setResult(page, first.id, { state: 'failed', answer: null, parts: [], issues: [
-      { key: 'source-unavailable', text: 'The news source could not be reached.', turnId: first.turnId, terminal: true, acknowledged: false },
-    ] });
-    await page.getByRole('button', { name: 'Run now', exact: true }).click();
-    const second = (await page.evaluate(() => window.lin!.automationRequest('runs', {}))).data[0]!;
-    const answer = '## Three developments to watch\n\n**Smaller models are becoming more practical.** New releases focus on efficient local inference and lower operating costs.\n\n**Coding tools are improving their review workflow.** The useful change is clearer evidence before accepting edits.\n\n**Reliability still needs scrutiny.** Compare published results with your own tasks before switching providers.';
-    await setResult(page, second.id, { answer, parts: [{ text: answer, itemId: 'brief-answer', turnId: second.turnId!, finalCitations: [] }] });
-    await expect(page.locator('.scheduled-result')).toHaveAttribute('data-run-id', second.id);
-    await expect(page.locator('.scheduled-result')).toContainText('Three developments to watch');
-    expect(await page.locator('.scheduled-result .thread-markdown p').evaluateAll((nodes) => nodes[1]!.getBoundingClientRect().top - nodes[0]!.getBoundingClientRect().bottom)).toBeGreaterThan(0);
-    await expect(page.locator('.scheduled-history')).not.toHaveAttribute('open');
-    await expect(page.locator('.scheduled-task-info')).not.toHaveAttribute('open');
-    await expect(page.getByRole('button', { name: 'Pause schedule', exact: true })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Archive', exact: true })).toHaveCount(0);
-    for (const colorScheme of ['light', 'dark'] as const) {
-      await page.emulateMedia({ colorScheme });
-      await page.screenshot({ animations: 'disabled', path: testInfo.outputPath(`task-result-${colorScheme}.png`) });
-    }
-    await page.locator('.scheduled-attention-history summary').click();
-    await page.locator('.scheduled-attention-history button').click();
-    await expect(page.locator('.scheduled-result')).toHaveAttribute('data-run-id', first.id);
-    await expect(page.getByText('The news source could not be reached.', { exact: true })).toBeVisible();
-    await page.getByRole('button', { name: 'Acknowledge issue', exact: true }).click();
-    const acknowledgement = (await commandCalls(page)).findLast((call) => call.cmd === 'automation/acknowledge');
-    expect(acknowledgement?.args).toMatchObject({ id: first.id, issueKey: 'source-unavailable' });
-  });
-
-  test('attention beyond the first history page is discoverable from a successful result', async ({ page }) => {
-    await createTask(page);
-    await page.getByRole('button', { name: 'Collapse agent', exact: true }).click();
-    const first = await page.evaluate(async () => {
-      const task = (await window.lin!.automationRequest('list', {})).data[0]!;
-      let first: string | null = null;
-      for (let count = 0; count < 51; count++) {
-        const run = (await window.lin!.automationRequest('startNow', { id: task.id, expectedRevision: task.revision, requestId: `history-${count}` })).runs[0]!;
-        first ??= run.id;
-      }
-      return first!;
-    });
-    await setResult(page, first, { state: 'failed', answer: null, parts: [], issues: [
-      { key: 'older-cause', text: 'The old delivery still needs review.', turnId: null, terminal: true, acknowledged: false },
-    ] });
-    await page.getByRole('button', { name: 'Expand agent', exact: true }).click();
-    await expect(page.locator('.scheduled-result')).toContainText('The scheduled review was delivered.');
-    const attention = page.locator('.scheduled-attention-history');
-    await attention.locator('summary').click();
-    await attention.getByRole('button', { name: 'Previous runs', exact: true }).click();
-    await expect(attention.getByRole('button', { name: /Failed/ })).toBeVisible();
-    await attention.getByRole('button', { name: /Failed/ }).click();
-    await expect(page.locator('.scheduled-result')).toHaveAttribute('data-run-id', first);
-    await expect(page.getByText('The old delivery still needs review.', { exact: true })).toBeVisible();
-  });
-
-  test('task rows expose timing and attention without copying generated result text', async ({ page }, testInfo) => {
-    await createTask(page, 'AI morning brief');
-    await page.getByRole('button', { name: 'Run now', exact: true }).click();
-    const first = (await page.evaluate(() => window.lin!.automationRequest('runs', {}))).data[0]!;
-    await setResult(page, first.id, { state: 'failed', answer: null, parts: [], issues: [
-      { key: 'source', text: 'Provider diagnostics that must not become a list preview', turnId: first.turnId, terminal: true, acknowledged: false },
-    ] });
-    await page.getByRole('button', { name: 'Back to tasks', exact: true }).click();
-    await createTask(page, 'Weekly reading roundup');
-    await page.getByRole('button', { name: 'Back to tasks', exact: true }).click();
-    await createTask(page, 'Review project changes');
-    await page.getByRole('button', { name: 'Task actions', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Pause schedule', exact: true }).click();
-    await page.getByRole('button', { name: 'Back to tasks', exact: true }).click();
-    await expect(page.locator('.scheduled-task-row')).toHaveCount(3);
-    await expect(page.locator('.scheduled-task-list')).toContainText('Needs your attention');
-    await expect(page.locator('.scheduled-task-list')).not.toContainText('Provider diagnostics');
-    await expect(page.locator('.scheduled-task-list')).not.toContainText('No result yet');
-    for (const colorScheme of ['light', 'dark'] as const) {
-      await page.emulateMedia({ colorScheme });
-      await page.screenshot({ animations: 'disabled', path: testInfo.outputPath(`task-list-${colorScheme}.png`) });
-    }
-    await page.getByRole('button', { name: /Needs attention/ }).click();
-    await expect(page.locator('.scheduled-task-row')).toHaveCount(1);
-    await expect(page.locator('.scheduled-task-row')).toContainText('AI morning brief');
-  });
-
-  test('a waiting run has its own status and replaces Run now with Stop run', async ({ page }) => {
-    await createTask(page);
-    await page.getByRole('button', { name: 'Run now', exact: true }).click();
-    const run = (await page.evaluate(() => window.lin!.automationRequest('runs', {}))).data[0]!;
-    await setResult(page, run.id, { state: 'waiting', answer: null, parts: [] });
-    await expect(page.getByText('This task is waiting to start.', { exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Stop run', exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Run now', exact: true })).toHaveCount(0);
-    await expect(page.locator('.scheduled-result')).not.toContainText('No delivered answer');
-  });
-
-  for (const colorScheme of ['light', 'dark'] as const) {
-    test(`keeps a narrow pane navigable in ${colorScheme}`, async ({ page }, testInfo) => {
-      await page.emulateMedia({ colorScheme });
-      await page.setViewportSize({ width: 1100, height: 850 });
-      await createTask(page);
-      const workspace = page.locator('.scheduled-workspace');
-      await expect(page.getByRole('button', { name: 'Back to tasks', exact: true })).toBeVisible();
-      await expect(workspace.getByRole('button', { name: 'Run now', exact: true })).toBeVisible();
-      await page.getByRole('button', { name: 'Back to tasks', exact: true }).click();
-      await expect(page.locator('.scheduled-task-row', { hasText: 'Repository review' })).toBeVisible();
-      await page.screenshot({ animations: 'disabled', path: testInfo.outputPath(`scheduled-tasks-${colorScheme}.png`) });
-      expect(await workspace.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
-    });
-  }
+test('archive and restore retain the task window and restore paused', async ({ page }) => {
+  await start(page); const task = await createTask(page);
+  await task.getByRole('button', { name: 'Task actions', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Archive', exact: true }).click();
+  await expect(task.getByRole('button', { name: 'Edit', exact: true })).toBeDisabled();
+  await expect(task.getByRole('button', { name: 'Run once', exact: true })).toBeDisabled();
+  await task.getByRole('button', { name: 'Task actions', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Restore', exact: true }).click();
+  await expect(task.getByRole('button', { name: 'Edit', exact: true })).toBeEnabled();
+  await expect(task.getByText('Paused', { exact: true })).toBeVisible();
 });

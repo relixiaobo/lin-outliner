@@ -15,12 +15,21 @@ import type { ComposerProjectContext } from './ConversationControls';
 import { recentProjects, selectConversationProject } from './recentProjects';
 import type { Project } from '../../../core/agent/project';
 
-export function ComposerProjectMenu({ anchorRef, context, threadId, attachmentDisabled, onAttachment, onClose, pickerOnly = false, fallbackAnchorRef }: {
+export interface ComposerDraftProjectSelection {
+  selectedId: string | null;
+  onSelect: (project: Project | null) => void | Promise<void>;
+  onChooseFolder: () => void;
+  selectedLabel?: string;
+}
+
+export function ComposerProjectMenu({ anchorRef, context, threadId, attachmentDisabled, onAttachment, onClose, pickerOnly = false, fallbackAnchorRef, draftSelection }: {
+  /** Draft selection changes its owner's form, never a conversation membership. */
+  draftSelection?: ComposerDraftProjectSelection;
   pickerOnly?: boolean;
   fallbackAnchorRef?: RefObject<HTMLButtonElement | null>;
   anchorRef: RefObject<HTMLButtonElement | null>;
   context?: ComposerProjectContext;
-  threadId: string;
+  threadId?: string;
   attachmentDisabled: boolean;
   onAttachment: () => void;
   onClose: () => void;
@@ -45,8 +54,8 @@ export function ComposerProjectMenu({ anchorRef, context, threadId, attachmentDi
   const close = () => { closingRef.current = true; onClose(); };
   const closeRef = useRef(close);
   closeRef.current = close;
-  const unavailable = !context || context.loading || !!context.error || !context.view.memberships.some((entry) => entry.threadId === threadId);
-  const selected = context?.view.memberships.find((entry) => entry.threadId === threadId)?.projectId ?? null;
+  const unavailable = !context || context.loading || !!context.error || (!draftSelection && !context.view.memberships.some((entry) => entry.threadId === threadId));
+  const selected = draftSelection ? draftSelection.selectedId : context?.view.memberships.find((entry) => entry.threadId === threadId)?.projectId ?? null;
   const selectedProject = context?.view.projects.find((project) => project.id === selected);
   const recent = context ? recentProjects(context.view.projects, selected) : [];
   const recentIds = new Set(recent.map((project) => project.id));
@@ -86,7 +95,7 @@ export function ComposerProjectMenu({ anchorRef, context, threadId, attachmentDi
     // Disabling the active button would otherwise move focus to document.body.
     if (restoreTarget) surface?.focus({ preventScroll: true });
     busyRef.current = true; setBusy(true); setError(null);
-    try { await selectConversationProject(threadId, project, context.view); close(); }
+    try { if (draftSelection) await draftSelection.onSelect(project); else if (threadId) await selectConversationProject(threadId, project, context.view); close(); }
     catch (error) {
       setError(error instanceof Error ? error.message : String(error));
       setSelectionFocusTarget(restoreTarget);
@@ -95,18 +104,19 @@ export function ComposerProjectMenu({ anchorRef, context, threadId, attachmentDi
   }
   const itemClass = 'thread-composer-model-item project-menu-item';
   return createPortal(<>
-    {!pickerOnly ? <MenuSurface ref={menuRef} role="menu" aria-label={t.add} className="thread-composer-model-popover" style={style} onKeyDown={parentKeyboard.onKeyDown}>
+    {!pickerOnly ? <MenuSurface ref={menuRef} role="menu" aria-label={t.add} data-dialog-nested-overlay={draftSelection ? 'true' : undefined}
+      className={`thread-composer-model-popover${draftSelection ? ' scheduled-editor-menu' : ''}`} style={style} onKeyDown={parentKeyboard.onKeyDown}>
       <MenuItem role="menuitem" className={itemClass} iconClassName="project-icon-slot" icon={<AttachmentIcon size={ICON_SIZE.compact} />} labelClassName="project-menu-label" label={strings.agent.thread.addAttachment} disabled={attachmentDisabled}
         onPointerEnter={() => setFlyout(false)} onFocus={() => setFlyout(false)} onClick={() => { close(); onAttachment(); }} />
       <div role="separator" className="project-menu-separator" />
-      <MenuItem ref={rowRef} role="menuitem" className={itemClass} iconClassName="project-icon-slot" label={selectedProject?.name ?? t.chooseProject} title={selectedProject?.name} icon={<FolderIcon size={ICON_SIZE.compact} />} aria-haspopup="menu" aria-expanded={flyout}
+      <MenuItem ref={rowRef} role="menuitem" className={itemClass} iconClassName="project-icon-slot" label={draftSelection?.selectedLabel ?? selectedProject?.name ?? t.chooseProject} title={selectedProject?.name} icon={<FolderIcon size={ICON_SIZE.compact} />} aria-haspopup="menu" aria-expanded={flyout}
         labelClassName="project-menu-label" meta={<ChevronRightIcon size={ICON_SIZE.compact} />}
         onPointerEnter={() => setFlyout(true)} onClick={() => setFlyout(true)} onKeyDown={(event) => {
           if (event.key === 'ArrowRight') { event.preventDefault(); event.stopPropagation(); setFlyout(true); }
         }} />
     </MenuSurface> : null}
-    {flyout ? <MenuSurface ref={flyoutRef} role="menu" aria-label={t.chooseProject} aria-busy={busy}
-      className="thread-composer-model-popover thread-composer-model-submenu project-picker-menu" style={pickerOnly ? style : flyoutStyle} onKeyDown={(event) => {
+    {flyout ? <MenuSurface ref={flyoutRef} role="menu" aria-label={t.chooseProject} aria-busy={busy} data-dialog-nested-overlay={draftSelection ? 'true' : undefined}
+      className={`thread-composer-model-popover thread-composer-model-submenu project-picker-menu${draftSelection ? ' scheduled-editor-menu' : ''}`} style={pickerOnly ? style : flyoutStyle} onKeyDown={(event) => {
         if (isImeComposingEvent(event)) return;
         const inSearch = event.target instanceof HTMLInputElement;
         if (inSearch && ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
@@ -129,12 +139,12 @@ export function ComposerProjectMenu({ anchorRef, context, threadId, attachmentDi
       {filtered.map((project) => <div className="project-picker-row" key={project.id}>
         <MenuItem role="menuitemradio" aria-checked={selected === project.id} className={itemClass} iconClassName="project-icon-slot"
         icon={<FolderIcon size={ICON_SIZE.compact} />} label={project.name} labelClassName="project-menu-label" title={`${project.name}\n${project.primaryFolder ?? t.applicationDefault}`}
-        disabled={busy || unavailable} onClick={() => void choose(project)} />
+        disabled={busy || unavailable || (Boolean(draftSelection) && !project.primaryFolder)} onClick={() => void choose(project)} />
         <span className="project-menu-action">
           {selected === project.id ? <span className="project-menu-check" aria-hidden="true"><CheckIcon size={ICON_SIZE.compact} /></span> : null}
-          <IconButton role="menuitem" className="project-menu-edit" icon={PencilIcon} iconSize={ICON_SIZE.compact}
+          {!draftSelection ? <IconButton role="menuitem" className="project-menu-edit" icon={PencilIcon} iconSize={ICON_SIZE.compact}
             variant="message" label={`${t.edit}: ${project.name}`} disabled={busy || unavailable}
-            onClick={() => { close(); context?.onChooseProject(project); }} />
+            onClick={() => { close(); context?.onChooseProject(project); }} /> : null}
         </span>
       </div>)}
       {!unavailable && filtered.length === 0 ? <p className="project-menu-status" role="status">{t.noResults}</p> : null}
@@ -142,8 +152,10 @@ export function ComposerProjectMenu({ anchorRef, context, threadId, attachmentDi
       {unavailable ? <p className="project-menu-status" role="status">{context?.error ?? t.loading}</p> : null}
       {error ? <p className="project-menu-status" role="alert">{error}</p> : null}
       {projects.length > 0 || unavailable || error ? <div role="separator" className="project-menu-separator" /> : null}
-      <MenuItem role="menuitem" className={itemClass} iconClassName="project-icon-slot" icon={<AddIcon size={ICON_SIZE.compact} />} labelClassName="project-menu-label" label={t.new} disabled={busy || unavailable} onClick={() => { close(); context?.onChooseProject('new'); }} />
-      {selected !== null ? <MenuItem role="menuitem" className={itemClass} iconClassName="project-icon-slot" icon={<CloseIcon size={ICON_SIZE.compact} />} labelClassName="project-menu-label" label={t.withoutProject}
+      {draftSelection ? <MenuItem role="menuitem" className={itemClass} iconClassName="project-icon-slot" icon={<FolderIcon size={ICON_SIZE.compact} />} labelClassName="project-menu-label"
+        label={strings.agent.automations.editor.chooseFolder} disabled={busy || attachmentDisabled} onClick={() => { close(); draftSelection.onChooseFolder(); }} />
+        : <MenuItem role="menuitem" className={itemClass} iconClassName="project-icon-slot" icon={<AddIcon size={ICON_SIZE.compact} />} labelClassName="project-menu-label" label={t.new} disabled={busy || unavailable} onClick={() => { close(); context?.onChooseProject('new'); }} />}
+      {selected !== null || draftSelection?.selectedLabel ? <MenuItem role="menuitem" className={itemClass} iconClassName="project-icon-slot" icon={<CloseIcon size={ICON_SIZE.compact} />} labelClassName="project-menu-label" label={draftSelection ? strings.agent.automations.editor.defaultFolder : t.withoutProject}
         disabled={busy || unavailable} onClick={() => void choose(null)} /> : null}
     </MenuSurface> : null}
   </>, document.body);

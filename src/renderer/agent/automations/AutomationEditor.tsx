@@ -1,7 +1,8 @@
+import { ThreadMarkdown } from '../components/ThreadMarkdown';
 import { CheckboxControl } from '../../ui/primitives/CheckboxControl';
 import type { ScheduledMaterial } from '../../../core/agent/scheduledMaterial';
 import { api } from '../../api/client';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type {
   Automation,
   AutomationCreateInput,
@@ -47,6 +48,14 @@ type ContextHintDraft = {
 
 interface AutomationEditorProps {
   readonly indexStore: DocumentIndexStore;
+  readonly active: boolean;
+  readonly readOnly?: boolean;
+  readonly onEdit?: () => void;
+  readonly runHistory?: ReactNode;
+  readonly runningRunId?: string;
+  readonly onSaved: (task: Automation) => void;
+  readonly onRun: (task: Automation, requestId: string) => Promise<string>;
+  readonly onShowRun: (task: Automation, runId: string, preserveDraft?: boolean) => void;
   readonly actionError: string | null;
   readonly onPause?: (expectedRevision: number) => Promise<Automation>;
   readonly automation: Automation | null;
@@ -69,6 +78,12 @@ export function AutomationEditor(props: AutomationEditorProps) {
   const [revision, setRevision] = useState(props.automation?.revision ?? null);
   const [error, setError] = useState<string | null>(null);
   const [taskError, setTaskError] = useState(false);
+  const [nameError, setNameError] = useState(false);
+  const [working, setWorking] = useState(false);
+  const workingRef = useRef(false);
+  const runRequest = useRef<{ taskId: string; revision: number; requestId: string } | null>(null);
+  const [savedRunError, setSavedRunError] = useState(false);
+  const disabled = props.busy || working;
   const [briefValid, setBriefValid] = useState(true);
   const [briefPending, setBriefPending] = useState(false);
   const [preview, setPreview] = useState<{ key: string; nextOccurrenceAt: number | null; defaultWorkLocation: string } | null>(null);
@@ -78,10 +93,10 @@ export function AutomationEditor(props: AutomationEditorProps) {
   const [replaceSchedule, setReplaceSchedule] = useState(false);
   const [referenceOptionsOpen, setReferenceOptionsOpen] = useState(false);
   const [review, setReview] = useState<Automation | null>(null);
-  const [nameEdited, setNameEdited] = useState(Boolean(props.automation));
   const menuRef = useRef<HTMLButtonElement | null>(null);
   const formRef = useRef<HTMLFormElement | null>(null);
   const alive = useRef(true);
+  const nameRef = useRef<HTMLInputElement | null>(null);
   const [picking, setPicking] = useState(false);
   const operationRef = useRef({ signature: '', requestId: crypto.randomUUID() });
   // Retain source policies through deletion/undo, but never submit an orphaned
@@ -105,7 +120,7 @@ export function AutomationEditor(props: AutomationEditorProps) {
   const timezones = useMemo(() => automationTimezones(state.timezone), [state.timezone]);
   const binding = state.contextHints[0];
   const folderLabel = binding?.projectId ? projects.view.projects.find((item) => item.id === binding.projectId)?.name ?? projectLabels.unavailable : binding?.cwd ? basenameForPath(binding.cwd) : e.defaultFolder;
-  const optionsSummary = [binding ? folderLabel : null, binding?.executionMode === 'worktree' ? e.copy : null, state.model || (state.modelProvider ? formatProviderName(state.modelProvider) : null), state.reasoningEffort ? `${e.reasoning}: ${messages.agent.composer.reasoningLevels[state.reasoningEffort]}` : null].filter(Boolean).join(' · ') || e.defaults;
+  const optionsSummary = [binding?.executionMode === 'worktree' ? e.copy : null, state.model || (state.modelProvider ? formatProviderName(state.modelProvider) : null), state.reasoningEffort ? `${e.reasoning}: ${messages.agent.composer.reasoningLevels[state.reasoningEffort]}` : null].filter(Boolean).join(' · ') || e.defaults;
   const preservedSchedule = !canEditAutomationSchedule(state.schedule);
   const scheduleKey = JSON.stringify([state.schedule, state.timezone]);
   const previewPending = preview?.key !== scheduleKey && previewError?.key !== scheduleKey;
@@ -117,6 +132,7 @@ export function AutomationEditor(props: AutomationEditorProps) {
   try { materials = scheduledBriefMaterials(state.prompt, effectiveExplicit(state)); } catch { materialError = e.sourceLimit; }
 
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  useEffect(() => { if (!props.active) setMenuOpen(false); }, [props.active]);
   useEffect(() => { props.onDirtyChange(dirty); }, [dirty, props.onDirtyChange]);
   useEffect(() => {
     if (!props.automation || dirty) return;
@@ -142,12 +158,11 @@ export function AutomationEditor(props: AutomationEditorProps) {
   }
   function briefChanged(prompt: string) {
     for (const item of scheduledInlineMaterials(prompt)) inlineKeys.current.add(scheduledMaterialKey(item));
-    const display = splitReferenceMarkers(prompt).map((part) => part.type === 'text' ? part.text : sourceLabel(part.target.kind === 'node' ? { kind: 'note', reference: part.target.nodeId, required: true } : { kind: 'file', reference: part.target.path, required: true })).join('');
     setTaskError(false);
-    setState((previous) => ({ ...previous, prompt, name: nameEdited ? previous.name : display.trim().split('\n')[0].slice(0, 80) }));
+    setState((previous) => ({ ...previous, prompt }));
   }
   async function chooseFolder() {
-    if (picking || props.busy) return;
+    if (picking || disabled) return;
     setPicking(true);
     try {
       const { paths } = await api.agentCoreRequest('project/pickFolders', {});
@@ -157,30 +172,52 @@ export function AutomationEditor(props: AutomationEditorProps) {
     } catch (reason) { if (alive.current) setError(errorMessage(reason)); }
     finally { if (alive.current) setPicking(false); }
   }
-  async function submit(event: React.FormEvent) {
-    event.preventDefault(); setError(null);
+  async function submit(intent: 'save' | 'run') {
+    if (workingRef.current || props.busy) return;
+    if (intent === 'run' && props.runningRunId && props.automation) {
+      runRequest.current = null; setSavedRunError(false); setError(null);
+      props.onShowRun(props.automation, props.runningRunId, true); return;
+    }
+    setError(null); setSavedRunError(false);
+    if (!state.name.trim()) { setNameError(true); nameRef.current?.focus(); return; }
     const instructions = splitReferenceMarkers(state.prompt).filter((part) => part.type === 'text').map((part) => part.text).join('').trim();
     if (!instructions) { setTaskError(true); formRef.current?.querySelector<HTMLElement>('[role="textbox"]')?.focus(); return; }
-    if (!briefValid || briefPending || picking || previewPending || previewError?.key === scheduleKey || (timingChanged && noFuture) || conflict || materialError) return;
+    const needsSave = !props.automation || dirty;
+    if (!briefValid || briefPending || picking || materialError || conflict || (needsSave && (previewPending || previewError?.key === scheduleKey || (timingChanged && noFuture)))) return;
+    workingRef.current = true; setWorking(true);
+    let saved: Automation | null = null;
     try {
-      if (!isAutomationScheduleDraftValid(state.schedule)) throw new Error(e.previewInvalid);
-      const definition: AutomationCreateInput = {
-        name: state.name.trim() || instructions.split('\n')[0].slice(0, 80), prompt: state.prompt,
-        materials: effectiveExplicit(state), schedule: { rrule: automationScheduleRrule(state.schedule), timezone: state.timezone },
-        destination: { kind: 'standalone' }, contextHints: state.contextHints.map((hint) => toAutomationContextHintInput(hint, hint.projectId ? '' : required(hint.cwd, e.folderMissing))),
-        configuration: { modelProvider: nullable(state.modelProvider), model: nullable(state.model), reasoningEffort: state.reasoningEffort || null },
-      };
-      const signature = JSON.stringify([definition, revision]);
-      if (operationRef.current.signature !== signature) operationRef.current = { signature, requestId: crypto.randomUUID() };
-      const saved = props.automation ? await props.onUpdate({ ...definition, id: props.automation.id, expectedRevision: revision!, requestId: operationRef.current.requestId })
-        : await props.onCreate({ ...definition, requestId: operationRef.current.requestId });
-      setRevision(saved.revision); setBaseline(editorState(saved)); props.onDirtyChange(false);
+      if (needsSave) {
+        if (!isAutomationScheduleDraftValid(state.schedule)) throw new Error(e.previewInvalid);
+        const definition: AutomationCreateInput = {
+          name: state.name.trim(), prompt: state.prompt,
+          materials: effectiveExplicit(state), schedule: { rrule: automationScheduleRrule(state.schedule), timezone: state.timezone },
+          destination: { kind: 'standalone' }, contextHints: state.contextHints.map((hint) => toAutomationContextHintInput(hint, hint.projectId ? '' : required(hint.cwd, e.folderMissing))),
+          configuration: { modelProvider: nullable(state.modelProvider), model: nullable(state.model), reasoningEffort: state.reasoningEffort || null },
+        };
+        const signature = JSON.stringify([definition, revision]);
+        if (operationRef.current.signature !== signature) operationRef.current = { signature, requestId: crypto.randomUUID() };
+        saved = props.automation ? await props.onUpdate({ ...definition, id: props.automation.id, expectedRevision: revision!, requestId: operationRef.current.requestId })
+          : await props.onCreate({ ...definition, requestId: operationRef.current.requestId });
+        const accepted = editorState(saved);
+        setState(accepted); setRevision(saved.revision); setBaseline(accepted); props.onDirtyChange(false);
+      } else saved = props.automation!;
+      if (intent === 'save') { props.onSaved(saved); return; }
+      if (!runRequest.current || runRequest.current.taskId !== saved.id || runRequest.current.revision !== saved.revision) {
+        runRequest.current = { taskId: saved.id, revision: saved.revision, requestId: crypto.randomUUID() };
+      }
+      const runId = await props.onRun(saved, runRequest.current.requestId);
+      // A confirmed run completes this operation. A later explicit Run once is
+      // a new invocation; only an uncertain reply reuses the old request.
+      runRequest.current = null;
+      props.onShowRun(saved, runId);
     } catch (reason) {
+      if (saved && intent === 'run') setSavedRunError(true);
       const message = errorMessage(reason);
       const source = message.startsWith('Material unavailable') ? materials.find((item) => message.includes(item.reference)) : undefined;
       if (source) { setReferenceOptionsOpen(true); setError(`${sourceLabel(source)}: ${e.unavailableReference}`); }
       else setError(message);
-    }
+    } finally { workingRef.current = false; if (alive.current) setWorking(false); }
   }
   function describe(value: EditorState): Record<string, string> {
     const source = value.contextHints[0];
@@ -201,27 +238,62 @@ export function AutomationEditor(props: AutomationEditorProps) {
     [e.folder, state.contextHints, savedState.contextHints], [e.model, [state.modelProvider, state.model, state.reasoningEffort], [savedState.modelProvider, savedState.model, savedState.reasoningEffort]]]
     .filter(([, local, remote]) => JSON.stringify(local) !== JSON.stringify(remote)).map(([label]) => label as string) : [];
 
-  return <form className="automation-editor scheduled-editor-v2" ref={formRef} onSubmit={(event) => void submit(event)}>
+  if (props.readOnly && props.automation) return <div className="automation-editor scheduled-editor-v2 scheduled-task-read">
+    <div className="automation-editor-scroll">
+      <section className="automation-editor-section"><h3>{e.task}</h3><div className="scheduled-prose"><ThreadMarkdown text={props.automation.prompt} index={props.indexStore.getCurrent()} /></div></section>
+      <section className="automation-editor-section"><h3>{e.when}</h3>
+        <p>{state.schedule.mode === 'once' || !canEditAutomationSchedule(state.schedule) ? describe(state)[e.when]
+          : describe(state)[e.when].replace(state.schedule.startAt.replace('T', ' '), state.schedule.startAt.slice(11, 16))}</p><p className="scheduled-setting-note">{props.automation.status === 'paused' ? t.filters.paused : props.automation.nextOccurrenceAt === null ? t.noNext : `${e.next}${new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short', timeZone: state.timezone }).format(props.automation.nextOccurrenceAt)}`}</p>
+        {binding ? <p className="scheduled-setting-note">{t.project}: {folderLabel}</p> : null}
+        <p className="scheduled-setting-note">{e.model}: {state.model || e.defaults}</p>
+        {state.reasoningEffort ? <p className="scheduled-setting-note">{e.reasoning}: {messages.agent.composer.reasoningLevels[state.reasoningEffort]}</p> : null}
+        {binding?.executionMode === 'worktree' ? <p className="scheduled-setting-note">{e.copy}</p> : null}
+      </section>
+      {props.automation.materials.length ? <details className="scheduled-editor-options"><summary>{e.attached}</summary>
+        {props.automation.materials.map((item) => <p key={scheduledMaterialKey(item)} title={item.reference} className="scheduled-setting-note">{sourceLabel(item)}{!item.required ? ` · ${e.continueMissing}` : ''}</p>)}
+      </details> : null}
+      {props.runHistory}
+      {error || props.actionError ? <p role="alert" className="automation-error">{error ?? props.actionError}</p> : null}
+    </div>
+    <footer className="automation-editor-actions"><div className="scheduled-editor-buttons">
+      <Button variant="ghost" onClick={props.onCancel} disabled={disabled}>{e.closeTask}</Button>
+      <Button onClick={() => void submit('run')} disabled={disabled || props.automation.archivedAt !== null}>{props.runningRunId ? e.viewRun : e.runOnce}</Button>
+      <Button data-task-edit variant="primary" onClick={props.onEdit} disabled={disabled || props.automation.archivedAt !== null}>{e.editTask}</Button>
+    </div></footer>
+  </div>;
+
+  return <form className="automation-editor scheduled-editor-v2" ref={formRef} onSubmit={(event) => { event.preventDefault(); void submit('save'); }}>
     <div className="scheduled-edit-status">
       {props.automation ? <span>{props.automation.status === 'paused' ? e.paused : e.future}</span> : null}
       {props.automation?.status === 'active' && props.onPause ? <>
         <IconButton icon={MoreIcon} label={e.actions} ref={menuRef} aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((value) => !value)} />
         {menuOpen ? <AnchoredActionMenu anchorRef={menuRef} onClose={() => setMenuOpen(false)} ariaLabel={e.actions}
-          className="thread-action-menu scheduled-editor-menu" surfaceProps={{ 'data-dialog-nested-overlay': 'true' }} actions={[{ label: e.pauseSaved, disabled: props.busy,
+          className="thread-action-menu scheduled-editor-menu" surfaceProps={{ 'data-dialog-nested-overlay': 'true' }} actions={[{ label: e.pauseSaved, disabled,
             onSelect: () => { void props.onPause!(revision!).then((task) => setRevision(task.revision)).catch((reason) => setError(errorMessage(reason))); } }]} /> : null}
       </> : null}
     </div>
     <div className="automation-editor-scroll">
+      <Field className="scheduled-name-field" label={e.name}>
+        <Input ref={nameRef} label={e.name} value={state.name} placeholder={e.namePlaceholder} maxLength={200} disabled={disabled}
+          aria-invalid={nameError || undefined} onChange={(event) => { setNameError(false); setState({ ...state, name: event.target.value }); }} />
+        {nameError ? <p className="automation-error" role="alert">{e.nameRequired}</p> : null}
+      </Field>
       <section className="automation-editor-intro">
         <h3>{e.task}</h3>
-        <ScheduledBriefInput indexStore={props.indexStore} value={state.prompt} disabled={props.busy} onChange={briefChanged} onValidityChange={setBriefValid} onPendingChange={setBriefPending} onError={setError} />
+        <ScheduledBriefInput active={props.active} projectContext={{ ...projects, onChooseProject: () => undefined }}
+          projectSelection={{ selectedId: binding?.projectId ?? null, selectedLabel: binding ? folderLabel : undefined,
+            onChooseFolder: () => { void chooseFolder(); }, onSelect: (project) => {
+              if (!project && binding?.executionMode === 'worktree') throw new Error(e.isolationChange);
+              setState((value) => ({ ...value, contextHints: project ? [{ id: binding?.id ?? crypto.randomUUID(), contextHintId: binding?.contextHintId,
+                projectId: project.id, cwd: '', executionMode: binding?.executionMode ?? 'local' }] : [] }));
+            } }} indexStore={props.indexStore} value={state.prompt} disabled={disabled} onChange={briefChanged} onValidityChange={setBriefValid} onPendingChange={setBriefPending} onError={setError} />
         {taskError ? <p className="automation-error" role="alert">{e.taskRequired}</p> : null}
       </section>
       <section className="automation-editor-section">
         <h3>{e.when}</h3>
         {preservedSchedule ? <div className="scheduled-saved-rule"><span>{e.custom}</span><p>{e.customHelp}</p>
           <Button size="sm" variant="ghost" onClick={() => setReplaceSchedule(true)}>{e.replaceSchedule}</Button></div> : null}
-        <AutomationScheduleEditor disabled={props.busy || preservedSchedule} schedule={state.schedule} timezone={state.timezone} timezones={timezones}
+        <AutomationScheduleEditor disabled={disabled || preservedSchedule} schedule={state.schedule} timezone={state.timezone} timezones={timezones}
           onChange={(schedule) => setState({ ...state, schedule })} onTimezoneChange={(timezone) => setState({ ...state, timezone })} />
         <p className="scheduled-preview" aria-live="polite">{previewPending ? e.previewLoading : previewError?.key === scheduleKey ? previewError.message
           : noFuture ? t.noNext : `${props.automation?.status === 'paused' ? e.ifResumed : e.next}${new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short', timeZone: state.timezone }).format(preview!.nextOccurrenceAt!)}`}</p>
@@ -230,26 +302,11 @@ export function AutomationEditor(props: AutomationEditorProps) {
       <details className="scheduled-editor-options" open={optionsOpen} onToggle={(event) => setOptionsOpen(event.currentTarget.open)}>
         <summary>{e.options}<span>{optionsSummary}</span></summary>
         <div className="automation-editor-section">
-          <Field label={e.name}><Input label={e.name} value={state.name} disabled={props.busy} onChange={(event) => { setNameEdited(true); setState({ ...state, name: event.target.value }); }} /></Field>
-          <h3>{e.folder}</h3>
-          <SelectControl label={e.folder} value={binding?.projectId ?? (binding ? 'directory' : 'default')} disabled={props.busy || picking} onChange={(event) => {
-            const value = event.target.value;
-            if (value === 'directory') { void chooseFolder(); return; }
-            if (value === 'default' && binding?.executionMode === 'worktree') { setError(e.isolationChange); return; }
-            setState({ ...state, contextHints: value === 'default' ? [] : [{ id: binding?.id ?? crypto.randomUUID(), contextHintId: binding?.contextHintId,
-              cwd: binding?.cwd ?? '', executionMode: binding?.executionMode ?? 'local', ...(value === 'directory' ? {} : { projectId: value }) }] });
-          }}><option value="default">{e.defaultFolder}</option><option value="directory">{e.chooseFolder}</option>
-            {binding?.projectId && !projects.view.projects.some((item) => item.id === binding.projectId) ? <option value={binding.projectId}>{projectLabels.unavailable}</option> : null}
-            {projects.view.projects.map((item) => <option key={item.id} value={item.id} disabled={!item.primaryFolder}>{item.name}</option>)}
-          </SelectControl>
-          <p className="scheduled-setting-note">{binding?.projectId ? projects.view.projects.find((item) => item.id === binding.projectId)?.primaryFolder ?? projectLabels.unavailable
-            : binding?.cwd || preview?.defaultWorkLocation || e.defaultFolder}</p>
-          {binding && !binding.projectId ? <Button size="sm" variant="ghost" disabled={props.busy || picking} onClick={() => void chooseFolder()}>{e.chooseFolder}</Button> : null}
-          {binding ? <><CheckboxControl checked={binding.executionMode === 'worktree'} disabled={props.busy} onCheckedChange={(enabled) => setState({ ...state, contextHints: [{ ...binding, executionMode: enabled ? 'worktree' : 'local' }] })}>{e.separateCopy}</CheckboxControl><p className="scheduled-setting-note">{e.copyHelp}</p></> : null}
+          {binding ? <><CheckboxControl checked={binding.executionMode === 'worktree'} disabled={disabled} onCheckedChange={(enabled) => setState({ ...state, contextHints: [{ ...binding, executionMode: enabled ? 'worktree' : 'local' }] })}>{e.separateCopy}</CheckboxControl><p className="scheduled-setting-note">{e.copyHelp}</p></> : null}
             <Field className="automation-setting-row" label={t.model} labelClassName="automation-setting-label">
               <SelectControl
                 className="automation-setting-value"
-                disabled={props.busy}
+                disabled={disabled}
                 label={t.model}
                 onChange={(event) => {
                   const value = event.target.value;
@@ -283,7 +340,7 @@ export function AutomationEditor(props: AutomationEditorProps) {
             {showReasoning ? <Field className="automation-setting-row" label={e.reasoning} labelClassName="automation-setting-label">
               <SelectControl
                 className="automation-setting-value"
-                disabled={props.busy}
+                disabled={disabled}
                 label={e.reasoning}
                 onChange={(event) => setState({ ...state, reasoningEffort: event.target.value as ReasoningEffort | '' })}
                 value={state.reasoningEffort}
@@ -304,8 +361,8 @@ export function AutomationEditor(props: AutomationEditorProps) {
           const inline = scheduledInlineMaterials(state.prompt).some((value) => scheduledMaterialKey(value) === key);
           return <div className="scheduled-reference-policy" key={key}>
             <span title={item.reference}>{sourceLabel(item)}{inline ? '' : ` · ${e.attached}`}</span>
-            <CheckboxControl checked={!item.required} disabled={props.busy} onCheckedChange={(optional) => setState({ ...state, materials: [...state.materials.filter((value) => scheduledMaterialKey(value) !== key), { ...item, required: !optional }] })}>{e.continueMissing}</CheckboxControl>
-            {!inline ? <Button size="sm" variant="ghost" disabled={props.busy} onClick={() => setState({ ...state, materials: state.materials.filter((value) => scheduledMaterialKey(value) !== key) })}>{e.remove}</Button> : null}
+            <CheckboxControl checked={!item.required} disabled={disabled} onCheckedChange={(optional) => setState({ ...state, materials: [...state.materials.filter((value) => scheduledMaterialKey(value) !== key), { ...item, required: !optional }] })}>{e.continueMissing}</CheckboxControl>
+            {!inline ? <Button size="sm" variant="ghost" disabled={disabled} onClick={() => setState({ ...state, materials: state.materials.filter((value) => scheduledMaterialKey(value) !== key) })}>{e.remove}</Button> : null}
           </div>;
         })}
       </details> : null}
@@ -316,10 +373,16 @@ export function AutomationEditor(props: AutomationEditorProps) {
           <p className="scheduled-setting-note">{e.applyHelp}</p><Button size="sm" variant="ghost" onClick={() => { setRevision(review!.revision); setBaseline(editorState(review)); setError(null); setReview(null); }}>{e.applyDraft}</Button>
         </> : null}
       </section> : null}
+      {savedRunError ? <p role="status" className="scheduled-setting-note">{e.savedRunFailed}</p> : null}
       {error || props.actionError || materialError ? <p className="automation-error" role="alert">{error ?? props.actionError ?? materialError}</p> : null}
     </div>
-    <footer className="automation-editor-actions"><p>{e.local}</p><Button disabled={props.busy} onClick={props.onCancel} variant="ghost">{t.cancel}</Button>
-      <Button disabled={props.busy || !briefValid || briefPending || picking || previewPending || previewError?.key === scheduleKey || Boolean(materialError) || (timingChanged && noFuture) || conflict || (Boolean(props.automation) && !dirty)} type="submit" variant="primary">{props.automation ? e.save : t.create}</Button>
+    <footer className="automation-editor-actions">
+      <p>{e.local}</p><div className="scheduled-editor-buttons">
+        <Button disabled={disabled} onClick={props.onCancel} variant="ghost">{t.cancel}</Button>
+        <Button disabled={disabled || (!props.runningRunId && (!state.name.trim() || !state.prompt.trim() || !briefValid || briefPending || picking || Boolean(materialError) || conflict || ((!props.automation || dirty) && (previewPending || previewError?.key === scheduleKey || (timingChanged && noFuture)))))}
+          onClick={() => void submit('run')}>{props.runningRunId ? e.viewRun : !props.automation || dirty ? e.saveRun : e.runOnce}</Button>
+        <Button disabled={disabled || !state.name.trim() || !state.prompt.trim() || !briefValid || briefPending || picking || previewPending || previewError?.key === scheduleKey || Boolean(materialError) || (timingChanged && noFuture) || conflict || (Boolean(props.automation) && !dirty)} type="submit" variant="primary">{props.automation ? e.save : t.create}</Button>
+      </div>
     </footer>
     {replaceSchedule ? <ConfirmDialog title={e.replaceTitle} message={e.replaceHelp} confirmLabel={e.replace} cancelLabel={e.keepSchedule}
       onCancel={() => setReplaceSchedule(false)} onConfirm={() => { setState({ ...state, schedule: { ...state.schedule, sourceRrule: null } }); setReplaceSchedule(false); }} /> : null}

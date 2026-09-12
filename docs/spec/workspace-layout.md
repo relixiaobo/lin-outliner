@@ -1309,13 +1309,10 @@ User asks agent to rewrite selected node
 
 ### Scheduled tasks in Agent Deck
 
-Scheduled tasks belong to the Agent Deck, independently of its selected
-conversation. The global header control opens the task list/detail surface with
-a single title and Back action. Task views use one column at every Deck width;
-returning to conversations preserves both task navigation and the conversation
-draft. Task references and scroll positions are session-local Agent view state,
-not Outline layout entries. Native notices open the same surface. Discuss result
-opens a normal conversation with its exact result reference. View process uses
-the existing Agent Trajectory workspace inspector while the task remains in the
-Deck. Configuration uses a modal sheet with shared focus/dirty-close behavior.
+Scheduled tasks belong to Agent Deck, independently of the selected conversation.
+List selection opens one window with view/edit modes and run history. A run row
+opens its canonical conversation at the selected result position in the Deck;
+Back restores the task window and history position. The previously selected user
+chat stays mounted. The task window adds no Outline view, copied report reader or
+new navigation owner. Process details use the shared Trajectory inspector.
 The domain contract is [Scheduled tasks](agent-automations.md).

@@ -187,6 +187,7 @@ import { classifyNewThreadCommand } from '../threadComposerCommands';
 import { parseNodeReferenceMarkers, parseThreadReferenceMarkers } from '../../../core/referenceMarkup';
 
 interface ThreadViewProps {
+  readonly initialFocus?: { readonly turnId: string; readonly itemId?: string };
   readonly projectContext?: ComposerProjectContext;
   readonly active: boolean;
   readonly composerEnabled: boolean;
@@ -337,6 +338,7 @@ type NewThreadValidation = 'providerRequired' | 'structuredContent' | null;
 interface TranscriptAnchor {
   readonly offset: number;
   readonly turnId: string;
+  readonly itemId?: string;
 }
 
 interface ThreadScrollSnapshot {
@@ -662,6 +664,7 @@ interface PendingComposerPasteRequest extends PendingComposerPaste {
 }
 
 export function ThreadView({
+  initialFocus,
   projectContext,
   active,
   composerEnabled,
@@ -719,7 +722,11 @@ export function ThreadView({
     }
     return byTurn;
   }, [inputDrafts]);
-  const initialScrollSnapshot = threadScrollSnapshots.get(threadId);
+  const initialScrollSnapshot = initialFocus ? {
+    anchor: { ...initialFocus, offset: 0 }, follow: false,
+    top: buildTranscriptVirtualLayout(turns, cachedTurnHeights(threadId), estimateTurnHeight)
+      .items[Math.max(0, turns.findIndex((turn) => turn.id === initialFocus.turnId))]?.top ?? 0,
+  } : threadScrollSnapshots.get(threadId);
   const [draft, setDraft] = useState<ThreadComposerDraft>(EMPTY_COMPOSER_DRAFT);
   const [sending, setSending] = useState(false);
   const [dragActive, setDragActive] = useState(false);
@@ -1604,9 +1611,11 @@ export function ThreadView({
       : null;
     // The anchored row carries the reading position; the saved offset is only
     // how we get near enough for a virtualized Thread to render that row.
-    const requestedTop = anchor && anchorRow
+    const anchorElement = anchor?.itemId && anchorRow
+      ? anchorRow.querySelector<HTMLElement>(`[data-thread-item-id="${CSS.escape(anchor.itemId)}"]`) ?? anchorRow : anchorRow;
+    const requestedTop = anchor && anchorElement
       ? scroll.scrollTop
-        + (anchorRow.getBoundingClientRect().top - scroll.getBoundingClientRect().top)
+        + (anchorElement.getBoundingClientRect().top - scroll.getBoundingClientRect().top)
         - anchor.offset
       : request.top;
     const nextTop = Math.max(0, Math.min(maximumTop, requestedTop));

@@ -84,8 +84,8 @@ in the same complete feature. It adds no replacement model tool.
 - **CON-4, inherited choices released:** Drawer-first editing, command Nodes,
   conversation destinations, project fan-out, and raw dispatch states are not
   constraints on the product design.
-- **OPT-1, selected clean-slate target:** A stable assignment with result-first
-  detail, independent controls, and a canonical execution record per run.
+- **OPT-1, selected clean-slate target:** A stable assignment with an explicit task overview and inspectable results,
+  independent controls, and a canonical execution record per run.
 - **OPT-2, considered minimum:** A timer that posts another Agent message. It
   schedules work but leaves result discovery and exception handling with the user;
   it does not meet OBJ-1.
@@ -144,12 +144,13 @@ and read/acknowledgement markers do not become substitute outcome evidence.
 
 ### Work instructions and execution context
 
-The primary form asks for **Task**, **When**, and **Materials**. A suggested
-editable name derives from the task text. Materials support explicit notes,
-files, URLs, and one optional saved Project or work folder. The UI distinguishes
-reference material from the primary work location.
-Without a selected work location, use the common configured default execution
-context and display that selection; never inherit a hidden conversation cwd.
+The primary form asks for **Name**, **Task**, and **When**. The user names the
+assignment explicitly. Task content uses existing inline references to Outline
+content and files, plus ordinary URLs. The composer's Add menu selects one optional
+saved Project or work folder. Referenced content, execution location and requested
+output destinations are independent. With no selected location, use the common
+Host default without displaying an internal directory as a result destination;
+never inherit a mutable conversation cwd.
 
 Linked material is read at execution time. Canonical tool/resource records retain
 the observed content and any revision, digest, or timestamp actually supplied;
@@ -343,79 +344,45 @@ canonical run records into task-owned files.
 
 ### Screens and interaction
 
-**SCREEN-1: Scheduled tasks in Agent Deck.** The global Deck entry opens a
-single-column task list, independently of the selected conversation. One header
-owns the screen title and one Back action: task detail returns to the list, and
-the list returns to conversations. No Outline navigation or panel is introduced.
-The same navigation works at every Deck width. Both surfaces remain mounted to
-preserve selection, scroll, unfinished edits and conversation drafts.
+**SCREEN-1: Scheduled tasks in Agent Deck.** A global Deck control opens the
+list independently of the selected user conversation. Rows show task name,
+timing and meaningful attention/current state, with neutral rounded hover and
+no layout change. Search expands on demand; archival lives in the list menu.
+Clicking a row opens the unified task window, not a report or an Outline pane.
 
-The list answers three questions: what work is saved, when it runs next, and
-whether the user needs to act. Each unboxed row contains the assignment name,
-its next occurrence or paused/ended state, and a factual attention/running or
-unread-result hint only when relevant. Generated answer/error text is not a list preview. Selecting
-a row opens its result; it never runs the task. Header actions are New task,
-Search and More. Search expands on demand (also Cmd/Ctrl+F), preserving the query
-when returning from a task. Archived tasks live in More. Needs attention appears
-only when there are unresolved causes or that filter is selected; there is no
-permanent zero-count filter strip. Empty, searching, loading and unavailable
-states use distinct, quiet copy at the list itself.
+**SCREEN-2: One task window, view and edit modes.** Existing tasks open read-only.
+The window shows the saved name, instructions, timing, selected Project/model and
+Run history. Edit enables changes in the same window; Save returns to view mode.
+Cancel editing discards only the current draft after the shared dirty check and
+returns to view mode. Closing the window has its own dirty-close behavior. New
+tasks start in edit mode. Pause/resume and archive/restore are secondary actions.
 
-**SCREEN-2: Task detail.** The single Deck header names the assignment. A compact
-schedule row shows the next occurrence or paused/ended state and opens the task
-editor. Run now is the only persistent management action; a current execution
-replaces it with Stop run or the factual Stopping state. Pause/resume, Edit and
-Archive/Restore are in the task's More menu. Origin and local execution conditions
-belong in task information, not in a permanent paragraph above every result.
+A run-history row identifies one execution by state and time. Clicking it opens
+its canonical conversation at the actual result Turn and, when available, exact
+message Item. Late completion Turns remain part of their original run. The normal
+Thread view renders history and shared questions/recovery; the task window has no
+copied report reader. View process is a secondary record action. Back returns to
+the same task window and its record-list position. The user's previously selected
+conversation stays mounted, preserving its composer draft and scroll.
 
-The content starts with a live question or actionable exception when present;
-otherwise the delivered answer is the first substantial content. A compact run
-heading identifies its actual state and time. Discuss result is adjacent to the
-answer. View process is secondary to that exact result. Earlier runs is a
-collapsed disclosure, present only when history offers another run or page;
-opening it provides exact-run selection and pagination. Older unacknowledged
-issues remain reachable through a Needs attention disclosure even after a newer
-success. Reading a run marks it read but never acknowledges its issues. Result
-content uses the existing Markdown, citations and resource controls. Running,
-waiting, stopping, never-run and unavailable states must not all say No result.
-
-Task information is a secondary disclosure containing the durable brief,
-materials, work location, timezone and originating-conversation route. It uses
-existing source references and never guesses content availability. Create/edit
-and dirty/conflict behavior remain SCREEN-3. No function is removed to make the
-screen quieter; low-frequency controls and diagnostic information are disclosed
-at their point of use.
-
-Current execution displays its latest meaningful activity and **Stop run**.
-Questions use the shared user-input interaction in place. A delivered result
-with a surviving process also displays **Background work: running** with the
-shared status/log and Stop process actions. One status never stands for both.
-Stopping displays Stopping until the actual owner settles. The shared
-[user-input lifecycle](../spec/agent-core.md#structured-input-lifecycle)
-owns question answerability, original deadline, and answered/timed-out/cancelled/
-failed settlement. An accepted answer or a timeout closes the live form and
-continues the same active Turn/run; interruption or owner failure closes/fences
-it through that execution owner. Unsent answer content uses the shared renderer
-recovery entry, independent of live answerability. Run termination is not required
-to close an expired question. Timeout alone neither ends the run nor releases its
-foreground slot, marks a result read, or dismisses another issue.
-
-Active-question attention derives from the exact pending request, so it clears
-on that request's authoritative settlement. A timeout remains inspectable as
-no answer submitted; it is not a live question, user acknowledgement, or evidence
-of run success/failure. Separately established unresolved-input, failure, and
-uncertainty causes retain their own attention. A delayed settlement cannot clear
-a newer question or another run's cause. Scheduling adds no question timer,
-answer ledger, text-based outcome inference, or automatic re-ask. Generic
-recovery continues to own stale questions and unknown effects.
+A source/Turn/Item that cannot be resolved shows an unavailable error in the task
+window, rather than falling back to the latest or another conversation. Viewing
+the task alone never marks a run read; opening the resolved conversation may do
+so and never acknowledges its issues. Historical questions are not answerable;
+shared user-input and process owners retain all lifecycle and permission rules.
+Earlier records paginate and unresolved issues remain associated with exact runs.
 
 **SCREEN-3: Create/edit sheet.** A window-level modal, bounded to the viewport,
-contains two primary blocks: Task and When. Task reuses the Agent editor with
+shows an explicit Name above Task and When. Users name the task directly; the
+name does not follow later instruction edits. Task reuses the Agent editor with
 inline Outline/file references, newline Enter behavior and local draft undo/redo.
-`@` and the `+` control insert references at the caret; the native file picker is
-another entry into that same representation. No chat Turn, conversation attachment
+`@` inserts references at the caret. A single `+` opens the shared Agent
+attachment/Project menu; the task adapter changes only the draft location, never
+a conversation membership. A selected Project/folder appears by name beside `+`.
+The native file picker inserts a durable reference through that same menu. No chat Turn, conversation attachment
 upload, separate task document format or automatic run accompanies editing.
-Names derive locally until explicitly edited; existing names remain unchanged.
+The muted placeholder belongs to the actual empty paragraph, sharing its font,
+line height and origin with the caret. It disappears when content is present.
 
 The saved prompt uses existing `[[node://...]]` and `[[file:///...]]` markup.
 Repeated occurrences retain their sentence positions. Host admission and dispatch
@@ -431,10 +398,20 @@ controls. Monthly/yearly presets and custom intervals share the same evaluator.
 Timezone is a compact disclosure. Next-run preview distinguishes loading, invalid
 and no-future states. Save revalidates; old preview data never certifies new timing.
 Unsupported saved rules remain unchanged until explicit replacement. Other edits
-to an exhausted schedule do not rearm it. More options owns Name, one working
-folder/Project, separate Git copy and model/reasoning overrides. Summaries show
-non-default location/model/isolation. Choosing a path does not grant access;
+to an exhausted schedule do not rearm it. More options owns separate Git copy and model/reasoning overrides. Project
+selection is in the input toolbar, without a permanent default-directory field.
+Location controls choose where work starts; instructions choose output locations
+such as Downloads, subject to actual execution policy. No second output-folder
+setting overrides those instructions. Summaries retain non-default model/isolation. Choosing a path does not grant access;
 Git compatibility and configuration validity are checked by the Host on Save.
+
+The footer offers Create task / Save changes plus Save and run once for new/dirty
+work, or Run once for an unchanged task. Save and run first commits the inspected
+definition, then calls ordinary manual admission with that accepted revision and
+a stable request identity. Save failure starts nothing; a lost run reply preserves
+the saved task and retries the same run request. Viewing a live run preserves any
+unsaved draft and does not save it. Runs open their canonical conversation with Back to task;
+manual execution preserves timing, pause and a future one-off occurrence.
 
 Create activates only after validation. Edit saves one revision and leaves a
 paused task paused. Accepted execution retains its captured brief. Conflicts keep
@@ -674,12 +651,13 @@ functional requirements above.
   Lost notifications/reload shall recover the canonical request outcome without
   inferring acceptance from absence or showing a historical timeout as answerable.
 
-- **AC-42:** The list and detail shall each have one screen title and one Back
-  action. Default list rows shall contain no generated result text, permanent
+- **AC-42:** The list has one screen title; the task window has one title and a
+  Close action. A run conversation provides Back to task. Default list rows shall contain no generated result text, permanent
   zero-count filters or decorative cards. Search and archive remain keyboard
   accessible through their header controls.
-- **AC-43:** A delivered answer shall precede task information and collapsed
-  history. The default detail shall have at most one persistent lifecycle action;
+- **AC-43:** The unified task window shall establish task context before run history.
+  Existing tasks open in view mode; only Edit enables mutations, and run records
+  open the exact canonical conversation position. The default detail shall have at most one persistent lifecycle action;
   management menus shall preserve revision checks and focus restoration.
 - **AC-44:** Loading, no tasks, no search matches, never-run, live execution,
   unavailable output and older unresolved issues shall retain distinct visible

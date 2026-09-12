@@ -866,16 +866,16 @@
 .scheduled-task-detail[hidden] { display: none; }
 
 .scheduled-task-list { user-select: none; }
-.scheduled-task-rows { display: flex; flex-direction: column; }
+.scheduled-task-rows { display: flex; flex-direction: column; gap: var(--space-2); }
 
 .scheduled-task-row {
   display: flex;
   align-items: center;
   width: 100%;
   gap: var(--space-6);
-  padding: var(--space-6) var(--space-2);
+  padding: var(--space-6);
   border: 0;
-  border-bottom: var(--space-hairline) solid var(--separator);
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-primary);
   text-align: start;
@@ -1034,3 +1034,39 @@ button.scheduled-plan-link:hover { color: var(--text-primary); }
 :root[data-input-modality="keyboard"] .scheduled-brief-input:focus-within { box-shadow: var(--focus-ring-shadow); }
 .scheduled-editor-options > summary:focus-visible,
 .scheduled-timezone-trigger:focus-visible { outline: none; box-shadow: var(--focus-ring-shadow); }
+
+/* The placeholder occupies the actual empty paragraph's line box, just like
+   typed text. It cannot drift from the caret after wrapping, zoom or scrolling. */
+.scheduled-brief-input .thread-composer-editor.has-paragraph-placeholder::before { content: none; }
+.scheduled-brief-input .composer-placeholder::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  max-width: 100%;
+  color: var(--text-faint);
+  pointer-events: none;
+}
+.scheduled-brief-input { overflow: hidden; }
+.scheduled-brief-input .ProseMirror { min-height: 76px; }
+.scheduled-brief-toolbar { min-height: var(--chrome-control-height); }
+.scheduled-brief-toolbar .thread-location-chip { min-width: 0; max-width: calc(100% - var(--space-xl)); }
+.scheduled-name-field { display: grid; gap: var(--space-3); }
+.scheduled-name-field label { font-size: var(--font-ui-sm); }
+.scheduled-editor-v2 .automation-editor-actions { flex-direction: column; align-items: stretch; }
+.scheduled-editor-v2 .automation-editor-actions > p { flex: none; }
+.scheduled-editor-buttons { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: var(--space-4); }
+.scheduled-editor-v2 .automation-editor-scroll { gap: var(--space-6); }
+.scheduled-editor-options { padding-block: var(--space-4); }
+.scheduled-editor-sheet > .scheduled-task-heading { padding-block: var(--space-6); }
+
+.scheduled-task-detail .scheduled-plan-row { padding-bottom: var(--space-6); border-bottom: var(--space-hairline) solid var(--separator); }
+
+.scheduled-window-history { margin-block-start: var(--space-6); }
+.scheduled-window-history > h3 { margin: 0 0 var(--space-4); font-size: var(--font-ui-sm); color: var(--text-secondary); }
+.scheduled-run-entry { border-bottom: var(--space-hairline) solid var(--separator); padding-block: var(--space-3); }
+.scheduled-run-conversation { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.scheduled-conversation-actions, .scheduled-conversation-input { padding: var(--space-4) var(--agent-content-x); }
+.scheduled-task-read .automation-editor-section > p { margin: 0; }
+.scheduled-run-time { margin: var(--space-5) var(--agent-content-x) 0; color: var(--text-secondary); font-size: var(--font-ui-sm); }
+.scheduled-run-entry-main { display: flex; align-items: center; gap: var(--space-2); }
+.scheduled-run-entry-main > .scheduled-run-row { flex: 1; min-width: 0; }

@@ -264,59 +264,47 @@ user-managed source folders.
 
 ## Renderer And Persistence
 
-The Agent Deck task surface uses single-column list/detail navigation at every
-Deck width, keeping both surfaces mounted. Each screen has one title and one
-Back action: detail returns to the list, and the list returns to conversations.
-List rows show task name, next occurrence or paused/ended state, and factual
-attention, current execution or an unread delivered result when relevant. They never show generated-output
-snippets. Search expands on demand (including Cmd/Ctrl+F); archive discovery
-lives in the list menu. The attention filter appears only for unresolved causes
-or while selected. Loading, no tasks, no matches and unavailable lists remain
-distinct.
+The Agent Deck list opens one window per selected task. Existing tasks open in
+view mode with their name, instructions, timing/configuration and Run history.
+New tasks start editing. Edit activates the same window; Save returns to view
+mode. Cancel editing preserves the saved definition and uses explicit discard
+for dirty drafts; closing the window is separate. The list remains behind the
+window. Search, rounded neutral hover, task identity and scroll remain local
+Agent view state; no Outline pane or report reader is introduced.
 
-Detail starts with one schedule row and one Run now / Stop run control. The task
-menu owns edit, pause/resume and archive. Live questions and exceptions precede
-the answer; a result's state and time stay adjacent to its content and Discuss
-result. Earlier runs is collapsed and absent when there is no other history.
-Older unresolved issues remain reachable through their own disclosure, including
-issues beyond the first history page. New arrivals refresh the pagination cursor
-without changing an explicitly selected historical run. Task
-information (brief, materials, location, timezone, local execution conditions
-and origin) is secondary and collapsed. Simplifying chrome changes neither
-canonical result availability nor exact issue acknowledgement.
+The edit form exposes Name, Task and When. Name is entered explicitly. Task uses
+the common Agent editor, inline references, newline Enter and local draft history.
+Its placeholder decorates the actual empty paragraph and shares the caret's line
+box. Add reuses the attachment/Project menu with draft-only selection callbacks;
+no chat membership is changed. A chosen Project/folder appears beside Add. Model,
+reasoning and separate Git copy remain optional settings. Actual execution scope
+is independent of output locations expressed in the instructions. Native file
+pickers insert durable references without importing chat attachments; pending
+pickers block Save and late results cannot enter another draft.
 
-Switching back to conversations or collapsing the Deck retains
-task/run selection, filters, scroll, unfinished task edits and conversation
-drafts. Hidden task views do not mark results read or fetch result updates; reopening reconciles current facts.
-Native task notices open the exact assignment in the Deck. Discuss result returns
-to an ordinary conversation with an explicit result reference, staged after that
-exact conversation's composer initializes so mounting cannot clear the handoff.
-View process uses the shared Agent Trajectory inspector without replacing the task surface.
-Create/edit uses a window-level centered sheet with shared focus trapping and
-restoration. Task content reuses the Agent editor's inline references and `@`
-suggestions; Enter creates a newline. The muted empty-input placeholder carries
-the @ hint; the toolbar contains only actions, and typing hides the hint. File selection inserts an exact path at the
-caret without importing a conversation attachment. A small adapter round-trips
-shared reference markup, preserving duplicate positions and plain text. Optional
-local draft history restores reference atoms together with text. Stale blur timers
-cannot close suggestions after focus has returned to the editor.
+Unsupported schedules remain exact until explicit replacement. Preview loading,
+error and no-future states remain distinct. Conflicts preserve the whole draft and
+freeze the inspected revision; a subsequent edit requires another review. Save
+does not overwrite accepted execution, pause or attention state. Saved-plan Pause
+is separate from saving the form.
 
-The normal form has Task and When. Pending file/folder pickers disable Save; late
-file results cannot populate a closed or different draft. Transient file drops
-keep the text and direct the user to a durable local reference. Name is suggested locally until customized;
-folder/Project, separate Git copy and model/reasoning live in More options. Reference
-options retain existing detached context and source-level optionality. Removing a
-last inline occurrence removes its derived requirement, while undo retains its
-policy. Unsupported custom schedules require explicit replacement before their
-structure changes. Preview loading/error/empty are distinct; a stale preview cannot
-enable Save for edited timing. Saved-plan Pause is separate from Save. The Host
-validates folder/Git/model constraints; selecting a reference is not an access grant.
-Dirty close requires explicit discard. Conflict comparison freezes the inspected
-revision; a newer remote edit requires another review before the draft can be
-applied, even if the user presses the earlier comparison's apply action. Live result updates do not replace the
-form draft. A successful local pause updates the editor's base revision while
-retaining its draft; an unrelated external edit still conflicts. Save submits
-only definition fields, never copied run or attention state.
+Run once uses the existing manual-admission owner. Save and run once first saves
+the visible definition, then admits that accepted revision. A confirmed run ends
+that request identity; another explicit click starts a new operation. An uncertain
+reply retries the same request and does not repeat the save. Paused timing stays
+paused and future one-off occurrences are not consumed. View current run does not
+save a dirty draft; returning from its conversation preserves that draft.
+
+Each history row opens the canonical run conversation at `resultTurnId` and the
+matching message Item when present, including owned late delivery Turns. The
+Host association is resolved before navigation, and the renderer checks that the
+exact Turn/Item exists. Missing evidence stays unavailable without selecting a
+replacement Thread. The shared Thread renderer and its virtual scroll-restore
+mechanism display the history, not a second task transcript. Back restores the
+task window and history scroll. The previously selected user chat stays mounted.
+Run reading is recorded only after successful conversation resolution and never
+acknowledges a terminal issue. Shared user-input forms and timeout/draft recovery
+operate in the run conversation; process inspection remains a secondary action.
 
 The typed Automation request/notification bridge remains separate from Agent
 history transport. Preload decodes responses and notifications. Renderer merge

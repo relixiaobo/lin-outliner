@@ -5,12 +5,17 @@ import { scheduledBriefContent, scheduledBriefText, scheduledFileReference } fro
 import { useT } from '../../i18n/I18nProvider';
 import { textOf } from '../../ui/shared';
 import { IconButton } from '../../ui/primitives/IconButton';
-import { AddIcon, AttachmentIcon } from '../../ui/icons';
+import { AddIcon, FolderIcon, CloseIcon, ICON_SIZE } from '../../ui/icons';
+import { ComposerProjectMenu, type ComposerDraftProjectSelection } from '../projects/ComposerProjectMenu';
+import type { ComposerProjectContext } from '../projects/ConversationControls';
 
 interface Props {
   indexStore: DocumentIndexStore;
   value: string;
   disabled: boolean;
+  active: boolean;
+  projectContext: ComposerProjectContext;
+  projectSelection: ComposerDraftProjectSelection;
   onChange: (text: string) => void;
   onValidityChange: (valid: boolean) => void;
   onPendingChange: (pending: boolean) => void;
@@ -18,16 +23,21 @@ interface Props {
 }
 
 /** The Agent editing surface, adapted to persistent reference markup, not attachments. */
-export function ScheduledBriefInput({ indexStore, value, disabled, onChange, onValidityChange, onPendingChange, onError }: Props) {
-  const t = useT().agent.automations.editor;
+export function ScheduledBriefInput({ indexStore, value, disabled, active, projectContext, projectSelection, onChange, onValidityChange, onPendingChange, onError }: Props) {
+  const messages = useT();
+  const t = messages.agent.automations.editor;
+  const addRef = useRef<HTMLButtonElement | null>(null);
+  const projectRef = useRef<HTMLButtonElement | null>(null);
+  const [menu, setMenu] = useState<'add' | 'project' | null>(null);
   const editor = useRef<ThreadComposerEditorHandle | null>(null);
   const currentValue = useRef(value);
   const alive = useRef(true);
   const pickerPending = useRef(false);
   const [picking, setPicking] = useState(false);
+  useEffect(() => { if (!active || disabled) setMenu(null); }, [active, disabled]);
   const title = (id: string) => textOf(indexStore.getCurrent().byId.get(id)) || t.unavailableReference;
   const initial = useRef<readonly ThreadComposerDraftContent[]>(scheduledBriefContent(value, title));
-  useEffect(() => { alive.current = true; editor.current?.focus(); return () => { alive.current = false; }; }, []);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
     if (value === currentValue.current) return;
     currentValue.current = value;
@@ -52,7 +62,7 @@ export function ScheduledBriefInput({ indexStore, value, disabled, onChange, onV
       if (!event.dataTransfer.files.length) return;
       event.preventDefault(); event.stopPropagation(); onError(t.useSavedFile);
     }}>
-    <ThreadComposerEditor ref={editor} ariaLabel={t.task} placeholder={t.placeholder} indexStore={indexStore}
+    <ThreadComposerEditor ref={editor} ariaLabel={t.task} placeholder={t.placeholder} placeholderAtCaret indexStore={indexStore}
       initialContent={initial.current} disabled={disabled || picking} draftHistory inDialog submitOnEnter={false}
       currentNodeId={null} isStreaming={false} allowThreadReferences={false} allowSlashCommands={false}
       slashCommands={[]} recentLocalFiles={[]}
@@ -71,10 +81,23 @@ export function ScheduledBriefInput({ indexStore, value, disabled, onChange, onV
       onFilesPasted={() => onError(t.useSavedFile)} onLargeTextPaste={() => { onError(t.longPaste); return null; }}
       onTextPasteRejected={() => onError(t.longPaste)} onSubmit={() => undefined} onStop={() => undefined} />
     <div className="scheduled-brief-toolbar">
-      <IconButton icon={AddIcon} label={t.addReference} disabled={disabled || picking}
-        onMouseDown={(event) => event.preventDefault()} onClick={() => editor.current?.insertText(' @')} variant="composerTool" />
-      <IconButton icon={AttachmentIcon} label={t.chooseFiles} disabled={disabled || picking}
-        onMouseDown={(event) => event.preventDefault()} onClick={() => void pickFiles()} variant="composerTool" />
+      <IconButton ref={addRef} icon={AddIcon} label={messages.agent.projects.add} disabled={disabled || picking}
+        aria-haspopup="menu" aria-expanded={menu === 'add'} onMouseDown={(event) => event.preventDefault()}
+        onClick={() => setMenu((value) => value === 'add' ? null : 'add')} variant="composerTool" />
+      {projectSelection.selectedLabel ? <div className="thread-location-chip" title={projectSelection.selectedLabel}>
+        <span className="thread-location-icon"><FolderIcon size={ICON_SIZE.compact} />
+          <IconButton icon={CloseIcon} label={t.removeProject} disabled={disabled || picking} variant="tabClose"
+            onClick={() => { void Promise.resolve().then(() => projectSelection.onSelect(null)).catch((reason) => onError(String(reason))); }} />
+        </span>
+        <button ref={projectRef} className="thread-location-open" type="button" aria-label={messages.agent.projects.changeProject}
+          aria-expanded={menu === 'project'} aria-haspopup="menu" disabled={disabled || picking}
+          onClick={() => setMenu((value) => value === 'project' ? null : 'project')}>
+          <span className="thread-location-project">{projectSelection.selectedLabel}</span>
+        </button>
+      </div> : null}
     </div>
+    {active && menu ? <ComposerProjectMenu anchorRef={menu === 'project' ? projectRef : addRef} fallbackAnchorRef={addRef}
+      pickerOnly={menu === 'project'} context={projectContext} draftSelection={projectSelection}
+      attachmentDisabled={disabled || picking} onAttachment={() => void pickFiles()} onClose={() => setMenu(null)} /> : null}
   </div>;
 }
