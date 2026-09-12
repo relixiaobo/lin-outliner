@@ -224,17 +224,18 @@ for (const theme of ['light', 'dark'] as const) {
     const project = await page.evaluate(async () => (await window.lin.agentCoreRequest('project/manage', {
       operation: 'create', name: 'Scheduled workspace', folders: ['/Users/developer/scheduled'], primaryFolder: '/Users/developer/scheduled',
     })).project!);
-    await page.locator('.thread-dock-header').getByRole('button', { name: 'Open Automations' }).click();
-    await page.locator('.automations-toolbar').getByRole('button', { name: 'New Automation' }).click();
-    const editor = page.getByRole('dialog', { name: 'New Automation' });
+    await page.locator('.thread-dock-header').getByRole('button', { name: 'Scheduled tasks', exact: true }).click();
+    await page.getByRole('button', { name: 'New task', exact: true }).click();
+    const editor = page.getByRole('dialog', { name: 'New task', exact: true });
     await editor.getByRole('textbox', { name: 'Name', exact: true }).fill('Project check');
-    await editor.getByRole('textbox', { name: 'Prompt', exact: true }).fill('Check the saved workspace.');
-    await editor.getByRole('combobox', { name: 'Project', exact: true }).selectOption('local');
-    await editor.getByRole('combobox', { name: 'Projects', exact: true }).selectOption(project.id);
-    await expect(editor.getByText('/Users/developer/scheduled', { exact: true })).toBeVisible();
-    await editor.getByRole('button', { name: 'Create Automation' }).click();
-    const detail = page.getByRole('dialog', { name: 'Project check', exact: true });
-    await expect(detail.getByRole('combobox', { name: 'Projects', exact: true })).toHaveValue(project.id);
+    await editor.getByRole('textbox', { name: 'Task', exact: true }).fill('Check the saved workspace.');
+    await editor.getByRole('button', { name: 'Add', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Choose project', exact: true }).click();
+    await page.getByRole('menuitemradio', { name: project.name, exact: true }).click();
+    await expect(editor.locator('.thread-location-chip')).toContainText(project.name);
+    await editor.getByRole('button', { name: 'Create task', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Task details', exact: true }).getByRole('button', { name: 'Edit', exact: true }).click();
+    const detail = page.getByRole('dialog', { name: 'Edit task', exact: true });
     const create = (await commandCalls(page)).find((call) => call.cmd === 'automation/create');
     expect(create?.args.contextHints).toEqual([{ source: { kind: 'project', projectId: project.id }, executionMode: 'local' }]);
     // A missing-reference fixture exercises history rendering; the real Host's
@@ -243,12 +244,11 @@ for (const theme of ['light', 'dark'] as const) {
       await window.lin.agentCoreRequest('project/manage', { operation: 'delete', projectId: project.id, expectedRevision: project.revision });
       window.dispatchEvent(new Event('focus'));
     }, project);
-    await expect(detail.getByRole('combobox', { name: 'Projects', exact: true }).locator('option:checked')).toHaveText('Unavailable');
+    await expect(detail.locator('.thread-location-chip')).toContainText('Unavailable');
     await expect(detail.getByRole('textbox', { name: 'Project 1 path', exact: true })).toHaveCount(0);
-    await detail.getByRole('combobox', { name: 'Projects', exact: true }).scrollIntoViewIfNeeded();
-    await page.screenshot({ path: testInfo.outputPath(`automation-project-${theme}.png`) });
-    await detail.getByRole('combobox', { name: 'Projects', exact: true }).selectOption('');
-    await expect(detail.getByRole('textbox', { name: 'Project 1 path', exact: true })).toHaveValue('');
+    await page.screenshot({ path: testInfo.outputPath(`automation-project-${theme}.png`), animations: 'disabled' });
+    await detail.getByRole('button', { name: 'Remove task project', exact: true }).click();
+    await expect(detail.locator('.thread-location-chip')).toHaveCount(0);
   });
 }
 

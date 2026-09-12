@@ -50,7 +50,7 @@ describe('canonical provider tool catalog', () => {
   });
 
   test('declares and compiles output-data validation for every catalog tool', () => {
-    expect(MODEL_TOOL_CATALOG).toHaveLength(19);
+    expect(MODEL_TOOL_CATALOG).toHaveLength(18);
     expect(MODEL_TOOL_CATALOG.map((tool) => canonicalModelToolKey(tool.identity))).not.toContain('file_delete');
     const failures: string[] = [];
     for (const contract of MODEL_TOOL_CATALOG) {
@@ -191,16 +191,12 @@ describe('canonical provider tool catalog', () => {
   });
 
   test('fails closed for a host-owned schema a dynamic factory registered', async () => {
-    // `automation_update` reaches the runtime through `dynamicTools`, the same
-    // channel MCP-backed and extension tools use. Ownership decides: its
-    // contract is Core-owned, so an unsendable schema is a structural failure
-    // rather than a `console.warn` and a tool that quietly disappears — which is
-    // the failure this whole guard exists to prevent, for the tool it happened to.
+    // Core ownership keeps invalid dynamic schemas fail-closed after scheduling tool retirement.
     const runtime = new ToolRuntime(runtimeService(), {
       capabilityTools: runtimeSchemaTools,
       dynamicTools: () => [{
-        name: 'automation_update',
-        label: 'Update Automation',
+        name: 'request_user_input',
+        label: 'Request Input',
         description: 'Root-union probe.',
         parameters: { oneOf: [{ type: 'object' }] } as never,
         executionMode: 'sequential' as const,
@@ -210,7 +206,7 @@ describe('canonical provider tool catalog', () => {
     });
 
     await expect(runtime.createTools(RUNTIME_CONTEXT)).rejects.toThrow(
-      'Runtime model-tool schema is invalid: automation_update',
+      'Runtime model-tool schema is invalid: request_user_input',
     );
   });
 

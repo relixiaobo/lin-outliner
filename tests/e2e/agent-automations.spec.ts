@@ -1,315 +1,216 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { commandCalls, openMockedApp } from './outlinerMock';
 
-test.describe('Automation surface', () => {
-  test.beforeEach(async ({ page }) => {
-    await openMockedApp(page);
-    await page.locator('.thread-dock-header').getByRole('button', { name: 'Open Automations' }).click();
+async function start(page: Page) {
+  await openMockedApp(page);
+  await page.getByRole('button', { name: 'Scheduled tasks', exact: true }).click();
+}
+async function createTask(page: Page) {
+  await page.getByRole('button', { name: 'New task', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: 'New task', exact: true });
+  await editor.getByRole('textbox', { name: 'Name', exact: true }).fill('Repository review');
+  await editor.getByRole('textbox', { name: 'Task', exact: true }).fill('Review the repository and report important changes.');
+  await editor.getByRole('button', { name: 'Create task', exact: true }).click();
+  const task = page.getByRole('dialog', { name: 'Task details', exact: true });
+  await expect(task).toBeVisible();
+  return task;
+}
+
+test('list selection opens the unified task window read-only; editing and canceling stay in that window', async ({ page }) => {
+  await start(page);
+  const task = await createTask(page);
+  await expect(task.getByText('Review the repository and report important changes.', { exact: true })).toBeVisible();
+  await expect(task.getByRole('textbox', { name: 'Task', exact: true })).toHaveCount(0);
+  await expect(task.getByRole('heading', { name: 'Run history', exact: true })).toBeVisible();
+  await task.getByRole('button', { name: 'Edit', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: 'Edit task', exact: true });
+  await editor.getByRole('textbox', { name: 'Task', exact: true }).fill('Unsaved instructions');
+  await editor.getByRole('button', { name: 'Cancel', exact: true }).click();
+  const discard = page.getByRole('dialog', { name: 'Discard changes?', exact: true });
+  await discard.getByRole('button', { name: 'Discard changes', exact: true }).click();
+  await expect(task).toBeVisible();
+  await expect(task).not.toContainText('Unsaved instructions');
+  await task.getByRole('button', { name: 'Close task', exact: true }).last().click();
+  await expect(task).toBeHidden();
+  const row = page.locator('.scheduled-task-row', { hasText: 'Repository review' });
+  await row.click();
+  await expect(task.getByRole('button', { name: 'Edit', exact: true })).toBeVisible();
+  expect((await commandCalls(page)).filter((call) => call.cmd === 'automation/update')).toHaveLength(0);
+});
+
+test('pause keeps dirty editing intact and the final save returns to the same task window', async ({ page }) => {
+  await start(page); const task = await createTask(page);
+  await task.getByRole('button', { name: 'Edit', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: 'Edit task', exact: true });
+  await editor.getByRole('textbox', { name: 'Task', exact: true }).fill('Keep this instruction while pausing.');
+  await editor.getByRole('button', { name: 'Saved schedule actions', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Pause saved schedule', exact: true }).click();
+  await expect(editor.getByRole('textbox', { name: 'Task', exact: true })).toHaveText('Keep this instruction while pausing.');
+  await editor.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(task).toContainText('Keep this instruction while pausing.');
+  await expect(task.getByText('Paused', { exact: true })).toBeVisible();
+  const update = (await commandCalls(page)).find((call) => call.cmd === 'automation/update')!;
+  expect(update.args.expectedRevision).toBe(2); expect(update.args).not.toHaveProperty('status');
+});
+
+test('Run once enters the canonical conversation and Back restores the task window without changing the original chat draft', async ({ page }) => {
+  await openMockedApp(page);
+  await page.getByRole('textbox', { name: 'Message this Thread', exact: true }).fill('Keep my chat draft.');
+  await page.getByRole('button', { name: 'Scheduled tasks', exact: true }).click();
+  const task = await createTask(page);
+  await task.getByRole('button', { name: 'Task actions', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Pause schedule', exact: true }).click();
+  await task.getByRole('button', { name: 'Run once', exact: true }).click();
+  await expect(task).toBeHidden();
+  const conversation = page.locator('.scheduled-run-conversation');
+  await expect(conversation).toContainText('Automation completed in the canonical Thread.');
+  await conversation.getByRole('button', { name: 'Back to task', exact: true }).click();
+  await expect(task).toBeVisible();
+  await expect(task.getByText('Paused', { exact: true })).toBeVisible();
+  await expect(task.locator('.scheduled-run-entry')).toHaveCount(1);
+  await task.getByRole('button', { name: 'Close task', exact: true }).last().click();
+  await page.getByRole('button', { name: 'Back to Threads', exact: true }).click();
+  await expect(page.getByRole('textbox', { name: 'Message this Thread', exact: true })).toHaveText('Keep my chat draft.');
+});
+
+test('an opened task does not mark history read; clicking a run targets the owned completion Turn', async ({ page }) => {
+  await start(page); const task = await createTask(page);
+  const run = await page.evaluate(async () => {
+    const task = (await window.lin!.automationRequest('list', {})).data[0]!;
+    const run = (await window.lin!.automationRequest('startNow', { id: task.id, expectedRevision: task.revision, requestId: 'history' })).runs[0]!;
+    const history = await window.lin!.agentCoreRequest('thread/turns/list', { threadId: run.threadId!, limit: 100, itemsView: 'full' });
+    const original = history.data[0]!;
+    const completion = { ...original, id: '01930000-0000-7000-8000-000000000090', startedAt: original.startedAt + 10,
+      items: [{ type: 'agentMessage', id: 'completion-answer', text: 'The owned completion result.', phase: 'final_answer', provenance: { originThreadId: run.threadId, originTurnId: '01930000-0000-7000-8000-000000000090', originItemId: 'completion-answer' } }] };
+    const host = (window as unknown as { __LIN_E2E__: { setMockThreadTurns: (id: string, turns: unknown[]) => void; setScheduledResult: (id: string, result: unknown) => void } }).__LIN_E2E__;
+    host.setMockThreadTurns(run.threadId!, [original, completion]);
+    host.setScheduledResult(run.id, { resultTurnId: completion.id, parts: [{ text: 'The owned completion result.', itemId: 'completion-answer', turnId: completion.id, finalCitations: [] }] });
+    return { ...run, target: completion.id };
   });
+  await expect(task.locator('.scheduled-run-entry')).toHaveCount(1);
+  expect((await commandCalls(page)).filter((call) => call.cmd === 'automation/runMarkRead')).toHaveLength(0);
+  await task.locator('.scheduled-run-row').click();
+  await expect(page.locator(`.scheduled-run-conversation [data-thread-turn-row="${run.target}"]`)).toBeVisible();
+  await expect(page.locator('.scheduled-run-conversation [data-thread-item-id="completion-answer"]')).toBeInViewport();
+  await expect.poll(async () => (await commandCalls(page)).filter((call) => call.cmd === 'automation/runMarkRead' && call.args.id === run.id).length).toBeGreaterThan(0);
+});
 
-  test('creates, pauses, resumes, starts, opens, and deletes an Automation', async ({ page }) => {
-    await expect(page.locator('.thread-dock-title')).toHaveText('Automations');
-    await expect(page.getByText('No Automations yet.')).toBeVisible();
-    const toolbar = page.locator('.automations-toolbar');
-    await expect(toolbar.locator('.automations-search')).toBeVisible();
-    await expect(toolbar.getByRole('button', { name: 'New Automation' })).toBeVisible();
-    const emptyState = page.locator('.automation-list-feedback');
-    const [emptyIconBox, emptyCopyBox, emptyActionBox] = await Promise.all([
-      emptyState.locator(':scope > svg').boundingBox(),
-      emptyState.locator('.feedback-state-copy').boundingBox(),
-      emptyState.locator('.feedback-state-action').boundingBox(),
-    ]);
-    expect(emptyIconBox).toBeTruthy();
-    expect(emptyCopyBox).toBeTruthy();
-    expect(emptyActionBox).toBeTruthy();
-    expect(emptyCopyBox!.y).toBeGreaterThanOrEqual(emptyIconBox!.y + emptyIconBox!.height);
-    expect(emptyActionBox!.y).toBeGreaterThanOrEqual(emptyCopyBox!.y + emptyCopyBox!.height);
-    expect(Math.abs(
-      emptyCopyBox!.x + emptyCopyBox!.width / 2
-      - (emptyActionBox!.x + emptyActionBox!.width / 2),
-    )).toBeLessThan(1);
-    const filterWidths = await page.locator('.automations-filter .segmented-control-option')
-      .evaluateAll((options) => options.map((option) => option.getBoundingClientRect().width));
-    expect(Math.max(...filterWidths) - Math.min(...filterWidths)).toBeLessThan(1);
-    const selectedFilter = page.locator('.automations-filter [role="radio"][aria-checked="true"]');
-    const unselectedFilter = page.locator('.automations-filter [role="radio"][aria-checked="false"]').first();
-    await expect(selectedFilter).toHaveText('All');
-    const [selectedFilterStyle, unselectedFilterStyle] = await Promise.all([
-      selectedFilter,
-      unselectedFilter,
-    ].map((locator) => locator.evaluate((element) => {
-      const style = getComputedStyle(element);
-      return {
-        backgroundColor: style.backgroundColor,
-        boxShadow: style.boxShadow,
-        fontWeight: Number.parseInt(style.fontWeight, 10),
-      };
-    })));
-    expect(selectedFilterStyle.backgroundColor).not.toBe(unselectedFilterStyle.backgroundColor);
-    expect(selectedFilterStyle.boxShadow).not.toBe('none');
-    expect(selectedFilterStyle.fontWeight).toBeGreaterThanOrEqual(600);
-
-    await toolbar.getByRole('button', { name: 'New Automation' }).click();
-    const createDrawer = page.getByRole('dialog', { name: 'New Automation' });
-    await expect(createDrawer).toBeVisible();
-    await page.getByRole('textbox', { name: 'Name' }).fill('Daily repository review');
-    await page.getByRole('textbox', { name: 'Prompt' }).fill('Review the repository and summarize important changes.');
-    const repeat = createDrawer.getByRole('combobox', { name: 'Repeat' });
-    await repeat.selectOption('weekly');
-    const weekdays = createDrawer.getByRole('button', { name: 'On', exact: true });
-    await weekdays.click();
-    const weekdayMenu = page.getByRole('menu', { name: 'On', exact: true });
-    for (const [name, selected] of [
-      ['Monday', true], ['Tuesday', false], ['Wednesday', true], ['Thursday', false],
-      ['Friday', false], ['Saturday', false], ['Sunday', false],
-    ] as const) {
-      const option = weekdayMenu.getByRole('menuitemcheckbox', { name });
-      if ((await option.getAttribute('aria-checked')) !== String(selected)) await option.click();
-    }
-    const saturday = weekdayMenu.getByRole('menuitemcheckbox', { name: 'Saturday' });
-    await saturday.click();
-    await saturday.click();
-    await expect(saturday).toBeFocused();
-    await page.keyboard.press('Escape');
-    await expect(weekdayMenu).toHaveCount(0);
-    const time = createDrawer.getByLabel('At', { exact: true });
-    await expect(time).toBeVisible();
-    await time.fill('09:05');
-    await page.getByRole('button', { name: 'Create Automation' }).click();
-
-    const detailDrawer = page.getByRole('dialog', { name: 'Daily repository review' });
-    await expect(detailDrawer).toBeVisible();
-    const drawerTitle = detailDrawer.getByRole('heading', { name: 'Daily repository review' });
-    await expect(drawerTitle).toBeVisible();
-    await expect(detailDrawer.locator('.automation-drawer-status')).toHaveText('Active');
-    await expect(detailDrawer.locator('.automation-drawer-status > *')).toHaveCount(0);
-    const [drawerTitleLeft, editorLeft] = await Promise.all([
-      drawerTitle,
-      detailDrawer.locator('.automation-name-field'),
-    ].map((locator) => locator.evaluate((element) => element.getBoundingClientRect().left)));
-    expect(Math.abs(drawerTitleLeft - editorLeft)).toBeLessThan(1);
-    const detailsGroup = detailDrawer.locator('.automation-settings-group').first();
-    const groupContract = await detailsGroup.evaluate((element) => {
-      const rows = [...element.querySelectorAll<HTMLElement>('.automation-setting-row')];
-      const style = getComputedStyle(element);
-      const separator = rows[1] ? getComputedStyle(rows[1], '::before') : null;
-      return {
-        borderTopWidth: style.borderTopWidth,
-        boxShadow: style.boxShadow,
-        minRowHeight: Math.min(...rows.map((row) => row.getBoundingClientRect().height)),
-        separatorLeft: separator?.left,
-        separatorRight: separator?.right,
-      };
-    });
-    expect(groupContract.borderTopWidth).toBe('0px');
-    expect(groupContract.boxShadow).not.toBe('none');
-    expect(groupContract.minRowHeight).toBeGreaterThanOrEqual(44);
-    expect(groupContract.separatorLeft).toBe('8px');
-    expect(groupContract.separatorRight).toBe('8px');
-    const automationRow = page.locator('.automation-list-row', { hasText: 'Daily repository review' });
-    await expect(automationRow).toBeVisible();
-    await expect(automationRow.locator('.automation-status-dot')).toHaveCount(0);
-    await expect(automationRow.locator('.automation-list-icon > .automation-unread')).not.toHaveClass(/is-visible/);
-    const [searchLeft, filterLeft, rowLeft, searchTextLeft, rowTextLeft] = await Promise.all([
-      page.locator('.automations-search'),
-      page.locator('.automations-filter'),
-      automationRow,
-      page.locator('.automations-search .input-control'),
-      automationRow.locator('.automation-list-heading strong'),
-    ].map((locator) => locator.evaluate((element) => element.getBoundingClientRect().left)));
-    expect(Math.abs(searchLeft - filterLeft)).toBeLessThan(1);
-    expect(rowLeft).toBeLessThan(searchLeft);
-    expect(Math.abs(searchTextLeft - rowTextLeft)).toBeLessThan(1);
-    await expect(detailDrawer.getByRole('combobox', { name: 'Runs in' })).toHaveValue('standalone');
-    const model = detailDrawer.getByRole('combobox', { name: 'Model' });
-    await expect(model).toHaveValue('');
-    await model.selectOption('openai/gpt-5.4');
-    const timezone = detailDrawer.getByRole('combobox', { name: 'Timezone' });
-    await timezone.selectOption('Asia/Shanghai');
-    await page.getByRole('textbox', { name: 'Prompt' }).fill('Review the repository and summarize verified changes.');
-    await expect(page.getByRole('button', { name: 'Start now' })).toBeDisabled();
-    await page.getByRole('button', { name: 'Save', exact: true }).click();
-    await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
-
-    await page.getByRole('button', { name: 'Automation actions' }).click();
-    await page.getByRole('menu', { name: 'Automation actions' }).getByRole('menuitem', { name: 'Pause' }).click();
-    await expect(detailDrawer).toContainText('Paused');
-    await page.getByRole('button', { name: 'Automation actions' }).click();
-    await page.getByRole('menu', { name: 'Automation actions' }).getByRole('menuitem', { name: 'Resume' }).click();
-    await expect(detailDrawer).toContainText('Active');
-    await page.getByRole('textbox', { name: 'Prompt' }).fill('Review the repository and summarize verified changes after resuming.');
-    await page.getByRole('button', { name: 'Save', exact: true }).click();
-    await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
-
-    await page.getByRole('button', { name: 'Start now' }).click();
-    const run = page.locator('.automation-run').first();
-    await expect(run).toContainText('Started');
-    await expect(automationRow.locator('.automation-list-icon > .automation-unread')).toHaveClass(/is-visible/);
-    await expect(run.locator('.automation-run-state')).toHaveCount(0);
-    await expect(run.locator('.automation-run-unread')).toHaveClass(/is-visible/);
-    await expect(run.getByRole('button', { name: 'Mark as read' })).toHaveCount(0);
-    await expect(run.getByRole('button', { name: /Daily repository review, Unread/ })).toBeVisible();
-    const markAllRead = detailDrawer.getByRole('button', { name: 'Mark all as read' });
-    await expect(markAllRead).toBeVisible();
-    await markAllRead.click();
-    await expect(markAllRead).toHaveCount(0);
-    await expect(run.locator('.automation-run-unread')).not.toHaveClass(/is-visible/);
-    await expect(automationRow.locator('.automation-list-icon > .automation-unread')).not.toHaveClass(/is-visible/);
-
-    await page.getByRole('button', { name: 'Start now' }).click();
-    await expect(run.locator('.automation-run-unread')).toHaveClass(/is-visible/);
-    await run.getByRole('button', { name: /Daily repository review/ }).click();
-
-    await expect(page.locator('.thread-dock-title')).toHaveText('Daily repository review');
-    await expect(page.locator('.thread-user-message')).toContainText('verified changes after resuming');
-    await expect(page.locator('.thread-agent-message')).toContainText('Automation completed');
-    await expect(page.getByRole('textbox', { name: 'Message this Thread' })).toHaveCount(0);
-
-    await page.getByRole('button', { name: 'Show Threads' }).click();
-    await expect(page.getByRole('dialog', { name: 'Threads' })
-      .getByRole('button', { name: 'Open Automations' })).toHaveCount(0);
-    await page.keyboard.press('Escape');
-    await page.locator('.thread-dock-header').getByRole('button', { name: 'Open Automations' }).click();
-    await page.locator('.automation-list-row', { hasText: 'Daily repository review' }).click();
-    await expect(page.getByRole('button', { name: 'Mark all as read' })).toHaveCount(0);
-    await page.getByRole('button', { name: 'Automation actions' }).click();
-    await page.getByRole('menu', { name: 'Automation actions' }).getByRole('menuitem', { name: 'Delete Automation' }).click();
-    const dialog = page.getByRole('dialog', { name: 'Delete Automation' });
-    await expect(dialog).toContainText('Future occurrences will stop.');
-    await dialog.getByRole('button', { name: 'Delete Automation' }).click();
-    await expect(page.getByText('No Automations yet.')).toBeVisible();
-
-    const calls = await commandCalls(page);
-    expect(calls.map((call) => call.cmd)).toEqual(expect.arrayContaining([
-      'automation/list',
-      'automation/runs',
-      'automation/create',
-      'automation/update',
-      'automation/pause',
-      'automation/resume',
-      'automation/startNow',
-      'automation/runsMarkRead',
-      'automation/delete',
-    ]));
-    expect(calls.find((call) => call.cmd === 'automation/update')?.args.configuration)
-      .toMatchObject({
-        modelProvider: 'openai',
-        model: 'openai/gpt-5.4',
-      });
-    expect(calls.find((call) => call.cmd === 'automation/create')?.args.schedule.rrule)
-      .toMatch(/RRULE:FREQ=WEEKLY;BYDAY=MO,WE$/);
-    expect(calls.find((call) => call.cmd === 'automation/create')?.args.schedule.rrule)
-      .toMatch(/^DTSTART:\d{8}T090500/m);
+test('unavailable conversations keep the task window open with an explicit error', async ({ page }) => {
+  await start(page); const task = await createTask(page);
+  await page.evaluate(async () => {
+    const task = (await window.lin!.automationRequest('list', {})).data[0]!;
+    await window.lin!.automationRequest('startNow', { id: task.id, expectedRevision: task.revision, requestId: 'unavailable-run' });
+    const request = window.lin!.agentCoreRequest;
+    window.lin!.agentCoreRequest = (async (method: string, input: unknown) => {
+      if (method === 'thread/read') throw new Error('Conversation is unavailable');
+      return request(method as never, input as never);
+    }) as typeof request;
+    const host = (window as unknown as { __LIN_E2E__: { setMockThreadTurns: (id: string, turns: unknown[]) => void } }).__LIN_E2E__;
+    const run = (await window.lin!.automationRequest('runs', {})).data[0]!;
+    host.setMockThreadTurns(run.threadId!, []);
   });
+  await expect(task.locator('.scheduled-run-row')).toHaveCount(1);
+  await task.locator('.scheduled-run-row').click();
+  await expect(task).toBeVisible();
+  await expect(task.getByRole('alert')).toContainText('unavailable');
+  await expect(page.locator('.scheduled-run-conversation')).toHaveCount(0);
+});
 
-  test('shows complete controls for each schedule preset', async ({ page }) => {
-    await page.locator('.automations-toolbar').getByRole('button', { name: 'New Automation' }).click();
-    const drawer = page.getByRole('dialog', { name: 'New Automation' });
-    const repeat = drawer.getByRole('combobox', { name: 'Repeat' });
-
-    await repeat.selectOption('once');
-    const date = drawer.getByRole('button', { name: 'Date', exact: true });
-    await expect(date).toBeVisible();
-    await expect(drawer.getByLabel('At', { exact: true })).toBeVisible();
-    await date.click();
-    const datePicker = page.getByRole('dialog', { name: 'Date picker' });
-    await expect(datePicker).toBeVisible();
-    await expect(datePicker.getByRole('button', { name: 'Clear' })).toHaveCount(0);
-    await page.keyboard.press('Escape');
-
-    await repeat.selectOption('hourly');
-    await expect(drawer.getByRole('button', { name: 'On', exact: true })).toHaveCount(0);
-    await expect(drawer.getByLabel('At', { exact: true })).toHaveCount(0);
-
-    await repeat.selectOption('daily');
-    const dailyTime = drawer.getByLabel('At', { exact: true });
-    await expect(dailyTime).toBeVisible();
-    await drawer.getByRole('button', { name: 'Choose time' }).click();
-    const timePicker = page.getByRole('dialog', { name: 'Time picker' });
-    await expect(timePicker).toBeVisible();
-    const hourList = timePicker.getByRole('listbox', { name: 'Hour' });
-    const scrollContract = await hourList.evaluate((element) => {
-      const style = getComputedStyle(element);
-      return {
-        overflowY: style.overflowY,
-        paddingInlineEnd: style.paddingInlineEnd,
-        paddingInlineStart: style.paddingInlineStart,
-      };
-    });
-    expect(scrollContract.overflowY).toBe('hidden');
-    expect(scrollContract.paddingInlineStart).toBe(scrollContract.paddingInlineEnd);
-    expect(Number.parseFloat(scrollContract.paddingInlineEnd)).toBeGreaterThan(0);
-    const selectedHour = await hourList.locator('[aria-selected="true"]').textContent();
-    await hourList.hover();
-    await page.mouse.wheel(0, 28);
-    await expect(hourList.locator('[aria-selected="true"]')).not.toHaveText(selectedHour ?? '');
-    const centeredSelection = await hourList.evaluate((element) => {
-      const selected = element.querySelector<HTMLElement>('[aria-selected="true"]');
-      if (!selected) return Number.POSITIVE_INFINITY;
-      const listRect = element.getBoundingClientRect();
-      const selectedRect = selected.getBoundingClientRect();
-      return Math.abs(
-        (listRect.top + listRect.height / 2)
-        - (selectedRect.top + selectedRect.height / 2),
-      );
-    });
-    expect(centeredSelection).toBeLessThan(1);
-    await hourList.getByRole('option', { name: '10', exact: true }).click();
-    await timePicker.getByRole('listbox', { name: 'Minute' }).getByRole('option', { name: '17', exact: true }).click();
-    await expect(timePicker).toHaveCount(0);
-    await expect(dailyTime).toHaveValue('10:17');
-    await dailyTime.fill('25:75');
-    await dailyTime.blur();
-    await expect(dailyTime).toHaveValue('10:17');
-
-    await repeat.selectOption('weekdays');
-    await expect(drawer.getByRole('button', { name: 'On', exact: true })).toHaveCount(0);
-    await expect(drawer.getByLabel('At', { exact: true })).toBeVisible();
-
-    await repeat.selectOption('weekly');
-    await expect(drawer.getByRole('button', { name: 'On', exact: true })).toBeVisible();
-    await expect(drawer.getByLabel('At', { exact: true })).toBeVisible();
-
-    await repeat.selectOption('custom');
-    const repeats = drawer.getByRole('combobox', { name: 'Repeats' });
-    await expect(drawer.getByRole('spinbutton', { name: 'Every' })).toBeVisible();
-    await repeats.selectOption('weekly');
-    await expect(drawer.getByRole('button', { name: 'On', exact: true })).toBeVisible();
-    await expect(drawer.getByLabel('At', { exact: true })).toBeVisible();
-    await repeats.selectOption('monthly');
-    await expect(drawer.getByRole('button', { name: 'On days', exact: true })).toBeVisible();
-    await repeats.selectOption('yearly');
-    await expect(drawer.getByRole('combobox', { name: 'In', exact: true })).toBeVisible();
-    await expect(drawer.getByRole('button', { name: 'On days', exact: true })).toBeVisible();
-    await repeats.selectOption('hourly');
-    await expect(drawer.getByRole('spinbutton', { name: 'At minute' })).toBeVisible();
-    await expect(drawer.getByLabel('At', { exact: true })).toHaveCount(0);
+for (const colorScheme of ['light', 'dark'] as const) {
+  test(`task window and list hover remain understandable and stable in ${colorScheme}`, async ({ page }, info) => {
+    await page.emulateMedia({ colorScheme }); await start(page);
+    const task = await createTask(page);
+    await page.screenshot({ path: info.outputPath(`task-window-${colorScheme}.png`), animations: 'disabled' });
+    await task.getByRole('button', { name: 'Close task', exact: true }).last().click();
+    const row = page.locator('.scheduled-task-row', { hasText: 'Repository review' });
+    const rect = await row.boundingBox(); await row.hover(); expect(await row.boundingBox()).toEqual(rect);
+    expect(await row.evaluate((element) => parseFloat(getComputedStyle(element).borderTopLeftRadius))).toBeGreaterThan(0);
+    await page.screenshot({ path: info.outputPath(`list-hover-${colorScheme}.png`), animations: 'disabled' });
   });
+}
 
-  test('confirms before closing a dirty drawer and remembers keyboard resizing', async ({ page }) => {
-    const newAutomation = page.locator('.automations-toolbar').getByRole('button', { name: 'New Automation' });
-    await newAutomation.click();
-    const drawer = page.getByRole('dialog', { name: 'New Automation' });
-    const handle = page.getByRole('separator', { name: 'Resize Automation details' });
-    const originalHeight = await drawer.evaluate((element) => element.getBoundingClientRect().height);
-    await handle.press('ArrowDown');
-    const resizedHeight = await drawer.evaluate((element) => element.getBoundingClientRect().height);
-    expect(resizedHeight).toBeLessThan(originalHeight);
-
-    await page.getByRole('textbox', { name: 'Name' }).fill('Unsaved Automation');
-    await page.getByRole('button', { name: 'Close Automation details' }).click();
-    const discard = page.getByRole('dialog', { name: 'Discard changes?' });
-    await expect(discard).toBeVisible();
-    await discard.getByRole('button', { name: 'Keep editing' }).click();
-    await expect(drawer).toBeVisible();
-    await page.getByRole('button', { name: 'Close Automation details' }).click();
-    await discard.getByRole('button', { name: 'Discard changes' }).click();
-    await expect(drawer).toHaveCount(0);
-    await expect(newAutomation).toBeFocused();
-
-    await newAutomation.click();
-    const restoredHeight = await page.getByRole('dialog', { name: 'New Automation' })
-      .evaluate((element) => element.getBoundingClientRect().height);
-    expect(Math.abs(restoredHeight - resizedHeight)).toBeLessThan(2);
+test('a historical message is located inside a long virtualized run conversation', async ({ page }) => {
+  await start(page); const task = await createTask(page);
+  await page.evaluate(async () => {
+    const task = (await window.lin!.automationRequest('list', {})).data[0]!;
+    const run = (await window.lin!.automationRequest('startNow', { id: task.id, expectedRevision: task.revision, requestId: 'long-history' })).runs[0]!;
+    const { data } = await window.lin!.agentCoreRequest('thread/turns/list', { threadId: run.threadId!, limit: 100, itemsView: 'full' });
+    const template = data[0]!;
+    const turns = Array.from({ length: 24 }, (_, i) => ({ ...template, id: `01930000-0000-7000-8000-${String(i + 1).padStart(12, '0')}`,
+      startedAt: template.startedAt + i * 100, completedAt: template.startedAt + i * 100 + 10,
+      items: [{ type: 'agentMessage', id: `answer-${i}`, phase: 'final_answer', text: `Canonical result ${i}\n\n` + 'Detailed work evidence.\n\n'.repeat(8), provenance: { originThreadId: run.threadId, originTurnId: template.id, originItemId: `answer-${i}` } }] }));
+    const host = (window as unknown as { __LIN_E2E__: { setMockThreadTurns: (id: string, turns: unknown[]) => void; setScheduledResult: (id: string, result: unknown) => void } }).__LIN_E2E__;
+    host.setMockThreadTurns(run.threadId!, turns);
+    host.setScheduledResult(run.id, { resultTurnId: turns[12]!.id, parts: [{ itemId: 'answer-12', turnId: turns[12]!.id, text: 'Canonical result 12', finalCitations: [] }] });
   });
+  await task.locator('.scheduled-run-row').click();
+  await expect(page.locator('.scheduled-run-conversation [data-thread-item-id="answer-12"]')).toBeInViewport();
+  await expect(page.locator('.scheduled-run-conversation .thread-transcript-turns')).toHaveAttribute('data-virtualized', 'true');
+});
+
+test('confirmed Run once actions use distinct requests without resaving the task', async ({ page }) => {
+  await start(page); const task = await createTask(page);
+  await task.getByRole('button', { name: 'Run once', exact: true }).click();
+  await page.getByRole('button', { name: 'Back to task', exact: true }).click();
+  await task.getByRole('button', { name: 'Run once', exact: true }).click();
+  await page.getByRole('button', { name: 'Back to task', exact: true }).click();
+  const calls = await commandCalls(page); const runs = calls.filter((call) => call.cmd === 'automation/startNow');
+  expect(runs).toHaveLength(2); expect(runs[0]!.args.requestId).not.toBe(runs[1]!.args.requestId);
+  expect(calls.filter((call) => call.cmd === 'automation/create')).toHaveLength(1);
+});
+
+test('View current run returns to the unchanged editing draft without silently saving it', async ({ page }) => {
+  await start(page); const task = await createTask(page);
+  await page.evaluate(async () => {
+    const task = (await window.lin!.automationRequest('list', {})).data[0]!;
+    const run = (await window.lin!.automationRequest('startNow', { id: task.id, expectedRevision: task.revision, requestId: 'already-running' })).runs[0]!;
+    (window as unknown as { __LIN_E2E__: { setScheduledResult: (id: string, result: unknown) => void } }).__LIN_E2E__.setScheduledResult(run.id, { state: 'running' });
+  });
+  await task.getByRole('button', { name: 'Edit', exact: true }).click();
+  const edit = page.getByRole('dialog', { name: 'Edit task', exact: true });
+  await edit.getByRole('textbox', { name: 'Task', exact: true }).fill('My pending draft.');
+  await edit.getByRole('button', { name: 'View current run', exact: true }).click();
+  await expect(page.locator('.scheduled-run-conversation')).toBeVisible();
+  await page.getByRole('button', { name: 'Back to task', exact: true }).click();
+  await expect(edit.getByRole('textbox', { name: 'Task', exact: true })).toHaveText('My pending draft.');
+  expect((await commandCalls(page)).filter((call) => call.cmd === 'automation/update')).toHaveLength(0);
+  expect((await commandCalls(page)).filter((call) => call.cmd === 'automation/startNow')).toHaveLength(1);
+});
+
+test('archive and restore retain the task window and restore paused', async ({ page }) => {
+  await start(page); const task = await createTask(page);
+  await task.getByRole('button', { name: 'Task actions', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Archive', exact: true }).click();
+  await expect(task.getByRole('button', { name: 'Edit', exact: true })).toBeDisabled();
+  await expect(task.getByRole('button', { name: 'Run once', exact: true })).toBeDisabled();
+  await task.getByRole('button', { name: 'Task actions', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Restore', exact: true }).click();
+  await expect(task.getByRole('button', { name: 'Edit', exact: true })).toBeEnabled();
+  await expect(task.getByText('Paused', { exact: true })).toBeVisible();
+});
+
+test('scheduled run Stop is reachable from both task history and its read-only conversation', async ({ page }) => {
+  await start(page); const task = await createTask(page);
+  const run = await page.evaluate(async () => {
+    const task = (await window.lin!.automationRequest('list', {})).data[0]!;
+    const run = (await window.lin!.automationRequest('startNow', { id: task.id, expectedRevision: task.revision, requestId: 'stop-review' })).runs[0]!;
+    (window as unknown as { __LIN_E2E__: { setScheduledResult: (id: string, result: unknown) => void } }).__LIN_E2E__.setScheduledResult(run.id, { state: 'running' });
+    return run;
+  });
+  await expect(task.getByRole('button', { name: 'Stop run', exact: true })).toBeVisible();
+  await task.locator('.scheduled-run-row').click();
+  const conversation = page.locator('.scheduled-run-conversation');
+  await conversation.getByRole('button', { name: 'Stop run', exact: true }).click();
+  await expect(conversation.getByRole('button', { name: 'Stopping', exact: true })).toBeDisabled();
+  const calls = await commandCalls(page);
+  const stop = calls.filter((call) => call.cmd === 'automation/runStop');
+  expect(stop).toHaveLength(1);
+  expect(stop[0]!.args).toMatchObject({ id: run.id, requestId: expect.any(String) });
+  expect(stop[0]!.args).not.toHaveProperty('taskId');
+  expect(calls.filter((call) => call.cmd === 'turn/interrupt')).toHaveLength(0);
+  await page.getByRole('button', { name: 'Back to task', exact: true }).click();
+  await expect(task.getByRole('button', { name: 'Stopping', exact: true })).toBeDisabled();
+  await page.evaluate((id) => (window as unknown as { __LIN_E2E__: { setScheduledResult: (id: string, result: unknown) => void } }).__LIN_E2E__.setScheduledResult(id, { state: 'interrupted' }), run.id);
+  await expect(task.getByRole('button', { name: 'Stop run', exact: true })).toHaveCount(0);
+  await expect(task.getByRole('button', { name: 'Stopping', exact: true })).toHaveCount(0);
 });

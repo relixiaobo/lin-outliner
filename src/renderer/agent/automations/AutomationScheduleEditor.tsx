@@ -47,7 +47,12 @@ export function AutomationScheduleEditor({
   onTimezoneChange,
 }: AutomationScheduleEditorProps) {
   const t = useT().agent.automations;
+  const [zoneOpen, setZoneOpen] = useState(false);
+  const [zoneSearch, setZoneSearch] = useState('');
+  const [customExpanded, setCustomExpanded] = useState(false);
   const custom = schedule.mode === 'custom';
+  const standardCalendar = custom && !customExpanded && schedule.interval === 1 && ['monthly', 'yearly'].includes(schedule.customFrequency);
+  const shownMode = standardCalendar ? schedule.customFrequency : schedule.mode;
   const usesTime = schedule.mode === 'once'
     || schedule.mode === 'daily'
     || schedule.mode === 'weekdays'
@@ -67,16 +72,17 @@ export function AutomationScheduleEditor({
           className="automation-setting-value"
           disabled={disabled}
           label={t.repeat}
-          onChange={(event) => onChange(updateAutomationScheduleMode(
-            schedule,
-            event.target.value as AutomationScheduleMode,
-          ))}
-          value={schedule.mode}
+          onChange={(event) => { const value = event.target.value; setCustomExpanded(value === 'custom');
+            onChange(value === 'monthly' || value === 'yearly' ? { ...schedule, mode: 'custom', customFrequency: value, interval: 1, sourceRrule: null }
+              : updateAutomationScheduleMode(schedule, value as AutomationScheduleMode));
+          }}
+          value={shownMode}
           variant="popup"
         >
-          {AUTOMATION_SCHEDULE_MODES.map((mode) => (
+          {AUTOMATION_SCHEDULE_MODES.filter((mode) => mode !== 'custom').map((mode) => (
             <option key={mode} value={mode}>{t.frequencies[mode]}</option>
           ))}
+          <option value="monthly">{t.editor.monthly}</option><option value="yearly">{t.editor.yearly}</option><option value="custom">{t.frequencies.custom}</option>
         </SelectControl>
       </Field>
 
@@ -121,7 +127,7 @@ export function AutomationScheduleEditor({
 
       {custom ? (
         <>
-          <Field className="automation-setting-row" label={t.repeats} labelClassName="automation-setting-label">
+          {!standardCalendar ? <><Field className="automation-setting-row" label={t.repeats} labelClassName="automation-setting-label">
             <SelectControl
               className="automation-setting-value"
               disabled={disabled}
@@ -149,6 +155,8 @@ export function AutomationScheduleEditor({
               <span>{t.intervalUnit({ frequency: schedule.customFrequency, count: schedule.interval })}</span>
             </label>
           </Field>
+
+          </> : null}
 
           {schedule.customFrequency === 'weekly' ? (
             <Field className="automation-setting-row" label={t.weekday} labelClassName="automation-setting-label">
@@ -222,18 +230,16 @@ export function AutomationScheduleEditor({
         </>
       ) : null}
 
-      <Field className="automation-setting-row" label={t.timezone} labelClassName="automation-setting-label">
-        <SelectControl
-          className="automation-setting-value"
-          disabled={disabled}
-          label={t.timezone}
-          onChange={(event) => onTimezoneChange(event.target.value)}
-          value={timezone}
-          variant="popup"
-        >
-          {timezones.map((option) => <option key={option} value={option}>{option}</option>)}
-        </SelectControl>
-      </Field>
+      <div className="scheduled-timezone">
+        <button type="button" className="scheduled-timezone-trigger" disabled={disabled} aria-expanded={zoneOpen}
+          aria-label={t.editor.timezone} onClick={() => setZoneOpen((value) => !value)}>{timezone}</button>
+        {zoneOpen ? <div>
+          <input aria-label={t.editor.searchZone} type="search" value={zoneSearch} onChange={(event) => setZoneSearch(event.target.value)} />
+          <SelectControl label={t.timezone} value={timezone} disabled={disabled} onChange={(event) => { onTimezoneChange(event.target.value); setZoneOpen(false); }}>
+            {timezones.filter((value) => value === timezone || value.toLowerCase().includes(zoneSearch.toLowerCase())).map((value) => <option key={value} value={value}>{value}</option>)}
+          </SelectControl>
+        </div> : null}
+      </div>
     </div>
   );
 }

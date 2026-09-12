@@ -1249,3 +1249,29 @@ The Agent dock follows the shared design system:
 All user-facing copy comes from typed i18n messages. UI nouns are Thread, Turn,
 Item, Goal, and Tool Task. Agent Session and launcher appear only in delegation
 Settings or CLI results, not as conversation participants.
+
+### Scheduled brief editing
+
+The scheduled-task editor reuses `ThreadComposerEditor` with a task-specific
+adapter for shared node/file markup. It opts out of chat submission, slash
+commands, conversation reference lookup and transient attachment import. Newline
+Enter, inline source positions and optional local draft undo/redo stay in the
+editing primitive. Modal callers identify their nested suggestion layer so it
+stays above the sheet and does not trigger backdrop dismissal. Conversation
+callers retain their existing submission and history behavior.
+
+The task adapter reuses `ComposerProjectMenu` with draft selection callbacks; the
+ordinary conversation path still uses its membership owner. A task's Add menu and
+selected Project indicator match the composer. Modal consumers label nested
+menus and use modal stacking. The task placeholder is an empty-paragraph
+decoration rather than a separate absolutely positioned text layer, so caret and
+hint share typography and layout. Local draft deletion/undo remain separate from
+Outline undo and chat submission.
+
+Run-history navigation renders the same canonical `ThreadView` with an initial
+Turn/Item anchor. The existing virtual scroll restoration resolves the position;
+missing targets are checked before navigation, never substituted by a latest
+Thread. The run view reads the shared Thread store without changing the selected
+user conversation, leaving its draft mounted. Back restores the task window.
+Questions, expired draft recovery and tool/process inspection keep their shared
+owners. No copied task-specific conversation history is stored.

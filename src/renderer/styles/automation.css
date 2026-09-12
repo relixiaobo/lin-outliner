@@ -824,3 +824,253 @@
 .automation-action-menu button:disabled {
   color: var(--text-quaternary);
 }
+
+.scheduled-surface,
+.scheduled-workspace {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.scheduled-workspace {
+  background: var(--bg-content);
+  color: var(--text-primary);
+  overflow: hidden;
+}
+
+.scheduled-header .thread-dock-title {
+  margin: 0;
+  flex: 1;
+}
+
+.scheduled-header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-1);
+  margin-inline-start: auto;
+}
+
+.scheduled-task-list,
+.scheduled-task-detail {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  padding: var(--space-8) var(--agent-content-x);
+  overflow: auto;
+}
+
+.scheduled-task-list[hidden],
+.scheduled-task-detail[hidden] { display: none; }
+
+.scheduled-task-list { user-select: none; }
+.scheduled-task-rows { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.scheduled-task-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: var(--space-6);
+  padding: var(--space-6);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-primary);
+  text-align: start;
+}
+
+.scheduled-task-row-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; gap: var(--space-2); }
+.scheduled-task-row strong { font-size: var(--font-ui-md); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scheduled-task-row small { color: var(--text-secondary); font-size: var(--font-ui-sm); }
+.scheduled-row-chevron { flex: 0 0 auto; color: var(--text-tertiary); }
+.scheduled-row-attention { display: flex; align-items: center; gap: var(--space-2); }
+.scheduled-task-row:hover { background: var(--fill-1); }
+.scheduled-task-row:focus-visible,
+.scheduled-search:focus-visible,
+.scheduled-plan-link:focus-visible,
+.scheduled-disclosure > summary:focus-visible { outline: none; box-shadow: var(--focus-ring-shadow); }
+
+.scheduled-search-row { display: flex; align-items: center; gap: var(--space-2); margin-block-end: var(--space-6); }
+.scheduled-search {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--fill-2);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-ui-sm);
+}
+
+.scheduled-attention-filter { margin-block-end: var(--space-4); }
+.scheduled-attention-filter[aria-pressed="true"] { background: var(--fill-3); }
+.scheduled-error { margin: var(--space-6) var(--space-8) 0; }
+
+.scheduled-plan-row { display: flex; align-items: center; gap: var(--space-4); margin-block-end: var(--space-8); user-select: none; }
+.scheduled-plan-link { flex: 1; min-width: 0; border: 0; padding: var(--space-2) 0; background: transparent; color: var(--text-secondary); font-size: var(--font-ui-sm); text-align: start; }
+button.scheduled-plan-link:hover { color: var(--text-primary); }
+.scheduled-plan-row > .button { flex: 0 0 auto; }
+
+.scheduled-result { margin-block: var(--space-8); overflow-wrap: anywhere; }
+.scheduled-result-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-2) var(--space-4); margin-block-end: var(--space-6); user-select: none; }
+.scheduled-result-heading h3 { font-size: var(--font-ui-sm); font-weight: 500; margin: 0; }
+.scheduled-result-heading time { color: var(--text-tertiary); font-size: var(--font-ui-sm); }
+.scheduled-task-heading,
+.scheduled-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-4); user-select: none; }
+.scheduled-task-heading { justify-content: space-between; }
+.scheduled-task-heading h2 { font-size: var(--font-ui-md); }
+.scheduled-result-actions { margin-block-start: var(--space-6); }
+.scheduled-issue { margin-block: var(--space-6); overflow-wrap: anywhere; }
+.scheduled-issue p { margin-block: 0 var(--space-4); }
+.scheduled-empty-copy,
+.scheduled-local-note { color: var(--text-secondary); font-size: var(--font-ui-sm); }
+
+.scheduled-disclosure { border-top: var(--space-hairline) solid var(--separator); padding-block: var(--space-5); }
+.scheduled-disclosure > summary { color: var(--text-secondary); font-size: var(--font-ui-sm); list-style-position: inside; user-select: none; }
+.scheduled-disclosure > summary:hover { color: var(--text-primary); }
+.scheduled-disclosure[open] > summary { margin-block-end: var(--space-6); }
+.scheduled-attention-history > summary svg { display: inline-block; vertical-align: middle; margin-inline-end: var(--space-2); }
+.scheduled-earlier-runs { display: flex; flex-direction: column; gap: var(--space-2); }
+.scheduled-earlier-runs > .button { justify-content: flex-start; text-align: start; }
+.scheduled-earlier-runs [aria-pressed="true"] { background: var(--fill-2); }
+.scheduled-task-info-content { color: var(--text-secondary); font-size: var(--font-ui-sm); overflow-wrap: anywhere; }
+.scheduled-task-info-content dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-4) var(--space-6); }
+.scheduled-task-info-content dt { color: var(--text-tertiary); }
+.scheduled-task-info-content dd { margin: 0; }
+.scheduled-task-info-content dd p { margin: 0; }
+
+.scheduled-editor-sheet {
+  display: flex;
+  flex-direction: column;
+  width: min(var(--reading-max), calc(100vw - var(--space-xl)));
+  height: min(85vh, calc(var(--reading-max) + var(--space-xl)));
+  min-height: 0;
+  border-radius: var(--radius-xl);
+  background: var(--bg-elevated);
+  box-shadow: var(--overlay-shadow-level-2);
+  overflow: hidden;
+  padding: var(--space-8);
+}
+
+.scheduled-material { display: grid; gap: var(--space-4); margin-block: var(--space-6); }
+
+.scheduled-material-required {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  font-size: var(--font-ui-sm);
+  user-select: none;
+}
+.scheduled-material-required > input {
+  position: absolute;
+  inline-size: var(--space-hairline);
+  block-size: var(--space-hairline);
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.scheduled-material-required > input:focus-visible + .checkbox-mark { box-shadow: var(--focus-ring-shadow); }
+.scheduled-advanced > summary {
+  padding: var(--space-6);
+  font-size: var(--font-ui-sm);
+  color: var(--text-secondary);
+  list-style-position: inside;
+  user-select: none;
+}
+.scheduled-advanced > summary:hover { color: var(--text-primary); }
+.scheduled-advanced > summary:focus-visible { outline: none; box-shadow: var(--focus-ring-shadow); }
+
+.scheduled-material-reference { color: var(--text-primary); background: transparent; border: 0; padding: 0; text-align: start; }
+.scheduled-material-reference:focus-visible { outline: none; box-shadow: var(--focus-ring-shadow); }
+.scheduled-task-info-content a { color: var(--link); }
+
+.scheduled-prose { font-size: var(--font-content); line-height: var(--line-content); }
+.scheduled-prose .thread-markdown > * + * { margin-block-start: var(--space-5); }
+
+/* Window-level task editing; the Agent rail no longer constrains the sheet. */
+.scheduled-editor-sheet {
+  width: min(560px, calc(100vw - var(--space-xl)));
+  height: auto;
+  max-height: calc(100dvh - var(--space-xl));
+  padding: 0;
+}
+.scheduled-editor-sheet > .scheduled-task-heading { padding: var(--space-lg) var(--space-lg) var(--space-6); }
+.scheduled-editor-v2 .automation-editor-scroll { gap: var(--space-8); padding: var(--space-4) var(--space-lg) var(--space-8); }
+.scheduled-editor-v2 .automation-editor-actions { padding: var(--space-6) var(--space-lg); gap: var(--space-4); }
+.scheduled-editor-v2 .automation-editor-actions > p { flex: 1; font-size: var(--font-ui-xs); line-height: var(--line-ui-sm); color: var(--text-secondary); margin: 0; }
+.scheduled-edit-status { display: flex; align-items: center; padding-inline: var(--space-lg); color: var(--text-secondary); font-size: var(--font-ui-sm); }
+.scheduled-edit-status > span { flex: 1; }
+.scheduled-edit-status:empty { display: none; }
+.scheduled-brief-input { background: var(--fill-1); border-radius: var(--radius-md); min-width: 0; }
+.scheduled-brief-input .thread-composer-editor { padding: var(--space-6); min-height: 100px; max-height: 240px; overflow: auto; }
+.scheduled-brief-toolbar { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); }
+.scheduled-preview, .scheduled-setting-note { margin: var(--space-3) 0; color: var(--text-secondary); font-size: var(--font-ui-sm); }
+.scheduled-editor-options { border-top: var(--space-hairline) solid var(--separator); padding-block: var(--space-6); }
+.scheduled-editor-options > summary { font-size: var(--font-ui-sm); color: var(--text-secondary); user-select: none; }
+.scheduled-editor-options > summary > span { float: right; max-width: 65%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scheduled-editor-options > .automation-editor-section { gap: var(--space-6); margin-block-start: var(--space-6); }
+.scheduled-reference-policy { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-4); margin-block-start: var(--space-5); font-size: var(--font-ui-sm); }
+.scheduled-reference-policy > span { flex: 1; min-width: 100px; overflow-wrap: anywhere; }
+.scheduled-conflict-fields { font-size: var(--font-ui-sm); overflow-wrap: anywhere; }
+.scheduled-conflict-fields section { margin-block: var(--space-6); }
+.scheduled-saved-rule { font-size: var(--font-ui-sm); color: var(--text-secondary); }
+.scheduled-saved-rule + .automation-settings-group { display: none; }
+.scheduled-timezone { padding: var(--space-3) var(--space-5); font-size: var(--font-ui-sm); }
+.scheduled-timezone-trigger { padding: 0; color: var(--text-secondary); background: transparent; border: 0; }
+.scheduled-timezone > div { display: flex; gap: var(--space-4); margin-block: var(--space-4); }
+.scheduled-timezone input, .scheduled-timezone select { min-width: 0; max-width: 100%; }
+
+/* Portaled child menus share modal stacking, after their owning sheet. */
+.scheduled-editor-menu,
+.thread-composer-trigger-popover.is-dialog-menu { z-index: var(--z-modal); }
+.scheduled-editor-v2 .automation-editor-intro h3 { margin: 0; font-size: var(--title-group); line-height: var(--line-ui-sm); }
+.scheduled-brief-input .thread-composer-editor { margin-inline: 0; }
+.scheduled-brief-input .thread-composer-editor.is-empty::before { top: var(--space-6); left: var(--space-6); }
+:root[data-input-modality="keyboard"] .scheduled-brief-input:focus-within { box-shadow: var(--focus-ring-shadow); }
+.scheduled-editor-options > summary:focus-visible,
+.scheduled-timezone-trigger:focus-visible { outline: none; box-shadow: var(--focus-ring-shadow); }
+
+/* The placeholder occupies the actual empty paragraph's line box, just like
+   typed text. It cannot drift from the caret after wrapping, zoom or scrolling. */
+.scheduled-brief-input .thread-composer-editor.has-paragraph-placeholder::before { content: none; }
+.scheduled-brief-input .composer-placeholder::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  max-width: 100%;
+  color: var(--text-faint);
+  pointer-events: none;
+}
+.scheduled-brief-input { overflow: hidden; }
+.scheduled-brief-input .ProseMirror { min-height: 76px; }
+.scheduled-brief-toolbar { min-height: var(--chrome-control-height); }
+.scheduled-brief-toolbar .thread-location-chip { min-width: 0; max-width: calc(100% - var(--space-xl)); }
+.scheduled-name-field { display: grid; gap: var(--space-3); }
+.scheduled-name-field label { font-size: var(--font-ui-sm); }
+.scheduled-editor-v2 .automation-editor-actions { flex-direction: column; align-items: stretch; }
+.scheduled-editor-v2 .automation-editor-actions > p { flex: none; }
+.scheduled-editor-buttons { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: var(--space-4); }
+.scheduled-editor-v2 .automation-editor-scroll { gap: var(--space-6); }
+.scheduled-editor-options { padding-block: var(--space-4); }
+.scheduled-editor-sheet > .scheduled-task-heading { padding-block: var(--space-6); }
+
+.scheduled-task-detail .scheduled-plan-row { padding-bottom: var(--space-6); border-bottom: var(--space-hairline) solid var(--separator); }
+
+.scheduled-window-history { margin-block-start: var(--space-6); }
+.scheduled-window-history > h3 { margin: 0 0 var(--space-4); font-size: var(--font-ui-sm); color: var(--text-secondary); }
+.scheduled-run-entry { border-bottom: var(--space-hairline) solid var(--separator); padding-block: var(--space-3); }
+.scheduled-run-conversation { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.scheduled-conversation-actions, .scheduled-conversation-input { padding: var(--space-4) var(--agent-content-x); }
+.scheduled-task-read .automation-editor-section > p { margin: 0; }
+.scheduled-run-time { margin: var(--space-5) var(--agent-content-x) 0; color: var(--text-secondary); font-size: var(--font-ui-sm); }
+.scheduled-run-entry-main { display: flex; align-items: center; gap: var(--space-2); }
+.scheduled-run-entry-main > .scheduled-run-row { flex: 1; min-width: 0; }
+.scheduled-conversation-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-4); }
+.scheduled-run-control { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-4); }
+.scheduled-run-entry > .scheduled-run-control { padding-inline: var(--space-6); }
+.scheduled-run-control:empty { display: none; }

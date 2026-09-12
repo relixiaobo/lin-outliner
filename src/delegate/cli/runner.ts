@@ -1,3 +1,5 @@
+import { decodeScheduleInput } from '../../schedule/schemas';
+import { parseScheduleCommand, scheduleSchema, SCHEDULE_COMMANDS } from '../../schedule/contract';
 import {
   decodeProjectCliInput,
   canonicalDelegateCommand,
@@ -60,19 +62,31 @@ export async function runDelegateCli(
   const io = options.io ?? processIo();
   let command: DelegateCommand | undefined;
   try {
-    command = parseDelegateCommand(argv);
+    if (argv[0] === '__schedule' && ['schema', 'doctor', 'version'].includes(argv[1] ?? '')) {
+      if (argv.length > 2) throw new Error('Schedule diagnostics accept no extra arguments.');
+      await writeSuccess(io, 'json', argv[1] === 'doctor' ? { managementAuthority: 'requires-host-admission', hostAvailability: 'not-observed', reason: 'Management requires a Host-admitted Agent invocation. This standalone diagnostic does not observe Host readiness.' }
+        : argv[1] === 'version' ? { version: 1 } : scheduleSchema());
+      return 0;
+    }
+    command = argv[0] === '__schedule' ? parseScheduleCommand(argv.slice(1)) : parseDelegateCommand(argv);
     if (isDelegateStateCommand(command)) {
       const executor = options.stateExecutor ?? defaultStateExecutor(command, options.readCapability);
       if (!executor) {
         await writeFailure(io, command.output, 'unauthorized', 'Host delegation capability is required.');
         return DELEGATE_EXIT_CODES.unauthorized;
       }
-      const rawInput = command.name === 'close' ? '' : await io.readStdin();
-      const input = command.name === 'close'
+      const rawInput = command.name === 'close' || (command.name === 'schedule' && !SCHEDULE_COMMANDS[command.operation].mutation) ? '' : await io.readStdin();
+      const input = command.name === 'schedule' ? decodeScheduleInput(command.operation, rawInput ? JSON.parse(rawInput) as unknown : {})
+        : command.name === 'close'
         ? null
         : command.name === 'project' ? decodeProjectCliInput(JSON.parse(rawInput))
           : parseInput(rawInput, command.name === 'run' ? 'run' : 'message');
       const result = await executor.execute(command, input, options.signal, rawInput);
+      if (command.name === 'schedule' && result && typeof result === 'object' && 'kind' in result && result.kind === 'revisionConflict'
+        && 'currentRevision' in result && Number.isSafeInteger(result.currentRevision) && 'message' in result && typeof result.message === 'string') {
+        await io.stdout(`${JSON.stringify({ ok: false, error: { code: 'revision_conflict', currentRevision: result.currentRevision, message: result.message } })}\n`);
+        return DELEGATE_EXIT_CODES.failed;
+      }
       await writeSuccess(io, command.output, result);
       return DELEGATE_EXIT_CODES.success;
     }

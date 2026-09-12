@@ -149,7 +149,8 @@
         "from": "src/delegate/bin",
         "to": "delegate/bin",
         "filter": [
-          "delegate"
+          "delegate",
+          "schedule"
         ]
       },
       {

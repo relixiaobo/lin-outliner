@@ -1020,6 +1020,7 @@ describe('agent skills', () => {
       'git-review',
       'outline',
       'projects',
+      'scheduling',
       'skillify',
       'verification',
     ]);
@@ -1448,7 +1449,7 @@ describe('built-in skill resource packaging', () => {
     const repoRoot = path.resolve(import.meta.dir, '..', '..');
     await execFile('bun', ['scripts/sync-built-in-skills.ts'], { cwd: repoRoot });
     const generatedRoot = path.join(repoRoot, 'build', 'generated', 'built-in-skills');
-    expect((await readdir(generatedRoot)).sort()).toEqual(['configuration', 'delegate', 'development', 'git-review', 'outline', 'projects', 'verification']);
+    expect((await readdir(generatedRoot)).sort()).toEqual(['configuration', 'delegate', 'development', 'git-review', 'outline', 'projects', 'scheduling', 'verification']);
     const developmentRaw = await readFile(path.join(generatedRoot, 'development', 'SKILL.md'), 'utf8');
     expect(developmentRaw).toContain('not a supported persistent terminal');
     const gitReviewRaw = await readFile(path.join(generatedRoot, 'git-review', 'SKILL.md'), 'utf8');

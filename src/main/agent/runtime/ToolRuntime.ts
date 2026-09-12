@@ -404,17 +404,33 @@ export class ToolRuntime {
     ];
   }
 
-  async authorizeProjectInvocation(execution: import('../delegation/DelegateCapabilityBroker').DelegateCapabilityExecution): Promise<void> {
+  async authorizeHostCliInvocation(execution: import('../delegation/DelegateCapabilityBroker').DelegateCapabilityExecution): Promise<void> {
     const { admission, signal } = execution;
     signal.throwIfAborted();
     const source = this.service.projectInvocationContext(admission.source.rootThreadId, admission.source.sourceTurnId, admission.source.sourceItemId);
     const task = this.service.toolTaskService().store.read(admission.toolTaskId);
-    if (!task || task.ownerThreadId !== source.thread.id || task.sourceTurnId !== admission.source.sourceTurnId
-      || task.commandDigest !== digestText(canonicalDelegateCommand(admission.command)) || task.cwd !== admission.cwd
-      || task.sourceItemId !== admission.source.sourceItemId || task.producer !== 'bash' || task.nonce !== admission.toolTaskNonce
-      || task.stopRequestedAt !== null || !['queued', 'running'].includes(task.state)
-      || !source.configuration.tools.includes('bash') || (await this.options.disabledTools?.() ?? []).includes('bash')) {
-      throw new Error('Project command authority is no longer available');
+    if (!task) throw new Error('Host command authority is no longer available: missing source Task');
+    const mismatches: readonly [string, boolean][] = [
+      ['owner', task.ownerThreadId !== source.thread.id],
+      ['Turn', task.sourceTurnId !== admission.source.sourceTurnId],
+      ['command', task.commandDigest !== digestText(canonicalDelegateCommand(admission.command))],
+      ['directory', task.cwd !== admission.cwd],
+      ['Item', task.sourceItemId !== admission.source.sourceItemId],
+      ['producer', task.producer !== 'bash'],
+      ['nonce', task.nonce !== admission.toolTaskNonce],
+      ['stop', task.stopRequestedAt !== null || task.continuation.stop !== null],
+      // The broker has already authenticated the invocation. Delayed supervisor
+      // observations cannot revoke its active source; actual stop/teardown still does.
+      ['state', !['queued', 'running'].includes(task.state)
+        && !(task.state === 'settling' && task.outcomeReason === 'ownership_unverified')],
+      ['Bash capability', !source.configuration.tools.includes('bash') || (await this.options.disabledTools?.() ?? []).includes('bash')],
+    ];
+    const mismatch = mismatches.find(([, differs]) => differs);
+    if (mismatch) throw new Error(`Host command authority is no longer available: ${mismatch[0]} binding changed`);
+    if (admission.command.name === 'schedule'
+      && (task.executionContext.policy.capability !== 'full-access'
+        || task.executionContext.policy.isolation !== 'unsandboxed')) {
+      throw new Error('Scheduling management and cross-task discovery are unavailable in a scoped execution');
     }
     const decision = evaluateAgentToolCapability({ toolName: 'bash',
       args: { command: canonicalDelegateCommand(admission.command), stdin: admission.stdin, cwd: admission.cwd },

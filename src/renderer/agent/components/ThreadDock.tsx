@@ -1,3 +1,4 @@
+import { ScheduledRunConversation, type ScheduledConversationTarget } from '../automations/ScheduledRunConversation';
 import { lazy, memo, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
 import type { RendererUserViewHints, ThreadUserContent } from '../../../core/agent/protocol';
@@ -9,10 +10,8 @@ import { useT } from '../../i18n/I18nProvider';
 import { threadStore, useThreadStore } from '../store/threadStore';
 import { ToolTaskStrip } from './ToolTaskStrip';
 import {
-  BackIcon,
   ChevronDownIcon,
   ICON_SIZE,
-  ScheduledIcon,
   SettingsIcon,
   WarningIcon,
 } from '../../ui/icons';
@@ -36,12 +35,12 @@ import { runtimeSlashCommands, slashCommandsFromSkills } from '../threadComposer
 import { shouldRestoreComposerAfterThreadCreation } from '../composerRefocus';
 import { matchesShortcutEvent } from '../../ui/interactions/shortcutRegistry';
 import { useShortcutHint } from '../../ui/interactions/useShortcutHint';
+import { onThreadRailRevealRequest, requestSendContextToThreadComposer, type PendingComposerContext } from '../agentReveal';
+import type { ScheduledTasksViewState } from '../automations/ScheduledTasksView';
+import { ScheduledIcon } from '../../ui/icons';
 
-const AutomationsView = lazy(async () => {
-  const module = await import('../automations/AutomationsView');
-  return { default: module.AutomationsView };
-});
 const ProjectDialog = lazy(async () => ({ default: (await import('../projects/ProjectDialog')).ProjectDialog }));
+const ScheduledTasksView = lazy(async () => ({ default: (await import('../automations/ScheduledTasksView')).ScheduledTasksView }));
 
 export type ThreadRailState = 'collapsed' | 'open';
 
@@ -73,10 +72,15 @@ export const ThreadDock = memo(function ThreadDock({
 }: ThreadDockProps) {
   const t = useT();
   const open = railState === 'open';
-  const snapshot = useThreadStore(open);
   const [listOpen, setListOpen] = useState(false);
+  const [scheduledOpen, setScheduledOpen] = useState(false);
+  const [scheduledRun, setScheduledRun] = useState<ScheduledConversationTarget | null>(null);
+  const scheduledOpenRef = useRef(scheduledOpen);
+  scheduledOpenRef.current = scheduledOpen;
+  const [scheduledView, setScheduledView] = useState<ScheduledTasksViewState | null>(null);
+  const [resultHandoff, setResultHandoff] = useState<{ threadId: string; context: PendingComposerContext } | null>(null);
+  const snapshot = useThreadStore(open && ((!scheduledOpen && !scheduledRun) || listOpen));
   const [projectTarget, setProjectTarget] = useState<{ thread: Thread; mode: 'new' | Project } | null>(null);
-  const [surface, setSurface] = useState<'thread' | 'automations'>('thread');
   /**
    * The pushed Agent detail stack, root-most first. Empty is the conversation
    * itself; each entry is one level deeper, and Back pops exactly one.
@@ -157,8 +161,8 @@ export const ThreadDock = memo(function ThreadDock({
     : [], [snapshot.toolTasksById, thread]);
   const userInput = thread ? snapshot.userInputByThread.get(thread.id) ?? null : null;
   useEffect(() => {
-    if (open && thread?.id) void threadStore.userInputs.reconcile(thread.id);
-  }, [open, thread?.id]);
+    if (open && !scheduledOpen && thread?.id) void threadStore.userInputs.reconcile(thread.id);
+  }, [open, scheduledOpen, thread?.id]);
   const providerRetry = thread ? snapshot.providerRetryByThread.get(thread.id) ?? null : null;
   const plan = thread ? snapshot.planByThread.get(thread.id) ?? null : null;
   const providerBlocksCreation = providerSettingsLoaded
@@ -240,10 +244,62 @@ export const ThreadDock = memo(function ThreadDock({
     name: t.agent.thread.agent.main,
   }), [t]);
 
-  /** Selecting a root conversation from the list or an Automation. */
+  const showScheduledTasks = useCallback((automationId?: string) => {
+    setScheduledView((current) => automationId
+      ? { ...current, automationId, automationRunId: undefined, windowOpen: true, detailScrollTop: 0 }
+      : current ?? {});
+    setScheduledRun(null);
+    setScheduledOpen(true);
+    setListOpen(false);
+    onRequestOpen();
+  }, [onRequestOpen]);
+
+  useEffect(() => {
+    const unsubscribe = api.onAutomationNotification((notification) => {
+      if (notification.type === 'automation/open') showScheduledTasks(notification.automationId);
+    });
+    return () => { unsubscribe(); };
+  }, [showScheduledTasks]);
+
+  // Explicit composer handoffs (including Discuss result) return to conversations.
+  useEffect(() => onThreadRailRevealRequest(() => {
+    setScheduledRun(null);
+    setScheduledOpen(false);
+    setListOpen(false);
+  }), []);
+
+  const openScheduledRun = useCallback(async (target: Omit<ScheduledConversationTarget, 'token'>) => {
+    await Promise.all([threadStore.ensureThreadHistory(target.threadId), threadStore.loadToolTasks(target.threadId).catch(() => undefined)]);
+    if (!scheduledOpenRef.current) throw new Error(t.agent.automations.editor.runUnavailable);
+    const turns = threadStore.getSnapshot().turnsByThread.get(target.threadId) ?? [];
+    const turn = turns.find((item) => item.id === target.turnId);
+    if (!turn || (target.itemId && !turn.items.some((item) => item.id === target.itemId))) throw new Error(t.agent.automations.editor.runUnavailable);
+    setScheduledRun({ ...target, token: Date.now() });
+    setScheduledOpen(false); setListOpen(false); onRequestOpen();
+  }, [onRequestOpen, t]);
+
+  const discussScheduledResult = useCallback(async (name: string, context: PendingComposerContext) => {
+    setScheduledRun(null);
+    const target = await threadStore.createThread({ name });
+    setResultHandoff({ threadId: target.id, context });
+    setScheduledOpen(false);
+    setListOpen(false);
+    onRequestOpen();
+  }, [onRequestOpen]);
+
+  // The composer reports readiness after clearing the previous Thread's staging.
+  const deliverScheduledResult = useCallback((threadId: string) => {
+    if (!resultHandoff || threadId !== resultHandoff.threadId) return;
+    requestSendContextToThreadComposer(resultHandoff.context);
+    setResultHandoff(null);
+  }, [resultHandoff]);
+
+  /** Selecting a root conversation from the list or a shared reference. */
   const openThread = useCallback(async (threadId: string) => {
     try {
+      setScheduledRun(null);
       await threadStore.openThreadById(threadId);
+      setScheduledOpen(false);
       setListOpen(false);
     } catch {
       reportActionError(t.agent.thread.threadUnavailable);
@@ -274,6 +330,7 @@ export const ThreadDock = memo(function ThreadDock({
           expectedActiveElement: document.activeElement,
         }));
       }
+      setScheduledRun(null); setScheduledOpen(false);
       return true;
     } catch (error) {
       if (project) throw error;
@@ -311,6 +368,8 @@ export const ThreadDock = memo(function ThreadDock({
     }
     if (
       snapshot.loading
+      || scheduledOpen
+      || scheduledRun
       || snapshot.error !== null
       || !providerSettingsLoaded
       || providerBlocksCreation
@@ -318,7 +377,7 @@ export const ThreadDock = memo(function ThreadDock({
     ) return;
     autoCreateAttemptedRef.current = true;
     void createThread('automatic');
-  }, [createThread, providerBlocksCreation, providerSettingsLoaded, snapshot.error, snapshot.loading, thread]);
+  }, [createThread, providerBlocksCreation, providerSettingsLoaded, snapshot.error, snapshot.loading, thread, scheduledOpen, scheduledRun]);
 
   function beginRename(target: Thread) {
     setRenameTarget(target);
@@ -362,10 +421,9 @@ export const ThreadDock = memo(function ThreadDock({
       inert={open ? undefined : true}
     >
       <div className="thread-dock" ref={dockRef}>
-        <header className="thread-dock-header">
-          {surface === 'thread' ? (
-            // The dock's title is the conversation the user started, and its
-            // chevron opens the list of them.
+        <header className="thread-dock-header" hidden={scheduledOpen || Boolean(scheduledRun)}>
+          {(
+            // The title opens conversations; scheduled work owns its own header.
             <div className="thread-dock-breadcrumb">
               <button
                 aria-expanded={listOpen}
@@ -382,19 +440,10 @@ export const ThreadDock = memo(function ThreadDock({
  />
               </button>
             </div>
-          ) : null}
-          {surface === 'automations' ? (
-            <button
-              aria-label={t.agent.automations.backToThreads}
-              className="thread-dock-title-button"
-              onClick={() => setSurface('thread')}
-              type="button"
-            >
-              <BackIcon className="thread-dock-title-leading" size={ICON_SIZE.menu} />
-              <span className="thread-dock-title">{t.agent.automations.title}</span>
-            </button>
-          ) : null}
-          {surface === 'thread' && thread ? (
+          )}
+          <IconButton icon={ScheduledIcon} label={t.agent.automations.work.workspace}
+            className="thread-dock-surface-action" onClick={() => showScheduledTasks()} variant="chrome" />
+          {thread ? (
             <ToolTaskStrip
               onClearDetails={(threadId) => threadStore.clearToolTaskDetails(threadId)}
               onRead={(threadId, taskId) => threadStore.readToolTask(threadId, taskId)}
@@ -403,20 +452,22 @@ export const ThreadDock = memo(function ThreadDock({
               tasks={toolTasks}
             />
           ) : null}
-          {surface === 'thread' ? (
-            <IconButton
-              className="thread-dock-surface-action"
-              icon={ScheduledIcon}
-              label={t.agent.automations.open}
-              onClick={() => {
-                setListOpen(false);
-                setSurface('automations');
-              }}
-
-              variant="chrome"
-            />
-          ) : null}
         </header>
+        {scheduledView ? <div className="thread-dock-scheduled" hidden={!scheduledOpen}>
+          <Suspense fallback={<p className="thread-empty-copy">{t.agent.automations.loading}</p>}>
+            <ScheduledTasksView active={open && scheduledOpen} view={scheduledView} onViewChange={setScheduledView}
+              indexStore={indexStore} projectCatalog={projects.view} onOpenNode={onOpenNodeReference} onOpenProcess={onOpenTurnDetails}
+              onDiscussResult={discussScheduledResult} onOpenConversation={openScheduledRun} onBackToConversations={() => setScheduledOpen(false)} />
+          </Suspense>
+        </div> : null}
+        {scheduledRun ? <ScheduledRunConversation target={scheduledRun} active={open} indexStore={indexStore} getUserView={getUserView}
+          onOpenNode={onOpenNodeReference} onOpenThread={openThread} onOpenProcess={onOpenTurnDetails}
+          onBack={() => { setScheduledRun(null); setScheduledOpen(true); }}
+          onDiscuss={() => { void api.automationRequest('result', { id: scheduledRun.runId }).then((result) => discussScheduledResult(scheduledRun.taskName, {
+            key: `scheduled-result:${result.run.id}`, label: scheduledRun.taskName,
+            value: JSON.stringify({ taskId: result.run.automationId, automationRunId: result.run.id, threadId: result.run.threadId, turnId: result.resultTurnId, recordPath: result.recordPath }),
+          })).catch((error) => reportActionError(errorMessage(error))); }} /> : null}
+        <div className="thread-dock-conversation-surface" hidden={scheduledOpen || Boolean(scheduledRun)}>
         {/* Conditions only. A provider that is not configured and a thread list
             that failed to load describe THIS surface and persist until they are
             resolved, so they are stated here and cannot be dismissed. A failed
@@ -428,8 +479,8 @@ export const ThreadDock = memo(function ThreadDock({
             <span>{providerError ?? snapshot.error}</span>
           </div>
         ) : null}
-        {surface === 'thread' && snapshot.loading ? <p className="thread-empty-copy">{t.agent.thread.loading}</p> : null}
-        {surface === 'thread' && !snapshot.loading && !thread && providerSettingsLoaded && providerBlocksCreation ? (
+        {snapshot.loading ? <p className="thread-empty-copy">{t.agent.thread.loading}</p> : null}
+        {!snapshot.loading && !thread && providerSettingsLoaded && providerBlocksCreation ? (
           <div className="thread-empty-state">
             <p>{t.agent.thread.providerRequired}</p>
             <button
@@ -443,18 +494,19 @@ export const ThreadDock = memo(function ThreadDock({
             </button>
           </div>
         ) : null}
-        {surface === 'thread' && unavailable ? <div className="thread-dock-error" role="alert">
+        {unavailable ? <div className="thread-dock-error" role="alert">
           <span>{t.startup.quarantined}</span>
           <Button onClick={onOpenStartupIssues}>{t.startup.issues}</Button>
         </div> : null}
-        {surface === 'thread' && thread && !unavailable ? (
+        {thread && !unavailable ? (
           <div className="thread-dock-body">
             <div className="thread-dock-conversation">
             <ThreadView
               projectContext={{ view: projects.view, loading: projects.loading, error: projects.error,
                 onChooseProject: (mode) => setProjectTarget({ thread, mode }) }}
-              active={open}
+              active={open && !scheduledOpen && !scheduledRun}
               composerEnabled={thread.parentThreadId === null && thread.threadSource === 'user'}
+              onComposerReady={deliverScheduledResult}
               composerFocusExpectedActiveElement={composerFocusRequest.expectedActiveElement}
               composerFocusToken={composerFocusRequest.token}
               selfSpeaker={conversationSpeaker}
@@ -504,19 +556,8 @@ export const ThreadDock = memo(function ThreadDock({
             </div>
           </div>
         ) : null}
-        {surface === 'automations' ? (
-          <Suspense fallback={<p className="thread-empty-copy">{t.agent.automations.loading}</p>}>
-            <AutomationsView
-              onOpenThread={async (threadId) => {
-                await openThread(threadId);
-                setSurface('thread');
-              }}
-              providerSettings={providerSettings}
-              threads={snapshot.threads}
-            />
-          </Suspense>
-        ) : null}
-        {surface === 'thread' && listOpen ? (
+        </div>
+        {listOpen ? (
           <ThreadList
             startupThreads={startupThreads}
             projects={projects.view.projects}
@@ -541,6 +582,7 @@ export const ThreadDock = memo(function ThreadDock({
             onSelect={(threadId) => {
               if (startupThreads.some((entry) => entry.threadId === threadId)) { setListOpen(false); onOpenStartupIssues?.(); return; }
               void runAction(() => threadStore.selectThread(threadId));
+              setScheduledOpen(false);
               setListOpen(false);
             }}
             backgroundWorkThreadIds={rootsWithBackgroundWork}

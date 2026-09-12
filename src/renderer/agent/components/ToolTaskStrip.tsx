@@ -20,7 +20,7 @@ export function ToolTaskStrip({
   readonly ownerThreadId: ThreadId;
   readonly tasks: readonly ToolTaskProjection[];
   readonly onRead: (threadId: ThreadId, taskId: string) => Promise<ToolTaskReadResponse>;
-  readonly onClearDetails: (threadId: ThreadId) => Promise<number>;
+  readonly onClearDetails?: (threadId: ThreadId) => Promise<number>;
   readonly onStop: (threadId: ThreadId, taskId: string) => Promise<void>;
   readonly now?: number;
 }) {
@@ -63,6 +63,7 @@ export function ToolTaskStrip({
     setConfirmingClear(false);
     setDetailError(null);
     try {
+      if (!onClearDetails) return;
       const bytes = await onClearDetails(ownerThreadId);
       setClearResult(bytes > 0 ? t.agent.thread.tasks.cleared({ size: formatBytes(bytes) }) : t.agent.thread.tasks.nothingCleared);
     } catch (error) {
@@ -122,7 +123,7 @@ export function ToolTaskStrip({
                   />
                 ) : null}
                 {detail?.task.taskId === task.taskId ? (
-                  <TaskDetail detail={{ ...detail, task }} isolation={task.isolation} onRequestClear={() => setConfirmingClear(true)} clearResult={clearResult} />
+                  <TaskDetail detail={{ ...detail, task }} isolation={task.isolation} onRequestClear={onClearDetails ? () => setConfirmingClear(true) : undefined} clearResult={clearResult} />
                 ) : null}
               </div>
             );
@@ -154,7 +155,7 @@ function TaskDetail({
 }: {
   readonly detail: ToolTaskReadResponse;
   readonly isolation: ToolTaskProjection['isolation'];
-  readonly onRequestClear: () => void;
+  readonly onRequestClear?: () => void;
   readonly clearResult: string | null;
 }) {
   const t = useT();
@@ -214,7 +215,7 @@ function TaskDetail({
             required: formatBytes(detail.task.storagePressure.requiredBytes),
             available: formatBytes(detail.task.storagePressure.reclaimableBytes),
           })}</span>
-          <Button onClick={onRequestClear} variant="ghost">{t.agent.thread.tasks.clearDetails}</Button>
+          {onRequestClear ? <Button onClick={onRequestClear} variant="ghost">{t.agent.thread.tasks.clearDetails}</Button> : null}
           {clearResult ? <span role="status">{clearResult}</span> : null}
         </div>
       ) : null}

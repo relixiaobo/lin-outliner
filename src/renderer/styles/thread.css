@@ -3434,3 +3434,19 @@ textarea.thread-user-input-other {
   min-height: var(--control-size-xl);
   padding: var(--space-4);
 }
+
+/* Both Agent surfaces stay mounted so navigation preserves drafts and scroll. */
+.thread-dock-conversation-surface,
+.thread-dock-scheduled {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.thread-dock-conversation-surface[hidden],
+.thread-dock-scheduled[hidden] { display: none; }
+
+.thread-dock-header[hidden] { display: none; }

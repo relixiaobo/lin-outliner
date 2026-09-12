@@ -765,8 +765,9 @@ export function useWorkspaceLayout({
   const openThreadTrajectoryPanel = useCallback((
     threadId: string,
     focus?: { readonly selectedRecordId?: string; readonly turnId?: string },
+    targetPanelId?: string,
   ) => {
-    const targetPanel = panels.find((panel) => panel.id === activePanelId) ?? panels[0];
+    const targetPanel = panels.find((panel) => panel.id === (targetPanelId ?? activePanelId)) ?? panels[0];
     if (!targetPanel) return;
     const nextView = threadTrajectoryView(threadId, focus);
     setActivePanelId(targetPanel.id);

@@ -72,6 +72,13 @@ export function createAutomationScheduleDraft(rrule?: string): AutomationSchedul
   };
 }
 
+/** Whether structured controls can express the saved rule without hiding fields. */
+export function canEditAutomationSchedule(draft: AutomationScheduleDraft): boolean {
+  if (!draft.sourceRrule) return true;
+  const parsed = parseSchedule(draft.sourceRrule);
+  return Boolean(parsed && !parsed.hasSubMinutePrecision && isStructuredShape(parsed.fields) && isAutomationScheduleDraftValid(draft));
+}
+
 export function defaultAutomationScheduleDraft(): AutomationScheduleDraft {
   const startAt = defaultStartAt();
   return {

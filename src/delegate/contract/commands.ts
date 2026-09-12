@@ -1,6 +1,8 @@
+import { parseScheduleCommand, scheduleArgv, type ScheduleCommand } from '../../schedule/contract';
 export type DelegateOutputMode = 'text' | 'json';
 
 export type DelegateStateCommand =
+  | ScheduleCommand
   | { readonly name: 'project'; readonly input: '-'; readonly output: DelegateOutputMode }
   | { readonly name: 'run'; readonly input: '-'; readonly output: DelegateOutputMode }
   | {
@@ -57,6 +59,10 @@ export function parseDelegateCommand(args: readonly string[]): DelegateCommand {
 export function parsePrivilegedDelegateCommand(commandSource: string): DelegateStateCommand | null {
   if (commandSource.length === 0 || commandSource.trim() !== commandSource) return null;
   const args = commandSource.split(' ');
+  if (args[0] === 'schedule') {
+    try { const parsed = parseScheduleCommand(args.slice(1)); return canonicalDelegateCommand(parsed) === commandSource ? parsed : null; }
+    catch { return null; }
+  }
   if (args.some((arg) => arg.length === 0) || args[0] !== 'delegate') return null;
   try {
     const parsed = parseDelegateCommand(args.slice(1));
@@ -68,6 +74,7 @@ export function parsePrivilegedDelegateCommand(commandSource: string): DelegateS
 }
 
 export function canonicalDelegateArgv(command: DelegateStateCommand): readonly string[] {
+  if (command.name === 'schedule') return ['__schedule', ...scheduleArgv(command)];
   if (command.name === 'project') return ['project', '--input', '-', '--output', command.output];
   if (command.name === 'run') {
     return ['run', '--input', '-', '--output', command.output];
@@ -87,11 +94,12 @@ export function canonicalDelegateArgv(command: DelegateStateCommand): readonly s
 }
 
 export function canonicalDelegateCommand(command: DelegateStateCommand): string {
+  if (command.name === 'schedule') return ['schedule', ...scheduleArgv(command)].join(' ');
   return ['delegate', ...canonicalDelegateArgv(command)].join(' ');
 }
 
 export function isDelegateStateCommand(command: DelegateCommand): command is DelegateStateCommand {
-  return command.name === 'project' || command.name === 'run' || command.name === 'send' || command.name === 'close';
+  return command.name === 'schedule' || command.name === 'project' || command.name === 'run' || command.name === 'send' || command.name === 'close';
 }
 
 export function delegateHelp(): string {

@@ -1,3 +1,4 @@
+import { SCHEDULE_COMMANDS } from '../../../schedule/contract';
 import path from 'node:path';
 import { homedir } from 'node:os';
 import {
@@ -244,6 +245,12 @@ function deriveBashCapability(
       stdinConsumer: hasOwnArg(args, 'stdin') ? 'unknown' : 'absent',
     };
   }
+  const scheduled = parsePrivilegedDelegateCommand(command);
+  if (scheduled?.name === 'schedule') return {
+    descriptors: [descriptor('bash', SCHEDULE_COMMANDS[scheduled.operation].mutation ? 'agent.automation.manage' : 'task.inspect', {
+      accessScope: 'local_system', title: 'scheduled task', summary: command, consequence: SCHEDULE_COMMANDS[scheduled.operation].summary, command,
+    })], stdinConsumer: hasOwnArg(args, 'stdin') ? 'registered-data' : 'absent',
+  };
   const segments = splitShellSegments(command).map((segment) => ({
     segment,
     words: parseShellWords(segment),

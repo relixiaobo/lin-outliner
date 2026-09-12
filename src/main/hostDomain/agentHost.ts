@@ -1,3 +1,5 @@
+import { ScheduledRunOwnership } from '../agent/automations/ScheduledRunOwnership';
+import { ScheduleCliService, SCHEDULE_CLI_CONFIGURATION_REVISION, scheduleCliScheduling } from '../agent/automations/ScheduleCliService';
 import { ProfileFileStore } from '../agent/profile/ProfileFileStore';
 import { ProjectCliService, PROJECT_CLI_CONFIGURATION_REVISION, projectCliScheduling } from '../agent/projects/ProjectCliService';
 import { ResourceScope } from '../resourceScope';
@@ -30,7 +32,6 @@ import { AutomationDispatcher, type ResolvedAutomationConfiguration } from '../a
 import { AutomationScheduler } from '../agent/automations/AutomationScheduler';
 import { AutomationService } from '../agent/automations/AutomationService';
 import { AutomationStore } from '../agent/automations/AutomationStore';
-import { createAutomationTool } from '../agent/automations/AutomationTool';
 import type { SkillOperationCaller } from './skillLifecycle';
 import { createMemoryOperations, type MemoryOperations, type OpenMemory, type ReviewMemoryReset } from './memoryOperations';
 import { projectAutomationLifecycle } from '../agent/projects/projectAutomationLifecycle';
@@ -86,6 +87,7 @@ export interface AgentHostComposition {
 }
 
 export interface AgentHostOptions {
+  readonly onScheduledAttention?: (notice: import('../agent/automations/AutomationService').ScheduledAttentionNotice) => void;
   readonly readMemoryEnabled?: () => boolean;
   readonly reviewMemoryReset: ReviewMemoryReset;
   readonly openMemory: OpenMemory;
@@ -388,28 +390,29 @@ async function composeAgentHost(options: AgentHostOptions, acquisition: Resource
     return { settings, revision: delegationSettingsRevision(settings) };
   };
   const projectCli = new ProjectCliService(threadService.projects,
-    (execution) => toolReference.get().authorizeProjectInvocation(execution),
+    (execution) => toolReference.get().authorizeHostCliInvocation(execution),
     (request, signal) => threadService.reviewProjectChange(threadService.projects.proposal(request), signal));
+  const scheduleCli = new ScheduleCliService(() => automationService, (execution) => toolReference.get().authorizeHostCliInvocation(execution));
   const delegationHost = new DelegateRuntimeHost({
     cli: options.delegateCliRuntime,
     socketPath: join(options.userDataDir, 'agent', 'delegate-broker.sock'),
-    currentConfigurationRevision: async (command) => command?.name === 'project' ? PROJECT_CLI_CONFIGURATION_REVISION : (await loadDelegationConfiguration()).revision,
+    currentConfigurationRevision: async (command) => command?.name === 'schedule' ? SCHEDULE_CLI_CONFIGURATION_REVISION : command?.name === 'project' ? PROJECT_CLI_CONFIGURATION_REVISION : (await loadDelegationConfiguration()).revision,
     resolveAdmission: async (input) => {
       if (!admissionOpen) throw new Error('Agent execution is unavailable');
       const source = threadService.delegationAdmissionContext(
         input.source.rootThreadId,
         input.source.sourceTurnId,
       );
-      if (input.command.name === 'project') {
+      if (input.command.name === 'project' || input.command.name === 'schedule') {
         const context = threadService.projectInvocationContext(input.source.rootThreadId, input.source.sourceTurnId, input.source.sourceItemId);
         if (!context.configuration.tools.includes('bash')) throw new Error('Project commands require Bash capability');
-        return { rootUserIntentRevision: context.rootUserIntentRevision, session: { kind: 'project' }, policy: {
-          configurationRevision: PROJECT_CLI_CONFIGURATION_REVISION,
+        return { rootUserIntentRevision: context.rootUserIntentRevision, session: { kind: input.command.name }, policy: {
+          configurationRevision: input.command.name === 'schedule' ? SCHEDULE_CLI_CONFIGURATION_REVISION : PROJECT_CLI_CONFIGURATION_REVISION,
           capabilityCeilingDigest: digestJson([...context.configuration.tools].sort()),
-          runnerId: 'project-host', runnerVersion: null, modelProvider: context.thread.modelProvider,
+          runnerId: input.command.name === 'schedule' ? 'schedule-host' : 'project-host', runnerVersion: null, modelProvider: context.thread.modelProvider,
           modelId: context.configuration.model, effort: context.configuration.reasoningEffort,
           profile: 'general', access: 'workspace-write', timeoutMs: 120_000,
-          schedulingPolicyDigest: schedulingPolicyDigest(projectCliScheduling().scheduling),
+          schedulingPolicyDigest: schedulingPolicyDigest((input.command.name === 'schedule' ? scheduleCliScheduling() : projectCliScheduling()).scheduling),
         } };
       }
       const { settings, revision } = await loadDelegationConfiguration();
@@ -507,7 +510,7 @@ async function composeAgentHost(options: AgentHostOptions, acquisition: Resource
             },
       };
     },
-    execute: (execution) => execution.admission.command.name === 'project' ? projectCli.execute(execution) : delegationCoordinator.execute(execution),
+    execute: (execution) => execution.admission.command.name === 'schedule' ? scheduleCli.execute(execution) : execution.admission.command.name === 'project' ? projectCli.execute(execution) : delegationCoordinator.execute(execution),
   });
   const threads: AgentThreadCapability = {
     startupIssues: () => threadService.startupIssues(),
@@ -539,12 +542,18 @@ async function composeAgentHost(options: AgentHostOptions, acquisition: Resource
   const memoryOperations = createMemoryOperations({ memory, review: options.reviewMemoryReset, open: options.openMemory });
   extensions.register(memory, { applicationInstructions: true });
 
-  const automationStore = new AutomationStore(join(options.userDataDir, 'agent', 'automations.sqlite'));
+  const automationStore = new AutomationStore(join(options.userDataDir, 'agent', 'scheduled-tasks.sqlite'));
   acquisition.defer('automations', () => automationStore.close());
   automationStore.bindProjectResolver((id) => threadService.projects.store.require(id));
   const automationWorktree = new AutomationWorktree(options.userDataDir);
   const automationReference = assignOnce<AutomationService>('AutomationService');
+  const scheduledOwnership = new ScheduledRunOwnership(automationStore, threadService);
   const automationDispatcher = new AutomationDispatcher({
+    holdsForegroundSlot: (run) => {
+      const active = run.threadId ? threadService.activeTurnIdForHost(run.threadId) : null;
+      return (!!active && scheduledOwnership.forTurn(run.threadId!, active)?.id === run.id)
+        || scheduledOwnership.processes(run).some((task) => task.state === 'settling' && (task.error !== null || task.stopRequestedAt !== null));
+    },
     canDispatch: () => admissionOpen,
     store: automationStore,
     threads: threadService,
@@ -561,6 +570,7 @@ async function composeAgentHost(options: AgentHostOptions, acquisition: Resource
     onRunChanged: (run) => automationReference.get().runChanged(run),
   });
   const automationService = new AutomationService({
+    onAttention: options.onScheduledAttention,
     store: automationStore,
     scheduler: automationScheduler,
     dispatcher: automationDispatcher,
@@ -570,6 +580,15 @@ async function composeAgentHost(options: AgentHostOptions, acquisition: Resource
   });
   threadService.projects.attachAutomation(projectAutomationLifecycle(automationStore, automationScheduler, automationDispatcher));
   automationReference.set(automationService);
+  threadService.bindScheduledCompletionAdmission((threadId, admission, operation) => {
+    const owner = scheduledOwnership.forBatch(admission.batchId, threadId);
+    if (!owner) return threadService.isScheduledThread(threadId) ? Promise.resolve(false) : operation();
+    return automationScheduler.admitContinuation(owner.id, () => {
+      if (scheduledOwnership.forBatch(admission.batchId, threadId)?.id !== owner.id) return Promise.resolve(false);
+      return operation();
+    });
+  });
+
   const localWorkspaceForContext = (context: TurnExecutionContext) => {
     const workspaceOptions = options.createLocalWorkspaceOptions(context, composition);
     const delegationSession = context.thread.threadSource === 'delegation'
@@ -623,7 +642,6 @@ async function composeAgentHost(options: AgentHostOptions, acquisition: Resource
       context,
       localWorkspaceForContext(context),
     ),
-    dynamicTools: () => [createAutomationTool(automationService)],
     delegationPolicy: (threadId) => {
       const session = delegationStore.readSession(threadId);
       return session ? { profile: session.policy.profile, access: session.policy.access } : null;
@@ -631,6 +649,7 @@ async function composeAgentHost(options: AgentHostOptions, acquisition: Resource
     delegateCommandRuntime: async (context) => {
       if (context.thread.threadSource !== 'user' || context.thread.parentThreadId !== null) return undefined;
       return delegationHost.commandRuntime(async ({ command, stdin }) => {
+        if (command.name === 'schedule') return scheduleCliScheduling();
         if (command.name === 'project') return projectCliScheduling();
         const current = await loadDelegationConfiguration();
         if (!current.settings.enabled) throw new Error('Agent delegation is disabled');
@@ -649,6 +668,15 @@ async function composeAgentHost(options: AgentHostOptions, acquisition: Resource
   toolReference.set(toolRuntime);
   acquisition.defer('thread-subscription', threadService.subscribe((notification) => {
     if (notification.type === 'turn/completed') managedSkills.clearTurn(notification.turnId);
+    if (notification.type === 'userInput/requested' || (notification.type === 'turn/completed' && notification.turn.status === 'failed')) {
+      const turnId = notification.type === 'userInput/requested' ? notification.request.turnId : notification.turnId;
+      try {
+        const owner = scheduledOwnership.forTurn(notification.threadId, turnId);
+        if (owner) options.onScheduledAttention?.({ automationId: owner.automationId, name: owner.snapshot.automationName,
+          kind: notification.type === 'userInput/requested' ? 'question' : 'failure',
+          key: notification.type === 'userInput/requested' ? `${turnId}:${notification.request.hostGeneration}:${notification.request.itemId}` : `turn:${turnId}` });
+      } catch { /* An inspection-only notification cannot interrupt the execution owner. */ }
+    }
     if (notification.type === 'turn/completed' || notification.type === 'thread/status/changed') {
       automationService.wake();
     }
@@ -769,7 +797,8 @@ function delegationScheduling(
   };
   readonly timeoutMs: number;
 } {
-  if (command.name === 'project') return projectCliScheduling();
+  if (command.name === 'schedule') return scheduleCliScheduling();
+        if (command.name === 'project') return projectCliScheduling();
   const targetSessionId = command.name === 'run'
     ? null
     : command.name === 'close'

@@ -1,3 +1,4 @@
+import { SCHEDULE_COMMANDS } from '../../../schedule/contract';
 import { decodeTaskLaunchAgreement, TASK_COMPLETION_AGREEMENT_SCHEMA } from '../../../core/agent/taskContinuation';
 import {
   TextFileNewlines,
@@ -1737,7 +1738,7 @@ function createBashTool(
         const delegateCommand = workspace.delegateCommandRuntime
           ? parsePrivilegedDelegateCommand(params.command)
           : null;
-        if (delegateCommand && delegateCommand.name !== 'project' && !params.run_in_background) {
+        if (delegateCommand && delegateCommand.name !== 'project' && delegateCommand.name !== 'schedule' && !params.run_in_background) {
           throw new LocalToolFailure(
             'invalid_args',
             'Delegate commands require run_in_background: true.',
@@ -1747,7 +1748,7 @@ function createBashTool(
           && (delegateCommand || !toolTaskService || !workspace.threadId || !turnId)) {
           throw new LocalToolFailure('invalid_args', 'Service agreements require an owned background Bash process; delegated jobs retain their finite result obligation.');
         }
-        if (delegateCommand?.name === 'project') {
+        if (delegateCommand?.name === 'project' || delegateCommand?.name === 'schedule') {
           if (params.run_in_background) throw new LocalToolFailure('invalid_args', 'Project commands require foreground Bash execution.');
           validateDelegateCommandInput(delegateCommand, params.stdin);
         }
@@ -2740,7 +2741,7 @@ async function startSupervisedBackgroundCommand(
     completionAgreement: params.completion_agreement,
     sourceTurnId: turnId,
     sourceItemId: toolCallId,
-    producer: delegateCommand?.name !== 'project' && delegateRuntime ? 'delegate' : 'bash',
+    producer: delegateCommand?.name !== 'project' && delegateCommand?.name !== 'schedule' && delegateRuntime ? 'delegate' : 'bash',
     description: params.description ?? 'Background command',
     command: params.command,
     cwd: workspace.root,
@@ -2790,6 +2791,10 @@ async function startSupervisedBackgroundCommand(
 }
 
 function validateDelegateCommandInput(command: DelegateStateCommand, stdin: string | undefined): void {
+  if (command.name === 'schedule' && !SCHEDULE_COMMANDS[command.operation].mutation) {
+    if (stdin !== undefined) throw new LocalToolFailure('invalid_args', 'Read commands do not accept stdin');
+    return;
+  }
   if (command.name === 'close') {
     if (stdin !== undefined) {
       throw new LocalToolFailure('invalid_args', 'delegate close does not accept Bash stdin.');

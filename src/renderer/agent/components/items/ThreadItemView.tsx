@@ -157,6 +157,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
       return (
         <article
           className={`thread-item thread-agent-message thread-agent-message-${props.item.phase ?? 'response'}`}
+          data-thread-item-id={props.item.id}
           onContextMenu={props.onAgentMessageContextMenu}
         >
           <div className="thread-agent-message-body">

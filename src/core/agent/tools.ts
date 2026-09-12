@@ -11,17 +11,6 @@ import {
 } from './protocol';
 import { decodeRequestUserInputQuestions } from './codec';
 import { TASK_CONTINUATION_SCHEMA, TASK_CONTROL_RECEIPT_SCHEMA, TASK_CONTROL_INPUT_SCHEMA, TASK_ITEM_REFERENCE_SCHEMA } from './taskContinuation';
-import {
-  AUTOMATION_STATUSES,
-  AUTOMATION_IDENTIFIER_MAX_LENGTH,
-  AUTOMATION_NAME_MAX_LENGTH,
-  AUTOMATION_PATH_MAX_LENGTH,
-  AUTOMATION_CONTEXT_HINTS_MAX_COUNT,
-  AUTOMATION_PROMPT_MAX_LENGTH,
-  AUTOMATION_RRULE_MAX_LENGTH,
-  AUTOMATION_TIMEZONE_MAX_LENGTH,
-} from './automation';
-import { REASONING_EFFORTS } from './configuration';
 
 export {
   REQUEST_USER_INPUT_MAX_AUTO_RESOLUTION_MS,
@@ -511,131 +500,6 @@ const updatePlanSchema = objectSchema({
   }, ['step', 'status'])),
 }, ['plan']);
 
-const automationScheduleSchema = objectSchema({
-  rrule: boundedStringSchema(AUTOMATION_RRULE_MAX_LENGTH, 'RFC 5545 DTSTART and RRULE lines.'),
-  timezone: boundedStringSchema(AUTOMATION_TIMEZONE_MAX_LENGTH, 'IANA timezone identifier.'),
-}, ['rrule', 'timezone']);
-
-const automationDestinationSchema: JsonSchema = {
-  anyOf: [
-    objectSchema({ kind: enumSchema(['standalone']) }, ['kind']),
-    objectSchema({
-      kind: enumSchema(['existingThread']),
-      threadId: boundedStringSchema(AUTOMATION_IDENTIFIER_MAX_LENGTH, 'Persistent destination Thread UUIDv7.'),
-    }, ['kind', 'threadId']),
-  ],
-};
-
-const automationContextHintSchema = objectSchema({
-  contextHintId: boundedStringSchema(AUTOMATION_IDENTIFIER_MAX_LENGTH, 'Existing context hint identity. Omit for a new hint; the Host allocates it.'),
-  source: { anyOf: [
-    objectSchema({ kind: enumSchema(['directory']), rootHint: boundedStringSchema(AUTOMATION_PATH_MAX_LENGTH, 'Absolute directory lookup hint.') }, ['kind', 'rootHint']),
-    objectSchema({ kind: enumSchema(['project']), projectId: boundedStringSchema(AUTOMATION_IDENTIFIER_MAX_LENGTH) }, ['kind', 'projectId']),
-  ] },
-  executionMode: enumSchema(['local', 'worktree']),
-}, ['source', 'executionMode']);
-
-const nullableStringSchema: JsonSchema = {
-  anyOf: [boundedStringSchema(AUTOMATION_IDENTIFIER_MAX_LENGTH), { type: 'null' }],
-};
-const automationConfigurationSchema = objectSchema({
-  modelProvider: nullableStringSchema,
-  model: nullableStringSchema,
-  reasoningEffort: nullableSchema(enumSchema(REASONING_EFFORTS)),
-});
-
-const automationDefinitionProperties = {
-  name: boundedStringSchema(AUTOMATION_NAME_MAX_LENGTH, 'User-visible Automation name.'),
-  prompt: boundedStringSchema(AUTOMATION_PROMPT_MAX_LENGTH, 'Durable prompt for each occurrence.'),
-  schedule: automationScheduleSchema,
-  destination: automationDestinationSchema,
-  contextHints: boundedArraySchema(automationContextHintSchema, AUTOMATION_CONTEXT_HINTS_MAX_COUNT),
-  configuration: automationConfigurationSchema,
-};
-const automationMutableProperties = {
-  ...automationDefinitionProperties,
-  status: enumSchema(['active', 'paused']),
-};
-
-const automationOutputSchema = objectSchema({
-  id: boundedStringSchema(AUTOMATION_IDENTIFIER_MAX_LENGTH),
-  name: boundedStringSchema(AUTOMATION_NAME_MAX_LENGTH),
-  prompt: boundedStringSchema(AUTOMATION_PROMPT_MAX_LENGTH),
-  schedule: automationScheduleSchema,
-  destination: automationDestinationSchema,
-  contextHints: boundedArraySchema(automationContextHintSchema, AUTOMATION_CONTEXT_HINTS_MAX_COUNT),
-  configuration: objectSchema({
-    modelProvider: nullableStringSchema,
-    model: nullableStringSchema,
-    reasoningEffort: nullableSchema(enumSchema(REASONING_EFFORTS)),
-  }, ['modelProvider', 'model', 'reasoningEffort']),
-  status: enumSchema(AUTOMATION_STATUSES),
-  revision: integerSchema(),
-  nextOccurrenceAt: nullableSchema(integerSchema()),
-  createdAt: integerSchema(),
-  updatedAt: integerSchema(),
-}, [
-  'id',
-  'name',
-  'prompt',
-  'schedule',
-  'destination',
-  'contextHints',
-  'configuration',
-  'status',
-  'revision',
-  'nextOccurrenceAt',
-  'createdAt',
-  'updatedAt',
-]);
-
-const automationUpdateOutputSchema: ObjectJsonSchema = {
-  type: 'object',
-  oneOf: [
-    objectSchema({ automation: nullableSchema(automationOutputSchema) }, ['automation']),
-    objectSchema({ data: arraySchema(automationOutputSchema) }, ['data']),
-    objectSchema({ deleted: { const: true }, id: boundedStringSchema(AUTOMATION_IDENTIFIER_MAX_LENGTH) }, ['deleted', 'id']),
-  ],
-};
-
-// The root stays a flat object with no union keyword. OpenAI rejects a function
-// schema whose ROOT carries oneOf/anyOf/allOf/enum/not ("schema must have type
-// 'object' and not have ... at the top level"), which is the same rule that
-// keeps tools from expressing mutually exclusive argument groups in the schema.
-// Per-mode exactness therefore lives in `decodeAutomationToolInput`, which refuses a wrong-shaped
-// call before anything is written; the price is that a wrong shape costs one
-// round trip. Nested unions inside a property subschema are fine.
-const automationUpdateToolSchema: ObjectJsonSchema = objectSchema({
-  mode: enumSchema(
-    ['create', 'update', 'view', 'delete'],
-    [
-      'Operation to perform. Each mode takes exactly its own fields and rejects the rest:',
-      '"create" takes definition;',
-      '"update" takes automation_id, expected_revision, and patch;',
-      '"view" takes an optional automation_id and lists every Automation when it is omitted;',
-      '"delete" takes automation_id and expected_revision.',
-    ].join(' '),
-  ),
-  definition: {
-    ...objectSchema(automationMutableProperties, ['name', 'prompt', 'schedule', 'destination']),
-    description: 'Full definition, required by mode "create" and rejected in every other mode.',
-  },
-  automation_id: boundedStringSchema(
-    AUTOMATION_IDENTIFIER_MAX_LENGTH,
-    'Target Automation UUIDv7. Required by modes "update" and "delete", optional for "view", rejected by "create".',
-  ),
-  expected_revision: {
-    type: 'integer',
-    minimum: 1,
-    description: 'Revision last observed by the caller. Required by modes "update" and "delete" and rejected by the rest; a stale value fails the call.',
-  },
-  patch: {
-    ...objectSchema(automationMutableProperties),
-    minProperties: 1,
-    description: 'At least one field to change. Required by mode "update" and rejected in every other mode; it never carries automation_id or expected_revision.',
-  },
-}, ['mode']);
-
 export const TASK_STOP_TOOL_DESCRIPTION = `
 - Stops an owned background task and revokes its pending responsibilities, even after exit before delivery
 - Takes a task_id parameter identifying the task to stop
@@ -763,20 +627,6 @@ const agentTaskToolContracts: readonly StaticModelToolContract[] = [
 ];
 
 const coreControlToolContracts: readonly StaticModelToolContract[] = [{
-    identity: { namespace: null, name: 'automation_update' },
-    description: [
-      'Create, update, view, or delete a host-owned Automation definition for scheduled agent work.',
-      'This tool manages definitions only: Automation status is not Run verification.',
-      'When asked to test a workflow, run the workflow in the current Turn before scheduling it.',
-      'Never use shell sleep or polling to wait for an Automation occurrence; Start Now and Run results belong to the Automations UI.',
-    ].join(' '),
-    scope: 'rootThread',
-    schemaOwner: 'core',
-    inputSchema: automationUpdateToolSchema,
-    outputSchema: automationUpdateOutputSchema,
-    actionKinds: ['agent.automation.manage'],
-  },
-  {
     identity: { namespace: null, name: 'request_user_input' },
     description: 'Request one to three short product questions. Default wait is 60 seconds. The UI opens the questions directly, with preset choices and a direct free-text field, or just a reply field when options is empty. Next is enabled after answering the current question; it saves the current draft and moves to the next question without sending. Only the final question shows Submit answers, which sends all filled answers and skips unanswered questions. Header arrows browse questions without requiring an answer or submitting; Previous revisits earlier drafts. Skip all sends no answers and keeps existing drafts local. Do not invent review or continue buttons. Users may skip individual questions by leaving them unanswered; an answered result is an explicit form submission whose entries contain an option, free text, or skipped: true. A skipped entry supplies no answer. The continue intent ends clarification: use the supplied answers and available information without another interview round. A discussed outcome includes active answers and identifies the actual user message delivered through steering in this same Turn; respond to that message without an empty clarification invitation or repeating the questionnaire. A timedOut result means nothing was submitted, not approval or proof the user saw the question. Continue authorized independent work, state reversible assumptions, or explain the unresolved decision. Do not automatically re-ask skipped or expired questions. Directional, irreversible, or permission-dependent work still requires a real decision. Skipping and timeout grant no authorization; this never requests authorization.',
     scope: 'rootThread',

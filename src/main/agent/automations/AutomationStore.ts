@@ -1,9 +1,11 @@
+import { AutomationRevisionConflict } from './AutomationRevisionConflict';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import {
   AUTOMATION_ERROR_MAX_LENGTH,
   AUTOMATION_DEFAULT_CONTEXT_HINT_ID,
   EMPTY_AUTOMATION_CONFIGURATION,
+  isUuid,
   type Automation,
   type AutomationConfiguration,
   type AutomationCreateInput,
@@ -29,6 +31,8 @@ interface AutomationRow {
   id: string;
   name: string;
   prompt: string;
+  materials_json: string;
+  origin_json: string | null;
   schedule_json: string;
   destination_json: string;
   context_hints_json: string;
@@ -45,6 +49,7 @@ interface AutomationRunRow {
   automation_id: string;
   automation_revision: number;
   event_sequence: number;
+  created_sequence: number;
   scheduled_for: number;
   context_hint_id: string;
   occurrence_key: string;
@@ -112,6 +117,8 @@ export class AutomationStore {
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         prompt TEXT NOT NULL,
+        materials_json TEXT NOT NULL,
+        origin_json TEXT,
         schedule_json TEXT NOT NULL,
         destination_json TEXT NOT NULL,
         context_hints_json TEXT NOT NULL,
@@ -129,6 +136,25 @@ export class AutomationStore {
         overlap_deferred INTEGER NOT NULL DEFAULT 0 CHECK (overlap_deferred IN (0, 1)),
         PRIMARY KEY (automation_id, context_hint_id)
       ) STRICT;
+      CREATE TABLE IF NOT EXISTS automation_missed_occurrences (
+        automation_id TEXT NOT NULL REFERENCES automations(id),
+        context_hint_id TEXT NOT NULL,
+        scheduled_for INTEGER NOT NULL,
+        resolution TEXT CHECK (resolution IN ('fulfilled', 'skipped', 'replaced')),
+        resolved_at INTEGER,
+        PRIMARY KEY (automation_id, context_hint_id, scheduled_for)
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS automation_operation_receipts (
+        request_id TEXT PRIMARY KEY,
+        input_json TEXT NOT NULL,
+        receipt_json TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS automation_issue_acknowledgements (
+        run_id TEXT NOT NULL REFERENCES automation_runs(id),
+        issue_key TEXT NOT NULL,
+        acknowledged_at INTEGER NOT NULL,
+        PRIMARY KEY (run_id, issue_key)
+      ) STRICT;
       CREATE TABLE IF NOT EXISTS automation_run_event_clock (
         id INTEGER PRIMARY KEY CHECK (id = 1),
         sequence INTEGER NOT NULL CHECK (sequence >= 0)
@@ -139,6 +165,7 @@ export class AutomationStore {
         automation_id TEXT NOT NULL REFERENCES automations(id),
         automation_revision INTEGER NOT NULL CHECK (automation_revision > 0),
         event_sequence INTEGER NOT NULL CHECK (event_sequence > 0),
+        created_sequence INTEGER NOT NULL CHECK (created_sequence > 0),
         scheduled_for INTEGER NOT NULL,
         context_hint_id TEXT NOT NULL,
         occurrence_key TEXT NOT NULL,
@@ -176,6 +203,60 @@ export class AutomationStore {
     this.db.close();
   }
 
+  operationReceipt<T>(requestId: string, input: unknown): T | null {
+    const row = this.db.prepare('SELECT input_json, receipt_json FROM automation_operation_receipts WHERE request_id = ?')
+      .get(requestId) as { input_json: string; receipt_json: string } | undefined;
+    if (!row) return null;
+    if (row.input_json !== canonicalJson(input)) throw new Error('Request identity was already used with different input');
+    const receipt: unknown = JSON.parse(row.receipt_json);
+    if (!receipt || typeof receipt !== 'object') throw new Error('Scheduled operation association is unreadable; mutation is blocked');
+    return receipt as T;
+  }
+
+  *priorRuns(current: AutomationRun): Iterable<AutomationRun> {
+    let before = current.id;
+    while (true) {
+      const page = this.listRuns({ automationId: current.automationId, before, limit: 50 });
+      yield* page;
+      if (page.length < 50) return;
+      before = page.at(-1)!.id;
+    }
+  }
+
+  isAcknowledged(automationRunId: string, issueKey: string): boolean {
+    return Boolean(this.db.prepare('SELECT 1 FROM automation_issue_acknowledgements WHERE run_id = ? AND issue_key = ?')
+      .get(automationRunId, issueKey));
+  }
+
+  acknowledge(automationRunId: string, issueKey: string, now = Date.now()): void {
+    const inserted = this.db.prepare('INSERT OR IGNORE INTO automation_issue_acknowledgements (run_id, issue_key, acknowledged_at) VALUES (?, ?, ?)')
+      .run(automationRunId, issueKey, now);
+    if (inserted.changes) this.db.prepare('UPDATE automation_runs SET event_sequence = ?, updated_at = ? WHERE id = ?')
+      .run(this.nextRunEventSequence(), now, automationRunId);
+  }
+
+  restore(id: string, expectedRevision: number, now = Date.now()): Automation {
+    const current = this.read(id, now, true);
+    if (!current) throw new Error('Scheduled task is unavailable');
+    if (current.revision !== expectedRevision) throw revisionConflict(current);
+    if (current.archivedAt === null) throw new Error('Scheduled task is not archived');
+    this.db.prepare(`UPDATE automations SET deleted_at = NULL, status = 'paused', revision = revision + 1,
+      updated_at = ? WHERE id = ? AND revision = ?`).run(now, id, expectedRevision);
+    return this.read(id, now)!;
+  }
+
+  /** The receipt and domain write commit together; neither can survive alone. */
+  withOperationReceipt<T>(requestId: string, input: unknown, operation: () => T): T {
+    return this.transaction(() => {
+      const existing = this.operationReceipt<T>(requestId, input);
+      if (existing !== null) return existing;
+      const receipt = operation();
+      this.db.prepare('INSERT INTO automation_operation_receipts (request_id, input_json, receipt_json) VALUES (?, ?, ?)')
+        .run(requestId, canonicalJson(input), json(receipt));
+      return receipt;
+    });
+  }
+
   private admitHints(inputs: readonly AutomationContextHintInput[], current: readonly AutomationContextHint[], now: number): readonly AutomationContextHint[] {
     const currentIds = new Set(current.map((hint) => hint.contextHintId));
     return inputs.map((hint) => {
@@ -198,7 +279,7 @@ export class AutomationStore {
     return this.requireRun(id);
   }
 
-  create(input: AutomationCreateInput, now = Date.now()): Automation {
+  create(input: AutomationCreateInput, now = Date.now(), origin: import('../../../core/agent/automation').AutomationOrigin | null = null): Automation {
     const id = uuidV7(now);
     const status = input.status ?? 'active';
     const configuration = fullConfiguration(input.configuration);
@@ -206,13 +287,15 @@ export class AutomationStore {
     this.transaction(() => {
       this.db.prepare(`
         INSERT INTO automations(
-          id, name, prompt, schedule_json, destination_json, context_hints_json,
+          id, name, prompt, materials_json, origin_json, schedule_json, destination_json, context_hints_json,
           configuration_json, status, revision, deleted_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, ?, ?)
       `).run(
         id,
         input.name,
         input.prompt,
+        json(input.materials ?? []),
+        origin ? json(origin) : null,
         json(input.schedule),
         json(input.destination),
         json(contextHints),
@@ -247,6 +330,7 @@ export class AutomationStore {
       ...current,
       name: input.name ?? current.name,
       prompt: input.prompt ?? current.prompt,
+      materials: input.materials ?? current.materials,
       schedule: input.schedule ?? current.schedule,
       destination: input.destination ?? current.destination,
       contextHints: input.contextHints ? this.admitHints(input.contextHints, current.contextHints, now) : current.contextHints,
@@ -261,12 +345,13 @@ export class AutomationStore {
     this.transaction(() => {
       const result = this.db.prepare(`
         UPDATE automations SET
-          name = ?, prompt = ?, schedule_json = ?, destination_json = ?,
+          name = ?, prompt = ?, materials_json = ?, schedule_json = ?, destination_json = ?,
           context_hints_json = ?, configuration_json = ?, status = ?, revision = ?, updated_at = ?
         WHERE id = ? AND revision = ? AND deleted_at IS NULL
       `).run(
         next.name,
         next.prompt,
+        json(next.materials),
         json(next.schedule),
         json(next.destination),
         json(next.contextHints),
@@ -278,7 +363,13 @@ export class AutomationStore {
         input.expectedRevision,
       );
       if (result.changes !== 1) throw revisionConflict(this.require(input.id, now));
-      this.omitPending(next.id, next.status === 'paused' ? 'paused' : 'updated', now);
+      if (scheduleChanged || next.status === 'paused') {
+        this.omitPending(next.id, next.status === 'paused' ? 'paused' : 'updated', now);
+      }
+      if (scheduleChanged || bindingsChanged) {
+        this.db.prepare(`UPDATE automation_missed_occurrences SET resolution = 'replaced', resolved_at = ?
+          WHERE automation_id = ? AND resolution IS NULL`).run(now, next.id);
+      }
       const previousKeys = new Set(contextHintKeys(current.contextHints));
       this.syncContextHintCursors(next.id, next.contextHints, now, scheduleChanged, previousKeys);
     });
@@ -293,13 +384,7 @@ export class AutomationStore {
   ): Automation {
     const current = this.require(id, now);
     if (expectedRevision !== undefined && current.revision !== expectedRevision) throw revisionConflict(current);
-    if (current.status === 'completed') {
-      throw new AgentToolFailure(
-        'automation_invalid_state',
-        'A completed Automation can only be reactivated by changing its schedule',
-        'Change the Automation schedule when reactivating it, or create a new Automation.',
-      );
-    }
+    if (current.status === 'completed' && status === 'active') return current;
     if (current.status === status) return current;
     this.transaction(() => {
       this.db.prepare(`
@@ -307,6 +392,12 @@ export class AutomationStore {
         WHERE id = ? AND deleted_at IS NULL
       `).run(status, now, id);
       if (status === 'paused') this.omitPending(id, 'paused', now);
+      if (status === 'active') {
+        // Resume starts at the current instant, without replaying intentionally paused time.
+        this.db.prepare(`UPDATE automation_binding_cursors
+          SET evaluated_through = MAX(evaluated_through, ?), overlap_deferred = 0
+          WHERE automation_id = ?`).run(now, id);
+      }
     });
     return this.read(id, now)!;
   }
@@ -438,6 +529,55 @@ export class AutomationStore {
     return this.insertClaim(automation, binding, now, now, `manual:${requestId}`);
   }
 
+  missedOccurrences(automationId: string): readonly { contextHintId: string; scheduledFor: number }[] {
+    return (this.db.prepare(`SELECT context_hint_id, scheduled_for FROM automation_missed_occurrences
+      WHERE automation_id = ? AND resolution IS NULL ORDER BY scheduled_for`)
+      .all(automationId) as { context_hint_id: string; scheduled_for: number }[])
+      .map((row) => ({ contextHintId: row.context_hint_id, scheduledFor: row.scheduled_for }));
+  }
+
+  /** Called only under the Host admission lock, before creating an execution claim. */
+  recordMissedOccurrence(automation: Automation, binding: AutomationContextHint | null,
+    scheduledFor: number, expectedEvaluatedThrough: number): void {
+    this.transaction(() => {
+      const current = this.require(automation.id, scheduledFor);
+      if (current.revision !== automation.revision) throw revisionConflict(current);
+      this.db.prepare(`INSERT OR IGNORE INTO automation_missed_occurrences
+        (automation_id, context_hint_id, scheduled_for) VALUES (?, ?, ?)`)
+        .run(automation.id, contextHintKey(binding), scheduledFor);
+      if (!this.advanceCursor(automation.id, contextHintKey(binding), expectedEvaluatedThrough, scheduledFor)) {
+        throw new Error('Scheduled task cursor changed before missed-time decision');
+      }
+    });
+  }
+
+  resolveMissedOccurrence(automation: Automation, contextHintId: string, scheduledFor: number,
+    resolution: 'fulfilled' | 'skipped', now = Date.now()): AutomationRun | null {
+    return this.transaction(() => {
+      const current = this.require(automation.id, now);
+      if (current.revision !== automation.revision) throw revisionConflict(current);
+      const unresolved = this.missedOccurrences(automation.id).some((time) => time.contextHintId === contextHintId && time.scheduledFor === scheduledFor);
+      if (!unresolved) throw new Error('This missed occurrence is already resolved or unavailable');
+      if (resolution === 'skipped') {
+        this.db.prepare(`UPDATE automation_missed_occurrences SET resolution = 'skipped', resolved_at = ?
+          WHERE automation_id = ? AND context_hint_id = ? AND scheduled_for = ? AND resolution IS NULL`)
+          .run(now, automation.id, contextHintId, scheduledFor);
+        const prepared = this.runForOccurrence(automation.id, `scheduled:${scheduledFor}`, contextHintId);
+        if (prepared?.state === 'pending') {
+          const omission: AutomationRunOmission = { from: scheduledFor, through: scheduledFor, count: 1, reason: 'skipped' };
+          this.db.prepare(`UPDATE automation_runs SET state = 'omitted', thread_id = NULL, error = NULL,
+            omission_json = ?, event_sequence = ?, updated_at = ? WHERE id = ? AND state = 'pending'`)
+            .run(json(omission), this.nextRunEventSequence(), now, prepared.id);
+        }
+        return null;
+      }
+      const binding = contextHintId === AUTOMATION_DEFAULT_CONTEXT_HINT_ID ? null
+        : automation.contextHints.find((candidate) => candidate.contextHintId === contextHintId);
+      if (binding === undefined) throw new Error('The missed occurrence work location is unavailable');
+      return this.insertClaim(automation, binding, scheduledFor, now);
+    });
+  }
+
   pendingRuns(automationId?: string): readonly AutomationRun[] {
     const rows = this.db.prepare(`
       SELECT * FROM automation_runs
@@ -451,7 +591,7 @@ export class AutomationStore {
     const row = this.db.prepare(`
       SELECT * FROM automation_runs
       WHERE automation_id = ? AND context_hint_id = ? AND state IN ('pending', 'dispatched')
-      ORDER BY scheduled_for DESC, id DESC LIMIT 1
+      ORDER BY created_sequence DESC, id DESC LIMIT 1
     `).get(automationId, contextHintId) as AutomationRunRow | undefined;
     return row ? runFromRow(row) : null;
   }
@@ -467,6 +607,7 @@ export class AutomationStore {
   }
 
   markDispatched(id: string, threadId: string, turnId: string, now = Date.now()): AutomationRun {
+    return this.transaction(() => {
     const eventSequence = this.nextRunEventSequence();
     const result = this.db.prepare(`
       UPDATE automation_runs
@@ -478,7 +619,14 @@ export class AutomationStore {
       if (current.state === 'dispatched' && current.threadId === threadId && current.turnId === turnId) return current;
       throw new Error(`AutomationRun cannot be dispatched: ${id}`);
     }
-    return this.requireRun(id);
+    const dispatched = this.requireRun(id);
+    if (dispatched.occurrenceKey === `scheduled:${dispatched.scheduledFor}`) {
+      this.db.prepare(`UPDATE automation_missed_occurrences SET resolution = 'fulfilled', resolved_at = ?
+        WHERE automation_id = ? AND context_hint_id = ? AND scheduled_for = ? AND resolution IS NULL`)
+        .run(now, dispatched.automationId, dispatched.contextHintId, dispatched.scheduledFor);
+    }
+    return dispatched;
+    });
   }
 
   markFailed(id: string, error: string, now = Date.now()): AutomationRun {
@@ -497,6 +645,21 @@ export class AutomationStore {
     this.db.prepare(`
       UPDATE automation_runs SET error = ?, event_sequence = ?, updated_at = ? WHERE id = ? AND state = 'pending'
     `).run(boundedError(error), eventSequence, now, id);
+    return this.requireRun(id);
+  }
+
+  refreshPendingBrief(id: string, now = Date.now()): AutomationRun {
+    const run = this.requireRun(id);
+    if (run.state !== 'pending') return run;
+    const automation = this.require(run.automationId, now);
+    const binding = automation.revision === run.automationRevision
+      ? automation.contextHints.find((hint) => hint.contextHintId === run.contextHintId) ?? null
+      : automation.contextHints[0] ?? null;
+    const snapshot = this.captureSnapshot(automation, binding);
+    if (automation.revision === run.automationRevision && json(snapshot.projectSnapshot) === json(run.snapshot.projectSnapshot)) return run;
+    this.db.prepare(`UPDATE automation_runs SET automation_revision = ?, snapshot_json = ?, context_hint_id = ?,
+      dispatch_snapshot_ref_json = NULL, event_sequence = ?, updated_at = ? WHERE id = ? AND state = 'pending'`)
+      .run(automation.revision, json(snapshot), contextHintKey(binding), this.nextRunEventSequence(), now, id);
     return this.requireRun(id);
   }
 
@@ -522,6 +685,11 @@ export class AutomationStore {
     return row ? runFromRow(row) : null;
   }
 
+  allRunsForAutomation(automationId: string): readonly AutomationRun[] {
+    return (this.db.prepare('SELECT * FROM automation_runs WHERE automation_id = ? ORDER BY created_sequence DESC, id DESC')
+      .all(automationId) as AutomationRunRow[]).map(runFromRow);
+  }
+
   listRuns(input: AutomationRunListInput = {}): readonly AutomationRun[] {
     const clauses: string[] = [];
     const params: Array<string | number> = [];
@@ -530,12 +698,18 @@ export class AutomationStore {
       params.push(input.automationId);
     }
     if (input.unreadOnly) clauses.push("read_at IS NULL AND state IN ('dispatched', 'failed')");
+    if (input.before) {
+      const before = this.readRun(input.before);
+      if (!before || (input.automationId && before.automationId !== input.automationId)) throw new Error('Run page cursor is unavailable');
+      clauses.push('created_sequence < ?');
+      params.push(before.createdSequence);
+    }
     const limit = input.limit ?? 100;
     params.push(limit);
     const rows = this.db.prepare(`
       SELECT * FROM automation_runs
       ${clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : ''}
-      ORDER BY scheduled_for DESC, id DESC LIMIT ?
+      ORDER BY created_sequence DESC, id DESC LIMIT ?
     `).all(...params) as AutomationRunRow[];
     return Object.freeze(rows.map(runFromRow));
   }
@@ -557,7 +731,7 @@ export class AutomationStore {
     const rows = this.db.prepare(`
       SELECT * FROM automation_runs
       WHERE automation_id = ? AND context_hint_id = ?
-      ORDER BY scheduled_for DESC, id DESC LIMIT ?
+      ORDER BY created_sequence DESC, id DESC LIMIT ?
     `).all(automationId, contextHintId, limit) as AutomationRunRow[];
     return Object.freeze(rows.map(runFromRow));
   }
@@ -566,7 +740,7 @@ export class AutomationStore {
     const rows = this.db.prepare(`
       SELECT * FROM automation_runs
       WHERE state = 'dispatched'
-      ORDER BY scheduled_for DESC, id DESC
+      ORDER BY created_sequence DESC, id DESC
     `).all() as AutomationRunRow[];
     return Object.freeze(rows.map(runFromRow));
   }
@@ -576,7 +750,7 @@ export class AutomationStore {
       SELECT * FROM automation_runs
       WHERE worktree_json IS NOT NULL
         AND json_extract(worktree_json, '$.removedAt') IS NULL
-      ORDER BY scheduled_for DESC, id DESC
+      ORDER BY created_sequence DESC, id DESC
     `).all() as AutomationRunRow[];
     return Object.freeze(rows.map(runFromRow));
   }
@@ -687,6 +861,7 @@ export class AutomationStore {
   ): void {
     const rows = this.db.prepare(`
       SELECT * FROM automation_runs WHERE automation_id = ? AND state = 'pending'
+      ${reason === 'paused' || reason === 'updated' ? "AND occurrence_key NOT LIKE 'manual:%'" : ''}
     `).all(automationId) as AutomationRunRow[];
     for (const row of rows) {
       const eventSequence = this.nextRunEventSequence();
@@ -737,11 +912,11 @@ export class AutomationStore {
     const omission: AutomationRunOmission = { from, through, count, reason };
     this.db.prepare(`
       INSERT INTO automation_runs(
-        id, automation_id, automation_revision, event_sequence, scheduled_for, context_hint_id, occurrence_key,
+        id, automation_id, automation_revision, event_sequence, created_sequence, scheduled_for, context_hint_id, occurrence_key,
         snapshot_json, state, thread_id, turn_id, worktree_json, omission_json,
         error, read_at, pinned, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'omitted', NULL, NULL, NULL, ?, NULL, NULL, 0, ?, ?)
-    `).run(id, automation.id, automation.revision, eventSequence, through, key, `omitted:${id}`, json(snapshot), json(omission), now, now);
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'omitted', NULL, NULL, NULL, ?, NULL, NULL, 0, ?, ?)
+    `).run(id, automation.id, automation.revision, eventSequence, eventSequence, through, key, `omitted:${id}`, json(snapshot), json(omission), now, now);
     return this.requireRun(id);
   }
 
@@ -759,14 +934,15 @@ export class AutomationStore {
     const threadId = automation.destination.kind === 'standalone' ? uuidV7(now) : automation.destination.threadId;
     this.db.prepare(`
       INSERT INTO automation_runs(
-        id, automation_id, automation_revision, event_sequence, scheduled_for, context_hint_id, occurrence_key,
+        id, automation_id, automation_revision, event_sequence, created_sequence, scheduled_for, context_hint_id, occurrence_key,
         snapshot_json, state, thread_id, turn_id, worktree_json, omission_json,
         error, read_at, pinned, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, NULL, NULL, NULL, NULL, NULL, 0, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, NULL, NULL, NULL, NULL, NULL, 0, ?, ?)
     `).run(
       id,
       automation.id,
       automation.revision,
+      eventSequence,
       eventSequence,
       scheduledFor,
       contextHintKey(binding),
@@ -798,17 +974,36 @@ export class AutomationStore {
     return row.sequence;
   }
 
+  private transactionDepth = 0;
+
   private transaction<T>(operation: () => T): T {
-    this.db.exec('BEGIN IMMEDIATE');
+    const name = `automation_${this.transactionDepth++}`;
+    const outer = this.transactionDepth === 1;
+    let began = false;
     try {
+      this.db.exec(outer ? 'BEGIN IMMEDIATE' : `SAVEPOINT ${name}`);
+      began = true;
       const result = operation();
-      this.db.exec('COMMIT');
+      this.db.exec(outer ? 'COMMIT' : `RELEASE SAVEPOINT ${name}`);
       return result;
     } catch (error) {
-      this.db.exec('ROLLBACK');
+      if (began && outer) this.db.exec('ROLLBACK');
+      else if (began) {
+        this.db.exec(`ROLLBACK TO SAVEPOINT ${name}`);
+        this.db.exec(`RELEASE SAVEPOINT ${name}`);
+      }
       throw error;
+    } finally {
+      this.transactionDepth--;
     }
   }
+}
+
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(value, (_key, entry: unknown) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry;
+    return Object.fromEntries(Object.entries(entry).sort(([left], [right]) => left.localeCompare(right)));
+  });
 }
 
 function automationFromRow(row: AutomationRow, now: number): Automation {
@@ -817,6 +1012,8 @@ function automationFromRow(row: AutomationRow, now: number): Automation {
     id: row.id,
     name: row.name,
     prompt: row.prompt,
+    origin: optionalOrigin(row.origin_json),
+    materials: parseJson<import("../../../core/agent/scheduledMaterial").ScheduledMaterial[]>(row.materials_json, "Scheduled materials"),
     schedule,
     destination: parseJson<AutomationDestination>(row.destination_json, 'Automation destination'),
     contextHints: Object.freeze(parseJson<AutomationContextHint[]>(
@@ -832,6 +1029,7 @@ function automationFromRow(row: AutomationRow, now: number): Automation {
     nextOccurrenceAt: row.deleted_at === null && row.status === 'active'
       ? nextAutomationOccurrence(schedule, now - 1)
       : null,
+    archivedAt: row.deleted_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });
@@ -843,6 +1041,7 @@ function runFromRow(row: AutomationRunRow): AutomationRun {
     automationId: row.automation_id,
     automationRevision: row.automation_revision,
     eventSequence: row.event_sequence,
+    createdSequence: row.created_sequence,
     scheduledFor: row.scheduled_for,
     contextHintId: row.context_hint_id,
     occurrenceKey: row.occurrence_key,
@@ -872,6 +1071,7 @@ function runSnapshot(
   return Object.freeze({
     automationName: automation.name,
     prompt: automation.prompt,
+    materials: automation.materials,
     schedule: automation.schedule,
     destination: automation.destination,
     contextHint,
@@ -914,9 +1114,18 @@ function boundedError(value: string): string {
 }
 
 function revisionConflict(current: Automation): Error {
-  return new AgentToolFailure(
-    'automation_revision_conflict',
-    `Automation revision conflict: expected current revision ${current.revision}`,
-    'View the Automation to get its current revision, review the latest state, and retry the update.',
-  );
+  return new AutomationRevisionConflict(current.revision);
+}
+
+function optionalOrigin(encoded: string | null): import('../../../core/agent/automation').AutomationOrigin | null {
+  // Origin is inspection-only; its loss must not hide an otherwise readable assignment.
+  if (!encoded) return null;
+  try {
+    const value: unknown = JSON.parse(encoded);
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const row = value as Record<string, unknown>;
+    if (typeof row.threadId !== 'string' || !isUuid(row.threadId) || typeof row.turnId !== 'string' || !isUuid(row.turnId)
+      || typeof row.itemId !== 'string' || !row.itemId.trim() || row.itemId.length > 256) return null;
+    return { threadId: row.threadId, turnId: row.turnId, itemId: row.itemId };
+  } catch { return null; }
 }

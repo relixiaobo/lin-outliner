@@ -4,6 +4,7 @@ import { MenuItem } from '../primitives/MenuItem';
 import { MenuSurface } from '../primitives/MenuSurface';
 
 interface PopoverListboxProps {
+  nestedDialog?: boolean;
   children: ReactNode;
   className: string;
   label?: string;
@@ -16,6 +17,7 @@ interface PopoverListboxProps {
 export const PopoverListbox = forwardRef<HTMLDivElement, PopoverListboxProps>(function PopoverListbox(
   {
     children,
+    nestedDialog,
     className,
     label,
     onMouseDown,
@@ -29,6 +31,7 @@ export const PopoverListbox = forwardRef<HTMLDivElement, PopoverListboxProps>(fu
     <MenuSurface
       ref={ref}
       aria-label={label}
+      data-dialog-nested-overlay={nestedDialog ? 'true' : undefined}
       className={className}
       onMouseDown={(event) => {
         if (preventMouseDown) event.preventDefault();

@@ -13,6 +13,12 @@ export interface AutomationOccurrenceBatch {
   readonly evaluatedThrough: number;
 }
 
+/** A finite repeat is still repeating; only one requested occurrence is one-off. */
+export function isOneOffAutomationSchedule(schedule: AutomationSchedule): boolean {
+  const normalized = normalizeAutomationSchedule(schedule);
+  return parseRule(prepareRruleSource(normalized.rrule, normalized.timezone).source).options.count === 1;
+}
+
 export function normalizeAutomationSchedule(schedule: AutomationSchedule): AutomationSchedule {
   assertTimeZone(schedule.timezone);
   const source = normalizeRruleSource(schedule.rrule, schedule.timezone);
@@ -23,6 +29,7 @@ export function normalizeAutomationSchedule(schedule: AutomationSchedule): Autom
   }
   const dtstart = parsed.options.dtstart;
   if (!dtstart) throw new Error('Automation RRULE requires DTSTART');
+  if (wallStamp(dtstart) !== /^DTSTART:(\d{8}T\d{6})/m.exec(source)?.[1]) throw new Error('Invalid scheduled calendar date');
   let normalizedRule = parsed.toString()
       .replace(/DTSTART;TZID=[^:]+:/, 'DTSTART:')
       .replace(/^(DTSTART:\d{8}T\d{6})Z$/m, '$1');
@@ -70,7 +77,8 @@ export function automationOccurrencesBetween(
     throw new Error('Automation occurrence bounds must be integer timestamps');
   }
   if (throughInclusive <= afterExclusive) {
-    return { occurrences: Object.freeze([]), truncated: false, evaluatedThrough: throughInclusive };
+    // A backward clock adjustment must never roll back a durable occurrence cursor.
+    return { occurrences: Object.freeze([]), truncated: false, evaluatedThrough: afterExclusive };
   }
   const normalized = normalizeAutomationSchedule(schedule);
   const prepared = prepareRruleSource(normalized.rrule, normalized.timezone);

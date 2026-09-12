@@ -15,8 +15,9 @@ starting or integrating work; the audit below is a dated snapshot, not a lock.
 
 Status refresh: 2026-09-12. Task action admission, outcome-aware recovery and
 attributable observations are integrated through #681/#683/#684; their #680
-design is archived. Scheduling (#682, Draft) is the remaining open claim at
-this refresh; Memory Node quality (#685) is shipped. Nine active designs remain.
+design is archived. Scheduled tasks (#682), Memory Node quality (#685), and
+Profile files/direct learning (#686) are integrated. Eight active designs remain;
+refresh GitHub for new claims before starting work.
 
 #679 Project-owned defaults and #675/#676/#677 image/service-evidence contracts
 remain available. Admitted Task addresses and receipt identities stay immutable;
@@ -25,8 +26,9 @@ new Task guidance neither infers historical causes nor grants restart authority.
 #674's authorization finding and source CLI cleanup tail are resolved by #678.
 The image and service repairs preserve that final supervisor transport, resource
 ownership, Project defaults and Task receipts. Scheduling consumes these
-available owners but remains unimplemented. The original dev-session Outline
-Runtime timeout remains unexplained; the isolated failure-channel fixtures do
+available owners through its delivered task workspace and authenticated CLI.
+The original dev-session Outline Runtime timeout remains unexplained; the
+isolated failure-channel fixtures do
 not establish its historical cause or authorize a data reset.
 
 #665, #668, #670 and #671 integrated designs rather than their runtime features;
@@ -74,7 +76,7 @@ features.
 | [user-input-request-recovery](plans/archive/user-input-request-recovery.md) | Delivered after the audit; archived | #672 supplies ordered snapshots, a 60-second default, exact settlement and session-local drafts. Downstream consumers use the current structured-input contract; scheduled attention acceptance remains with scheduling. |
 | [background-task-continuation-policy](plans/archive/background-task-continuation-policy.md) | Delivered after the audit; archived | #673 supplies service handoff, explicit watch, exact-event acknowledgement and Stop revocation through the existing Task and Turn owners. Consumers preserve these delivered contracts; exit facts still do not establish user intent. |
 | [conversation-work-folders](plans/archive/conversation-work-folders.md) | Delivered after the audit; archived | #674 introduced multi-folder Projects and scoped CLI/Skill access; #679 replaces independent conversation defaults with current Project primary resolution. Scheduling retains its own saved location and consumes that final owner. |
-| [scheduled-work-redesign](plans/scheduled-work-redesign.md) | Retain; complete replacement feature | Current Automation scheduling does not supply the planned task/results workspace and CLI lifecycle. Keep one complete feature, settle local catch-up/location questions and consume final record/question/Task owners; document length alone is not a reason to ship partial scaffolding. |
+| [scheduled-work-redesign](plans/archive/scheduled-work-redesign.md) | Delivered after the audit; archived | #682 supplies the task workspace, authenticated CLI, exact run ownership, stop controls, receipts and local catch-up policy; consumers use the current scheduling specification. |
 | [memory-agent-profile](plans/archive/memory-agent-profile.md) | Node retention quality shipped; Profile unit remains | PR #685 ships the complete Node retention quality unit. Keep Profile files/direct learning distinct; optional views, temporal memory and narrower Reset remain separate. |
 | [targeted-thread-recovery](plans/targeted-thread-recovery.md) | Retain; final-owner dependency is real | Readable session records are not a complete reconstructable Thread store. Exact owner closure and source-loss versus accepted-learning semantics remain necessary; consume final records/Profile owners and the lifecycle owners that actually ship. |
 | [semantic-working-state](plans/semantic-working-state.md) | Retain; small consumer feature | Settings provider/managed-Skill surfaces still have raw labels and spinner-only gaps. Keep WorkingText scoped to Settings operations over existing lifecycle truth, without introducing another state owner. |
@@ -93,9 +95,9 @@ not separately releasable scaffolding. The PM reviews at most two significant
 changes at once. Planning, fixtures and disjoint implementation can proceed in
 parallel; shared-owner mutations need an explicit integration order.
 
-The image and service-evidence repair units are available. Scheduling may consume
-the final Task/Thread evidence owner once its own product questions are settled;
-Computer Pilot's final screenshot acceptance consumes the shared pixel normalizer.
+The image, service-evidence and scheduling units are available. Scheduling consumes
+the final Task/Thread evidence owner. Computer Pilot's final screenshot acceptance
+consumes the shared pixel normalizer.
 Node retention quality is shipped on Memory-local owners. Profile learning
 follows the delivered Node evidence contract. Keep at most two significant changes
 awaiting PM review and refresh open claims before editing shared owners.
@@ -111,18 +113,18 @@ an aggregate plan.
 ```text
 Required contract consumption:
   published record contract (#669, available) -> profile files/direct learning
-  published record contract (#669, available) -> scheduled-work-redesign
+  published record contract (#669, available) -> scheduled-work-redesign (#682, available)
   published record contract (#669, available) -> targeted-thread-recovery
-  structured input contract (#672, available) -> scheduled-work-redesign
+  structured input contract (#672, available) -> scheduled-work-redesign (#682, available)
   structured input contract (#672, available) -> targeted-thread-recovery
-  Task responsibility contract (#673, available) -> scheduled-work-redesign
+  Task responsibility contract (#673, available) -> scheduled-work-redesign (#682, available)
   Task responsibility contract (#673, available) -> targeted-thread-recovery
   profile files/direct learning -> targeted-thread-recovery
 
 Preferred shared Agent/Host integration lane:
   Project-owned defaults (#679, available)
     ~> service evidence (#677, available)
-    ~> scheduled-work-redesign
+    ~> scheduled-work-redesign (#682, available)
     ~> targeted-thread-recovery
 
 Independent correctness lane:
@@ -154,10 +156,10 @@ extend these prerequisites.
 
 | Priority | Plan / PR claim | Status | Next action / eligibility |
 | --- | --- | --- | --- |
-| P2 | [scheduled-work-redesign](plans/scheduled-work-redesign.md), #682 | `in-progress` | Draft claim for the complete UI/CLI feature. Consume shipped record, input, Project and #681/#683/#684 Task contracts; product decisions and complete acceptance remain with #682. |
+| P2 | [scheduled-work-redesign](plans/archive/scheduled-work-redesign.md), #682 | `done` | Task windows, authenticated CLI, local scheduling, canonical results, exact Stop and shared renderer state shipped; current behavior is in [the scheduling spec](spec/agent-automations.md). |
 | P2 | [memory-agent-profile: Node retention quality](plans/archive/memory-agent-profile.md#implementation-ownership-and-complete-delivery-units), #685 | `done` | Bounded source-aware extraction, independent support, subject admission, consolidation cleanup, completed-day naming, and focus-preserving publication shipped; [plan archived](plans/archive/memory-agent-profile.md). |
 | P2 | [memory-agent-profile: Profile files and direct learning](plans/archive/memory-profile-direct-learning.md) | `done` | Editable Profile files, direct USER.md learning, source-aware activation, canonical context updates, Reset/rollback invalidation, retention cleanup, and Settings/file-tool ownership shipped in #686; [plan archived](plans/archive/memory-profile-direct-learning.md). |
-| P2 | [targeted-thread-recovery](plans/targeted-thread-recovery.md) | `draft` | Record, input and Task prerequisites are available; final profile owners remain required. Prefer after other selected lifecycle consumers; verify exact question, Task, Project and scheduled-run closure through their actual owners. |
+| P2 | [targeted-thread-recovery](plans/targeted-thread-recovery.md) | `draft` | Record, input, Task, Profile and scheduling owners are available; verify exact question, Task, Project, accepted Profile and scheduled-run closure through their actual owners. |
 | P2 | [file-preview-office](plans/file-preview-office.md) | `draft` | Prove no-Python DOCX/XLSX extraction and archive policy first; cut over Agent and preview in the same feature. Preserve #669's delivered file-tool contract; take the first preview-shell claim and ship all three readers together. |
 | P2 | [url-static-reader](plans/url-static-reader.md) | `draft` | Network/image-policy and existing Agent-mode fixtures can start now. Prefer after Office on preview shell/extraction wiring; preserve each caller's acquisition authority without a renderer fetch path. |
 | P3 | [computer-pilot-managed-skill](plans/computer-pilot-managed-skill.md) | `draft` | Prove Skill/CLI acquisition and packaged/TCC behavior independently. Final screenshot/provider acceptance consumes the available #676 normalizer; use one normalizer, current file-backed admission and per-execution output ownership. |
@@ -169,7 +171,6 @@ open question. Reuse existing PM decisions instead of requesting them again.
 
 | Scope | Decision / preparation still to resolve | Effect on execution |
 | --- | --- | --- |
-| Scheduled work OQ-1/OQ-2 | Confirm local current-state catch-up/missed-once behavior and the task/result workspace with one primary work location. | Gates the scheduling feature; it is not a prerequisite for profile learning or targeted recovery. |
 | Profile core unit | Show direct edit, scoped correction, source removal, interrupted save and next-Turn activation examples. | Internal contract work before consumers in the same complete feature, not an extra proposal phase or mandatory approval inbox. |
 | Office / URL / Computer Pilot | Resolve parser/archive policy, shared remote-image policy, and reproducible CLI acquisition respectively. | Bounded technical preparation inside each feature; dependency/build ownership still requires coordination. |
 
@@ -248,7 +249,9 @@ into a blanket dependency for every PR.
   required Task isolation evidence, terminal receipt v3, and supervisor identity
   v2, plus #663's nullable Task timeout and #673's required Task continuation and
   control-receipt fields, plus #679's removal of conversation-folder storage and
-  replacement of execution-address `workFolder` with `projectDefault`.
+  replacement of execution-address `workFolder` with `projectDefault`, plus
+  #682's new `agent/scheduled-tasks.sqlite` owner without importing earlier
+  Automation definitions.
   Use fresh clone-specific userData for development
   verification; no migration or automatic deletion ships.
 - **Launcher NSPanel packaged verification** — one `.dmg` pass for Cmd+Tab,
@@ -375,7 +378,7 @@ One line per recent shipped integration. Older history and review detail live in
 - **unified-session-records** (`done`, #669, 2026-09-09) - ordinary file tools recover retained conversation evidence with exact sources, active publication and bounded continuation/search; [plan archived](plans/archive/unified-session-records.md).
 - **Execution-order audit** (`done`, 2026-09-09) - reconciled 15 active plans, #669's review state, contract dependencies, selected integration lanes and product gates; runtime features remain in their own rows.
 - **Design-validity audit and delegation closure** (`done`, 2026-09-09) - audited 15 designs, revised five and retained nine; the three shipped delegation units are [archived](plans/archive/agent-delegation-runtime.md), with graduation measurement preserved separately and no experimental graduation claimed.
-- **Task responsibility and input recovery design refinement** (`done`, #671, 2026-09-09) - Task acknowledgement/watch receipts, unsent answer recovery and scheduled question settlement are specified; #672/#673 subsequently deliver input recovery and Task policy while scheduled-work redesign remains open.
+- **Task responsibility and input recovery design refinement** (`done`, #671, 2026-09-09) - Task acknowledgement/watch receipts, unsent answer recovery and scheduled question settlement are specified; #672/#673 subsequently delivered input recovery and Task policy, and #682 supplies their scheduled-work consumer.
 - **conversation-work-folders design integration** (`done`, #670, 2026-09-09) - Project sources, independent conversation defaults, CLI/Skill access and composer controls are specified; #674 subsequently delivered the approved runtime design.
 - **scheduled-work design integration** (`done`, #668, 2026-09-09) - the task/results workspace and CLI/Skill design is integrated; record contracts are available, with OQ-1/OQ-2 still pending.
 - **startup-fault-isolation** (`done`, #664, 2026-09-09) - scoped startup recovery preserves healthy notes, chat drafts and notifications; owner retry and configuration recovery are specified, and the [plan is archived](plans/archive/startup-fault-isolation.md).

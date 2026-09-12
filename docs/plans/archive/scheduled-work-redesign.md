@@ -75,7 +75,7 @@ in the same complete feature. It adds no replacement model tool.
 
 - **CON-1, hard:** Preserve the TypeScript/Electron process boundary, native
   security defaults, canonical mutation and provenance owners, actual isolation,
-  and clone/production data separation from [AGENTS.md](../../AGENTS.md).
+  and clone/production data separation from [AGENTS.md](../../../AGENTS.md).
 - **CON-2, hard:** Consume shared execution, resource, configuration, and recovery
   contracts; inspection failure cannot fabricate execution failure or completion.
 - **CON-3, selected product boundary:** Execution requires Tenon and the local
@@ -84,8 +84,8 @@ in the same complete feature. It adds no replacement model tool.
 - **CON-4, inherited choices released:** Drawer-first editing, command Nodes,
   conversation destinations, project fan-out, and raw dispatch states are not
   constraints on the product design.
-- **OPT-1, selected clean-slate target:** A stable assignment with result-first
-  detail, independent controls, and a canonical execution record per run.
+- **OPT-1, selected clean-slate target:** A stable assignment with an explicit task overview and inspectable results,
+  independent controls, and a canonical execution record per run.
 - **OPT-2, considered minimum:** A timer that posts another Agent message. It
   schedules work but leaves result discovery and exception handling with the user;
   it does not meet OBJ-1.
@@ -99,7 +99,7 @@ in the same complete feature. It adds no replacement model tool.
 - **TRD-1:** A task has one primary work location. Several explicit reference
   materials are supported. Separate locations requiring separate executions use
   separate tasks rather than a hidden fan-out multiplier.
-- **TRD-2:** Each run receives a task brief and bounded continuity. A permanently
+- **TRD-2:** Each invocation receives a task brief and bounded continuity. A permanently
   growing conversation is not the task's memory or configuration authority.
 - **EVD-1:** The user requested a clean-slate product and interaction design and
   specifically required consideration of recent related iterations.
@@ -144,12 +144,13 @@ and read/acknowledgement markers do not become substitute outcome evidence.
 
 ### Work instructions and execution context
 
-The primary form asks for **Task**, **When**, and **Materials**. A suggested
-editable name derives from the task text. Materials support explicit notes,
-files, URLs, and one optional saved Project or work folder. The UI distinguishes
-reference material from the primary work location.
-Without a selected work location, use the common configured default execution
-context and display that selection; never inherit a hidden conversation cwd.
+The primary form asks for **Name**, **Task**, and **When**. The user names the
+assignment explicitly. Task content uses existing inline references to Outline
+content and files, plus ordinary URLs. The composer's Add menu selects one optional
+saved Project or work folder. Referenced content, execution location and requested
+output destinations are independent. With no selected location, use the common
+Host default without displaying an internal directory as a result destination;
+never inherit a mutable conversation cwd.
 
 Linked material is read at execution time. Canonical tool/resource records retain
 the observed content and any revision, digest, or timestamp actually supplied;
@@ -163,7 +164,7 @@ Missing material never expands the work location or substitutes another source.
 The brief is an instruction scope, not a new filesystem permission boundary.
 Normal configured capabilities and actual execution policies remain authoritative.
 
-Each run receives the captured brief, configured instructions/capabilities, a
+Each invocation receives the captured brief, configured instructions/capabilities, a
 bounded pointer to the latest eligible delivered result of the same task, and
 unresolved issue pointers. Selection is deterministic by accepted-run order; it
 does not require a new model pass to decide relevance. Changed brief/material/work
@@ -343,77 +344,92 @@ canonical run records into task-owned files.
 
 ### Screens and interaction
 
-**SCREEN-1: Scheduled tasks workspace.** A persistent Scheduled tasks entry in
-the application sidebar opens a workspace pane. At sufficient width it has a
-compact task list and task detail; below 720 logical pixels it uses list/detail
-navigation with Back restoring selection and scroll. The ordinary Agent dock
-remains available for discussing a result. This replaces the Automation drawer
-as the primary work surface.
+**SCREEN-1: Scheduled tasks in Agent Deck.** A global Deck control opens the
+list independently of the selected user conversation. Rows show task name,
+timing and meaningful attention/current state, with neutral rounded hover and
+no layout change. Search expands on demand; archival lives in the list menu.
+Clicking a row opens the unified task window, not a report or an Outline pane.
 
-The list offers **All** and **Needs attention**, with **Archived** in the list
-menu. Rows show name, latest result/exception, and the next planned time or paused
-state. Attention count includes unresolved questions/failures/uncertain outcomes,
-not every unread run. Opening a result marks that delivery read; reading alone
-does not resolve its question or failure. Selection never starts execution.
-Needs attention includes missed one-off decisions as well as run issues. Its
-count is the number of tasks with at least one unresolved cause, not the number
-of historical errors. Detail names each cause and its exact occurrence/run;
-repeated equivalent terminal failures can be grouped with an affected-run count.
-Acknowledgement targets the shown causes, and a later failure remains new attention.
+**SCREEN-2: One task window, view and edit modes.** Existing tasks open read-only.
+The window shows the saved name, instructions, timing, selected Project/model and
+Run history. Edit enables changes in the same window; Save returns to view mode.
+Cancel editing discards only the current draft after the shared dirty check and
+returns to view mode. Closing the window has its own dirty-close behavior. New
+tasks start in edit mode. Pause/resume and archive/restore are secondary actions.
 
-**SCREEN-2: Task detail.** The header shows name, readable plan summary, and
-**Run now**, **Pause schedule / Resume schedule**, and **Edit task**. The content
-starts with the current execution/exception when present, followed by the most
-recent delivered result and **Earlier runs**. Configuration is secondary.
+A run-history row identifies one execution by state and time. Clicking it opens
+its canonical conversation at the actual result Turn and, when available, exact
+message Item. Late completion Turns remain part of their original run. The normal
+Thread view renders history and shared questions/recovery; the task window has no
+copied report reader. View process is a secondary record action. Back returns to
+the same task window and its record-list position. The user's previously selected
+conversation stays mounted, preserving its composer draft and scroll.
 
-A result shows its actual outcome and scheduled/start/finish times as relevant,
-answer or explicit absence, files/notes, and **Discuss result** plus **View
-process**. Earlier runs are paginated; selecting one opens that exact run and
-its exact Turn position. A contextual Back returns to the task. Long content
-uses the normal reader. Files preserve their canonical availability and retention.
+Active history entries and their read-only conversations expose the same Stop
+run control, addressed to the exact scheduling run owner. Pending requests are
+shared across surfaces; failed delivery retries the same request identity. Only
+the returned canonical state can claim Stopping or interruption, and Stopping
+remains disabled until owned work settles. Pause schedule and process Stop retain
+their separate meanings. One renderer store owns task summaries, history, missed
+occurrences, result projections and stop operations; summaries/history reference
+the same result cache with ordering guards against stale asynchronous responses.
 
-Current execution displays its latest meaningful activity and **Stop run**.
-Questions use the shared user-input interaction in place. A delivered result
-with a surviving process also displays **Background work: running** with the
-shared status/log and Stop process actions. One status never stands for both.
-Stopping displays Stopping until the actual owner settles. The shared
-[user-input lifecycle](../spec/agent-core.md#structured-input-lifecycle)
-owns question answerability, original deadline, and answered/timed-out/cancelled/
-failed settlement. An accepted answer or a timeout closes the live form and
-continues the same active Turn/run; interruption or owner failure closes/fences
-it through that execution owner. Unsent answer content uses the shared renderer
-recovery entry, independent of live answerability. Run termination is not required
-to close an expired question. Timeout alone neither ends the run nor releases its
-foreground slot, marks a result read, or dismisses another issue.
+A source/Turn/Item that cannot be resolved shows an unavailable error in the task
+window, rather than falling back to the latest or another conversation. Viewing
+the task alone never marks a run read; opening the resolved conversation may do
+so and never acknowledges its issues. Historical questions are not answerable;
+shared user-input and process owners retain all lifecycle and permission rules.
+Earlier records paginate and unresolved issues remain associated with exact runs.
 
-Active-question attention derives from the exact pending request, so it clears
-on that request's authoritative settlement. A timeout remains inspectable as
-no answer submitted; it is not a live question, user acknowledgement, or evidence
-of run success/failure. Separately established unresolved-input, failure, and
-uncertainty causes retain their own attention. A delayed settlement cannot clear
-a newer question or another run's cause. Scheduling adds no question timer,
-answer ledger, text-based outcome inference, or automatic re-ask. Generic
-recovery continues to own stale questions and unknown effects.
+**SCREEN-3: Create/edit sheet.** A window-level modal, bounded to the viewport,
+shows an explicit Name above Task and When. Users name the task directly; the
+name does not follow later instruction edits. Task reuses the Agent editor with
+inline Outline/file references, newline Enter behavior and local draft undo/redo.
+`@` inserts references at the caret. A single `+` opens the shared Agent
+attachment/Project menu; the task adapter changes only the draft location, never
+a conversation membership. A selected Project/folder appears by name beside `+`.
+The native file picker inserts a durable reference through that same menu. No chat Turn, conversation attachment
+upload, separate task document format or automatic run accompanies editing.
+The muted placeholder belongs to the actual empty paragraph, sharing its font,
+line height and origin with the caret. It disappears when content is present.
 
-**SCREEN-3: Create/edit sheet.** A compact modal form contains task text,
-materials, and a readable time builder; Advanced is collapsed. Once, hourly,
-daily, selected weekdays, monthly dates, and yearly dates share one time model.
-The form always previews the next concrete local date/time and timezone. Invalid
-calendar combinations either explain the next valid occurrence or reject when
-none exists. Custom protocol text
-is not required. Calendar and time entry reuse native-feeling shared controls.
+The saved prompt uses existing `[[node://...]]` and `[[file:///...]]` markup.
+Repeated occurrences retain their sentence positions. Host admission and dispatch
+derive and deduplicate required sources from that text. Existing `materials`
+retain attached context and explicit per-source policy; default inline sources are
+not copied into that array. Removing the last inline occurrence removes its derived
+dependency; undo restores it. Previously detached CLI context is never silently
+removed. Reference options expose Continue if unavailable without creating a
+second editable instruction list. Plain URLs remain text, not implicit attachments.
 
-Create validates before activation. Edit saves one revision; conflict preserves
-the draft and offers comparison/reload, not last-writer-wins overwrite. Close
-with dirty content offers Keep editing / Discard. Saving changes future
-unaccepted work; an accepted run keeps its original brief. The edit sheet includes
-a saved-plan Pause schedule action that remains usable independently of the
-draft. Pausing retains the draft and updates only the saved timing state.
-Save submits edited definition fields against the accepted revision, never a
-stale copy of run/attention state. A successful local pause updates the editor's
-base revision without overwriting its draft; unrelated external changes still
-conflict. Live run updates preserve unsaved text, selection, and focus. Closing
-an unchanged form needs no discard prompt. Closing a modal restores its opener.
+When uses one repeat selector with standard calendar choices and only relevant
+controls. Monthly/yearly presets and custom intervals share the same evaluator.
+Timezone is a compact disclosure. Next-run preview distinguishes loading, invalid
+and no-future states. Save revalidates; old preview data never certifies new timing.
+Unsupported saved rules remain unchanged until explicit replacement. Other edits
+to an exhausted schedule do not rearm it. More options owns separate Git copy and model/reasoning overrides. Project
+selection is in the input toolbar, without a permanent default-directory field.
+Location controls choose where work starts; instructions choose output locations
+such as Downloads, subject to actual execution policy. No second output-folder
+setting overrides those instructions. Summaries retain non-default model/isolation. Choosing a path does not grant access;
+Git compatibility and configuration validity are checked by the Host on Save.
+
+The footer offers Create task / Save changes plus Save and run once for new/dirty
+work, or Run once for an unchanged task. Save and run first commits the inspected
+definition, then calls ordinary manual admission with that accepted revision and
+a stable request identity. Save failure starts nothing; a lost run reply preserves
+the saved task and retries the same run request. Viewing a live run preserves any
+unsaved draft and does not save it. Runs open their canonical conversation with Back to task;
+manual execution preserves timing, pause and a future one-off occurrence.
+
+Create activates only after validation. Edit saves one revision and leaves a
+paused task paused. Accepted execution retains its captured brief. Conflicts keep
+the draft and compare saved values; reloading or explicitly applying the draft to
+the inspected revision is a deliberate action. The saved-plan Pause action lives
+in a separate menu, retains dirty content and advances only the accepted revision.
+Saving never copies timing status or execution/attention state from the form.
+Dirty close, modal/nested-menu layering and focus restoration use shared owners.
+File picker cancellation and late completion cannot populate a closed draft.
 
 **SCREEN-4: Result handoff.** Discuss result opens an ordinary user conversation
 with an exact run/result reference and the user's question. It uses shared
@@ -562,7 +578,7 @@ FLOW-3 and BR-6/7.
 
 **NFR-1:** The whole path supports keyboard operation, focus restoration, native
 scrolling, light/dark, contrast, reduced motion, and reduced transparency under
-the [design system](../spec/design-system.md). UI chrome uses the existing token,
+the [design system](../../spec/design-system.md). UI chrome uses the existing token,
 icon, menu, and overlay contracts. No raw protocol IDs or debug state are normal
 task labels.
 
@@ -644,6 +660,19 @@ functional requirements above.
   Lost notifications/reload shall recover the canonical request outcome without
   inferring acceptance from absence or showing a historical timeout as answerable.
 
+- **AC-42:** The list has one screen title; the task window has one title and a
+  Close action. A run conversation provides Back to task. Default list rows shall contain no generated result text, permanent
+  zero-count filters or decorative cards. Search and archive remain keyboard
+  accessible through their header controls.
+- **AC-43:** The unified task window shall establish task context before run history.
+  Existing tasks open in view mode; only Edit enables mutations, and run records
+  open the exact canonical conversation position. The default detail shall have at most one persistent lifecycle action;
+  management menus shall preserve revision checks and focus restoration.
+- **AC-44:** Loading, no tasks, no search matches, never-run, live execution,
+  unavailable output and older unresolved issues shall retain distinct visible
+  states. Simplifying presentation shall not acknowledge an issue, mark hidden
+  output read, fabricate delivery or lose a draft.
+
 ### Recent iteration dependencies and implementation ownership
 
 This is the integration audit, not a claim that every referenced design has
@@ -652,21 +681,21 @@ and file scopes before implementation.
 
 | Mechanism / evidence | Observed position | Consequence for this design |
 | --- | --- | --- |
-| Context and Projects, #646/#649/#651; [Agent Core](../spec/agent-core.md) | Existing owner boundary | A scheduled assignment saves its own work location and each execution captures its actual address/policy. A conversation default may initialize an explicit choice but is never consulted as mutable run configuration. Scheduling adds no Project model tools. |
-| Isolation and workbench simplification, #658/#660; [tool design](../spec/agent-tool-design.md) | Implemented; #660 supersedes private verification/Git machinery from #655/#657 | Use generic Goal/Tool Task, native Git/test commands, Skills, and actual isolation. No new verification receipt ledger, Git publication controller, directory claim, or replacement delegation protocol. |
-| Background lifetime and observations, #663; [tool design](../spec/agent-tool-design.md) | Implemented | BR-6/7 consume live observations and terminal receipts separately. Cross-Thread inspection uses validated run/Task ownership; late delivery continuations require shared foreground admission. Result rendering must not terminate surviving background work. |
-| Bounded output and source evidence, #661; [resources](../spec/agent-core.md) | Implemented | Display partial/oversized results honestly; use existing complete-output and resource references, not copied previews as evidence. |
+| Context and Projects, #646/#649/#651; [Agent Core](../../spec/agent-core.md) | Existing owner boundary | A scheduled assignment saves its own work location and each execution captures its actual address/policy. A conversation default may initialize an explicit choice but is never consulted as mutable run configuration. Scheduling adds no Project model tools. |
+| Isolation and workbench simplification, #658/#660; [tool design](../../spec/agent-tool-design.md) | Implemented; #660 supersedes private verification/Git machinery from #655/#657 | Use generic Goal/Tool Task, native Git/test commands, Skills, and actual isolation. No new verification receipt ledger, Git publication controller, directory claim, or replacement delegation protocol. |
+| Background lifetime and observations, #663; [tool design](../../spec/agent-tool-design.md) | Implemented | BR-6/7 consume live observations and terminal receipts separately. Cross-Thread inspection uses validated run/Task ownership; late delivery continuations require shared foreground admission. Result rendering must not terminate surviving background work. |
+| Bounded output and source evidence, #661; [resources](../../spec/agent-core.md) | Implemented | Display partial/oversized results honestly; use existing complete-output and resource references, not copied previews as evidence. |
 | HTTP web search, #662 | Implemented | Research tasks use configured common search tools; scheduling does not require browser state or add a private fetch pipeline. |
 | File-first Settings and Skills, #636/#638/#640/#641/#643/#644/#656 | Implemented | Task configuration consumes accepted configuration; global edits remain UI/file/Skill owned. The #666 model-picker fix is also integrated and introduces no new scheduling prerequisite. |
 | Outline CLI/Skill, #584/#606; delegation CLI/Skill, #628/#637 | Implemented | DEC-6 follows packaged CLI discovery, literal Bash stdin, bounded receipts, and Host admission. Reuse their transport/admission approach without repurposing document or delegation operations. |
-| [Startup fault isolation](../spec/architecture.md#desktop-host-lifecycle), #664 | Implemented | Consume the current scoped readiness, issue actions, admission fencing, and retry ownership, including [Agent startup availability](../spec/agent-thread-rendering.md#startup-availability), when changing Automation lifecycle/Host wiring. |
-| [Published conversation records](../spec/agent-core.md#published-conversation-records), #669 | Canonical source/publication owner | Build result process navigation, history access, continuity, and handoff on `ThreadRecordSources` and `ThreadRecordPublisher`. Preserve approved discovery across non-excluded persistent roots, including Automation roots and self; delegated/ephemeral isolation and file capabilities still apply. Do not add another transcript tree or new history model tools. |
-| [Memory/profile](archive/memory-agent-profile.md), #665 | Design integrated; runtime absent | Global preferences, identity, style, and learning remain with that owner. Task briefs contain work-specific instructions. Consume accepted configuration without a direct USER.md reader or task-local learned profile. |
-| [Targeted conversation recovery](targeted-thread-recovery.md) | Design only | Preserve definition/run fences and shared references. Coordinate final new assignment and run references with its recovery closure; no separate repair action or cleanup interpretation. |
-| [Bounded user input](../spec/agent-core.md#structured-input-lifecycle), #672 | Existing owner boundary | Consume its ordered request settlement, 60-second default deadline and independent session-local answer drafts. Scheduling verifies AC-39/40/41 for its own active-question attention and foreground slot against that owner; no parallel timeout or input ledger. |
-| [Project defaults](../spec/agent-core.md#optional-project-catalog) | Shared Project/location contract | Resolve an explicitly selected Project through its primary-folder owner while retaining the assignment's independent work-location choice. Share packaged CLI admission; changing the originating chat cannot redirect an accepted or future scheduled run. |
-| [Task responsibility](../spec/agent-tool-design.md), #673 | Existing owner boundary | Consume delivered launch/handoff, watch, operation receipts and exact-event disposition through the Task owner. Silent process observations do not acquire the foreground slot; scheduling verifies that required continuations retain their original run association and shared admission. Do not duplicate responsibility or event ownership. |
-| [Delegation](../spec/agent-delegation.md), #628/#637 | Implemented common mechanisms | Internal/external delegated work remains owned by generic Task/session mechanisms and keeps existing discovery and cancellation boundaries. |
+| [Startup fault isolation](../../spec/architecture.md#desktop-host-lifecycle), #664 | Implemented | Consume the current scoped readiness, issue actions, admission fencing, and retry ownership, including [Agent startup availability](../../spec/agent-thread-rendering.md#startup-availability), when changing Automation lifecycle/Host wiring. |
+| [Published conversation records](../../spec/agent-core.md#published-conversation-records), #669 | Canonical source/publication owner | Build result process navigation, history access, continuity, and handoff on `ThreadRecordSources` and `ThreadRecordPublisher`. Preserve approved discovery across non-excluded persistent roots, including Automation roots and self; delegated/ephemeral isolation and file capabilities still apply. Do not add another transcript tree or new history model tools. |
+| [Memory/profile](memory-agent-profile.md), #665 | Design integrated; runtime absent | Global preferences, identity, style, and learning remain with that owner. Task briefs contain work-specific instructions. Consume accepted configuration without a direct USER.md reader or task-local learned profile. |
+| [Targeted conversation recovery](../targeted-thread-recovery.md) | Design only | Preserve definition/run fences and shared references. Coordinate final new assignment and run references with its recovery closure; no separate repair action or cleanup interpretation. |
+| [Bounded user input](../../spec/agent-core.md#structured-input-lifecycle), #672 | Existing owner boundary | Consume its ordered request settlement, 60-second default deadline and independent session-local answer drafts. Scheduling verifies AC-39/40/41 for its own active-question attention and foreground slot against that owner; no parallel timeout or input ledger. |
+| [Project defaults](../../spec/agent-core.md#optional-project-catalog) | Shared Project/location contract | Resolve an explicitly selected Project through its primary-folder owner while retaining the assignment's independent work-location choice. Share packaged CLI admission; changing the originating chat cannot redirect an accepted or future scheduled run. |
+| [Task responsibility](../../spec/agent-tool-design.md), #673 | Existing owner boundary | Consume delivered launch/handoff, watch, operation receipts and exact-event disposition through the Task owner. Silent process observations do not acquire the foreground slot; scheduling verifies that required continuations retain their original run association and shared admission. Do not duplicate responsibility or event ownership. |
+| [Delegation](../../spec/agent-delegation.md), #628/#637 | Implemented common mechanisms | Internal/external delegated work remains owned by generic Task/session mechanisms and keeps existing discovery and cancellation boundaries. |
 
 **Implementation suggestions:** Keep the existing scheduling and Agent execution
 owners where they satisfy these product rules. Revise the assignment and
@@ -676,7 +705,7 @@ configuration, run association, and attention acknowledgement where needed.
 It is rebuildable and does not become another authoritative output ledger.
 
 Expected implementation areas are `src/core/agent/automation.ts`,
-`src/main/agent/automations/`, `src/renderer/agent/automations/`, sidebar/workspace
+`src/main/agent/automations/`, `src/renderer/agent/automations/`, Agent Deck
 navigation, shared exact-run navigation, i18n, and focused Core/renderer/E2E
 tests. CLI work also touches the packaged CLI entry/build wiring, a built-in
 scheduling Skill, built-in Skill discovery, Bash admission/Host wiring, the model
@@ -731,16 +760,21 @@ Use clone-isolated test data; the design work never resets installed data.
 
 ## Open questions
 
-**OQ-1:** Ratify the proposed local current-state scope and missed-one-off policy
-with real tasks. The recommended behavior is DEC-3 and BR-2/3; interval-complete
-or cloud work would require a different delivery commitment and scope.
+Execution uses the selected local current-state scope and missed-one-off policy
+in DEC-3 and BR-2/3. Interval-complete or cloud work would require a different
+delivery commitment and a separate product decision.
 
-**OQ-2:** Ratify the stable task/result workspace and one primary work location.
-The recommended behavior is DEC-2 and TRD-1; this deliberately removes the need
-to choose a Thread destination or configure project fan-out.
+Execution uses the stable task/result workspace and one primary work location
+in DEC-2 and TRD-1. The assignment has no Thread destination picker or project
+fan-out. Shared Project defaults are consumed from the delivered #679 contract.
+
+The implementation collision check found #681 on Task action schemas and
+`ToolRuntime` admission. Scheduling consumes the existing Task command owner;
+it does not change Task action inputs. Any integration at this shared seam must
+preserve the action-specific validation supplied by that PR.
 
 Discovery follows the delivered
-[published conversation record contract](../spec/agent-core.md#published-conversation-records):
+[published conversation record contract](../../spec/agent-core.md#published-conversation-records):
 non-excluded persistent roots across Profiles, Automation roots and self, with
 delegated/ephemeral isolation and file-capability checks. This design requires
 eligible task-owned results and explicit handoff references; it does not broaden

@@ -219,7 +219,8 @@ type PreviewTarget =
 
 type PanelView =
   | { kind: 'outliner'; rootId: NodeId; scrollTop?: number }
-  | { kind: 'file-preview'; target: PreviewTarget; nodeId?: NodeId; presentation?: 'reader'; scrollTop?: number };
+  | { kind: 'file-preview'; target: PreviewTarget; nodeId?: NodeId; presentation?: 'reader'; scrollTop?: number }
+  | { kind: 'thread-trajectory'; threadId: string; turnId?: string; selectedRecordId?: string };
 
 interface WorkspaceContentPanelState extends WorkspacePanelBase {
   type: 'workspace';
@@ -1305,3 +1306,13 @@ User asks agent to rewrite selected node
 - Do not introduce arbitrary pane z-order; there is no overlapping-windows need.
 - Keep agent state and sidebar state outside the layout.
 - Route all overlays through the shared overlay host.
+
+### Scheduled tasks in Agent Deck
+
+Scheduled tasks belong to Agent Deck, independently of the selected conversation.
+List selection opens one window with view/edit modes and run history. A run row
+opens its canonical conversation at the selected result position in the Deck;
+Back restores the task window and history position. The previously selected user
+chat stays mounted. The task window adds no Outline view, copied report reader or
+new navigation owner. Process details use the shared Trajectory inspector.
+The domain contract is [Scheduled tasks](agent-automations.md).

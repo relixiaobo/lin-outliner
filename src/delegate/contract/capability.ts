@@ -1,3 +1,4 @@
+import { decodeScheduleCommand } from '../../schedule/contract';
 import { createHash } from 'node:crypto';
 import type { DelegateStateCommand } from './commands';
 import { DELEGATE_PROTOCOL_VERSION } from './version';
@@ -102,6 +103,7 @@ export function parseDelegateLaunchCapability(bytes: Uint8Array): DelegateLaunch
 function isDelegateStateCommandValue(value: unknown): value is DelegateStateCommand {
   if (!isRecord(value) || typeof value.name !== 'string' || typeof value.output !== 'string') return false;
   if (value.output !== 'text' && value.output !== 'json') return false;
+  if (value.name === 'schedule') { try { decodeScheduleCommand(value); return true; } catch { return false; } }
   if (value.name === 'run' || value.name === 'project') {
     return value.input === '-' && exactKeys(value, ['name', 'input', 'output']);
   }
