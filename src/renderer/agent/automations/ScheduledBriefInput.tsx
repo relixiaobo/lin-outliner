@@ -75,7 +75,6 @@ export function ScheduledBriefInput({ indexStore, value, disabled, onChange, onV
         onMouseDown={(event) => event.preventDefault()} onClick={() => editor.current?.insertText(' @')} variant="composerTool" />
       <IconButton icon={AttachmentIcon} label={t.chooseFiles} disabled={disabled || picking}
         onMouseDown={(event) => event.preventDefault()} onClick={() => void pickFiles()} variant="composerTool" />
-      <span>{t.mentionHint}</span>
     </div>
   </div>;
 }

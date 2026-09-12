@@ -1575,7 +1575,6 @@ export const en = {
       editor: {
         task: 'Task',
         placeholder: 'Describe the work. Use @ to reference Outline content or files.',
-        mentionHint: '@ Reference content',
         addReference: 'Reference content',
         chooseFiles: 'Choose files',
         pickerUnavailable: 'The file picker is unavailable.',

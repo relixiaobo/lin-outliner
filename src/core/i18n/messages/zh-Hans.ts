@@ -1489,7 +1489,6 @@ export const zhHans: PartialMessages = {
       editor: {
         task: '任务内容',
         placeholder: '描述希望完成的工作。输入 @ 引用 Outline 内容或文件。',
-        mentionHint: '@ 引用内容',
         addReference: '引用内容',
         chooseFiles: '选择文件',
         pickerUnavailable: '文件选择器不可用。',

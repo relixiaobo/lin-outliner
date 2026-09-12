@@ -1009,7 +1009,6 @@ button.scheduled-plan-link:hover { color: var(--text-primary); }
 .scheduled-brief-input { background: var(--fill-1); border-radius: var(--radius-md); min-width: 0; }
 .scheduled-brief-input .thread-composer-editor { padding: var(--space-6); min-height: 100px; max-height: 240px; overflow: auto; }
 .scheduled-brief-toolbar { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); }
-.scheduled-brief-toolbar > span { margin-inline-start: auto; color: var(--text-secondary); font-size: var(--font-ui-sm); }
 .scheduled-preview, .scheduled-setting-note { margin: var(--space-3) 0; color: var(--text-secondary); font-size: var(--font-ui-sm); }
 .scheduled-editor-options { border-top: var(--space-hairline) solid var(--separator); padding-block: var(--space-6); }
 .scheduled-editor-options > summary { font-size: var(--font-ui-sm); color: var(--text-secondary); user-select: none; }

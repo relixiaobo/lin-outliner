@@ -294,7 +294,8 @@ exact conversation's composer initializes so mounting cannot clear the handoff.
 View process uses the shared Agent Trajectory inspector without replacing the task surface.
 Create/edit uses a window-level centered sheet with shared focus trapping and
 restoration. Task content reuses the Agent editor's inline references and `@`
-suggestions; Enter creates a newline. File selection inserts an exact path at the
+suggestions; Enter creates a newline. The muted empty-input placeholder carries
+the @ hint; the toolbar contains only actions, and typing hides the hint. File selection inserts an exact path at the
 caret without importing a conversation attachment. A small adapter round-trips
 shared reference markup, preserving duplicate positions and plain text. Optional
 local draft history restores reference atoms together with text. Stale blur timers
