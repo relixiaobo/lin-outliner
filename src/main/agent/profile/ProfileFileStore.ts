@@ -1,3 +1,4 @@
+import { profileFileStoreSchema } from './ProfileFileStore.schema';
 import { createHash, randomUUID } from 'node:crypto';
 import { lstatSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -53,14 +54,10 @@ export class ProfileFileStore {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     this.userData = realpathSync(userData);
     this.db = database ?? openSqlite(path);
-    try { this.db.exec(`
-      PRAGMA journal_mode = WAL;
-      PRAGMA synchronous = FULL;
-      CREATE TABLE IF NOT EXISTS profile_documents (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;
-      CREATE TABLE IF NOT EXISTS profile_publications (id TEXT PRIMARY KEY, state TEXT NOT NULL, payload TEXT NOT NULL, request_digest TEXT, updated_at INTEGER NOT NULL) STRICT;
-      CREATE TABLE IF NOT EXISTS profile_invalidations (id TEXT PRIMARY KEY, state TEXT NOT NULL, turn_ids TEXT NOT NULL) STRICT;
-      CREATE TABLE IF NOT EXISTS profile_turns (turn_id TEXT PRIMARY KEY, snapshot TEXT NOT NULL) STRICT;
-    `); } catch (error) { closeSqliteAfterFailure(this.db, error); }
+    try {
+      this.db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;');
+      this.db.exec(profileFileStoreSchema);
+    } catch (error) { closeSqliteAfterFailure(this.db, error); }
   }
 
   close(): void { this.db.close(); }
