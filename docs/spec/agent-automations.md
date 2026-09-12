@@ -306,6 +306,23 @@ Run reading is recorded only after successful conversation resolution and never
 acknowledges a terminal issue. Shared user-input forms and timeout/draft recovery
 operate in the run conversation; process inspection remains a secondary action.
 
+An active run exposes Stop run beside its history entry and in the read-only
+conversation. Both use `ScheduledRunStop` and the scheduling `runStop` operation
+with the exact run ID and a durable request identity. Duplicate clicks share one
+pending request; failed delivery preserves that identity for retry and shows the
+error without claiming cancellation. Only a canonical stopping result displays
+disabled Stopping, until the owning execution/resources settle. Stopping a run
+does not pause its schedule or implicitly stop a delivered run's surviving service;
+the shared process controls remain separate.
+
+`AutomationRendererStore` owns task summaries, history pages, missed occurrences,
+canonical result projections and pending stop requests. Summaries and history
+reference one result cache; task windows keep navigation and unsaved form state
+locally. Query generations reject superseded reads, and successful stop replies
+invalidate earlier result reads. Core notifications refresh watched conversation
+results even while the task window is inactive. History loading failures retain
+known records and expose retry.
+
 The typed Automation request/notification bridge remains separate from Agent
 history transport. Preload decodes responses and notifications. Renderer merge
 ordering retains canonical revisions and monotonic run event sequences, including

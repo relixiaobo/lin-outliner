@@ -3860,6 +3860,14 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const attentionCount = mockAutomationRuns.filter((run) => run.automationId === input.id).reduce((count, run) => count + (scheduledResults.get(run.id)?.issues ?? []).filter((issue) => !issue.acknowledged).length, 0);
           return clone(method === 'summary' ? { attentionCount, latest: result, current: result && ['running', 'waiting', 'stopping'].includes(result.state) ? result : null } : result) as T;
         }
+        if (method === 'runStop') {
+          const run = mockAutomationRuns.find((run) => run.id === input.id);
+          if (!run) throw new Error('Run unavailable');
+          const result = { run, state: 'stopping', answer: null, answerTruncated: false, parts: [], issues: [],
+            issue: null, issueKey: null, acknowledged: false, recordPath: null, resultTurnId: run.turnId, startedAt: run.createdAt, finishedAt: null };
+          scheduledResults.set(run.id, result);
+          return clone(result) as T;
+        }
         if (method === 'acknowledge') {
           const result = scheduledResults.get(String(input.id));
           if (result) scheduledResults.set(String(input.id), { ...result, issues: result.issues?.map((issue) => issue.key === input.issueKey ? { ...issue, acknowledged: true } : issue) });

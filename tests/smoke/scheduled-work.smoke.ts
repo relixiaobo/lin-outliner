@@ -201,3 +201,69 @@ test('an expired scheduled question retains its draft and foreground slot until 
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
+
+test('scheduled Stop cancels the real owned Turn from history and the read-only conversation', async ({}, testInfo) => {
+  test.setTimeout(90_000);
+  const server = createServer(async (request, response) => {
+    if (request.url === '/v1/models') {
+      response.setHeader('content-type', 'application/json');
+      response.end(JSON.stringify({ data: [{ id: 'llama-3.3-70b-versatile', object: 'model' }] }));
+      return;
+    }
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    const body = JSON.parse(Buffer.concat(chunks).toString());
+    response.writeHead(200, { 'content-type': 'text/event-stream', connection: 'close' });
+    response.write(`data: ${JSON.stringify({ id: 'scheduled-stop-smoke', object: 'chat.completion.chunk', created: 1, model: body.model,
+      choices: [{ index: 0, delta: { role: 'assistant', content: 'Working on the scheduled review.' }, finish_reason: null }],
+    })}\n\n`);
+    // Keep the model stream active until the real Host cancels its request.
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  let smoke: SmokeApp | undefined;
+  try {
+    smoke = await launchSmokeApp();
+    await configureSmokeProvider(smoke, `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`);
+    const page = smoke.window;
+    const task = await page.evaluate(async () => {
+      const stamp = new Date(Date.now() + 86_400_000).toISOString().replace(/[-:]/g, '').slice(0, 15);
+      return (await window.lin!.automationRequest('create', { requestId: 'stop-assignment', name: 'Stop review', prompt: 'Review this assignment.',
+        destination: { kind: 'standalone' }, schedule: { rrule: `DTSTART:${stamp}\nRRULE:FREQ=DAILY;COUNT=1`, timezone: 'UTC' } })).automation;
+    });
+    await page.locator('.thread-dock-header').getByRole('button', { name: 'Scheduled tasks', exact: true }).click();
+    await page.locator('.scheduled-task-row', { hasText: task.name }).click();
+    const details = page.getByRole('dialog', { name: 'Task details', exact: true });
+    const runIds: string[] = [];
+    for (const surface of ['history', 'conversation'] as const) {
+      const admitted = await page.evaluate(async ({ task, surface }) => window.lin!.automationRequest('startNow', {
+        id: task.id, expectedRevision: task.revision, requestId: `stop-${surface}`,
+      }), { task, surface });
+      const run = admitted.runs[0]!;
+      runIds.push(run.id);
+      await expect.poll(() => page.evaluate((id) => window.lin!.automationRequest('result', { id }), run.id)).toMatchObject({ state: 'running' });
+      const historyEntry = details.locator(`.scheduled-run-entry[data-run-id="${run.id}"]`);
+      if (surface === 'conversation') await historyEntry.locator('.scheduled-run-row').click();
+      const controlSurface = surface === 'history' ? historyEntry : page.locator('.scheduled-run-conversation');
+      await expect(controlSurface.getByRole('button', { name: 'Stop run', exact: true })).toBeEnabled();
+      for (const theme of ['light', 'dark'] as const) {
+        await smoke.app.evaluate(({ nativeTheme }, theme) => { nativeTheme.themeSource = theme; }, theme);
+        await page.emulateMedia({ colorScheme: theme });
+        await page.screenshot({ path: testInfo.outputPath(`native-stop-${surface}-${theme}.png`), animations: 'disabled' });
+      }
+      await controlSurface.getByRole('button', { name: 'Stop run', exact: true }).click();
+      await expect.poll(() => page.evaluate((id) => window.lin!.automationRequest('result', { id }), run.id)).toMatchObject({ state: 'interrupted' });
+      await expect(controlSurface.getByRole('button', { name: 'Stop run', exact: true })).toHaveCount(0);
+      await expect(controlSurface.getByRole('button', { name: 'Stopping', exact: true })).toHaveCount(0);
+      if (surface === 'conversation') await page.getByRole('button', { name: 'Back to task', exact: true }).click();
+      await expect(historyEntry.locator('.scheduled-run-row')).toContainText('Interrupted');
+    }
+    expect(new Set(runIds).size).toBe(2);
+    const saved = (await page.evaluate((id) => window.lin!.automationRequest('read', { id }), task.id)).automation!;
+    expect(saved.status).toBe('active');
+    expect(saved.schedule).toEqual(task.schedule);
+  } finally {
+    if (smoke) await closeSmokeApp(smoke);
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});

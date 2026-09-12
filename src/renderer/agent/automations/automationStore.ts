@@ -1,6 +1,8 @@
 import { useSyncExternalStore } from 'react';
+import type { ScheduledRunResult } from '../../../core/agent/scheduledResult';
 import type {
   Automation,
+  AutomationResponseByMethod,
   AutomationCreateInput,
   AutomationNotification,
   AutomationRun,
@@ -9,9 +11,27 @@ import type {
 } from '../../../core/agent/automation';
 import { api } from '../../api/client';
 
-export type AutomationStoreClient = Pick<typeof api, 'automationRequest' | 'onAutomationNotification'>;
+export type AutomationStoreClient = Pick<typeof api, 'automationRequest' | 'onAutomationNotification'>
+  & Partial<Pick<typeof api, 'onAgentCoreNotification'>>;
+
+export interface ScheduledTaskView {
+  readonly summary?: { readonly attentionCount: number; readonly currentRunId: string | null; readonly latestRunId: string | null };
+  readonly runIds: readonly string[];
+  readonly missed: AutomationResponseByMethod['timing']['missed'];
+  readonly nextBefore: string | null;
+  readonly loading: boolean;
+  readonly error: string | null;
+}
+export interface ScheduledRunOperation { readonly pending: boolean; readonly error: string | null; readonly requestId: string | null }
+const EMPTY_TASK_VIEW: ScheduledTaskView = { runIds: [], missed: [], nextBefore: null, loading: false, error: null };
+export function canStopScheduledRun(result: ScheduledRunResult | undefined): boolean {
+  return result?.state === 'running' || result?.state === 'waiting';
+}
 
 export interface AutomationStoreSnapshot {
+  readonly taskViews: ReadonlyMap<string, ScheduledTaskView>;
+  readonly runResults: ReadonlyMap<string, ScheduledRunResult>;
+  readonly runOperations: ReadonlyMap<string, ScheduledRunOperation>;
   readonly automations: readonly Automation[];
   readonly runs: readonly AutomationRun[];
   readonly unreadAutomationIds: readonly string[];
@@ -22,6 +42,7 @@ export interface AutomationStoreSnapshot {
 }
 
 const EMPTY_SNAPSHOT: AutomationStoreSnapshot = {
+  taskViews: new Map(), runResults: new Map(), runOperations: new Map(),
   automations: [],
   runs: [],
   unreadAutomationIds: [],
@@ -36,6 +57,13 @@ export class AutomationRendererStore {
   private readonly listeners = new Set<() => void>();
   private unsubscribe: (() => void) | null = null;
   private consumers = 0;
+  private coreUnsubscribe: (() => void) | null = null;
+  private readonly watchedRuns = new Map<string, number>();
+  private readonly resultGenerations = new Map<string, number>();
+  private readonly summaryGenerations = new Map<string, number>();
+  private readonly historyGenerations = new Map<string, number>();
+  private readonly stopFlights = new Map<string, Promise<ScheduledRunResult>>();
+  private queryGeneration = 0;
   private initializePromise: Promise<void> | null = null;
   private reloadGeneration = 0;
   private mutationVersion = 0;
@@ -73,6 +101,16 @@ export class AutomationRendererStore {
     if (!this.unsubscribe) {
       this.unsubscribe = this.client.onAutomationNotification((notification) => this.applyNotification(notification));
     }
+    if (!this.coreUnsubscribe && this.client.onAgentCoreNotification) {
+      this.coreUnsubscribe = this.client.onAgentCoreNotification((event) => {
+        if (!['turn/started', 'turn/completed', 'thread/status/changed', 'userInput/requested', 'userInput/resolved', 'toolTask/changed'].includes(event.type)) return;
+        for (const id of this.watchedRuns.keys()) {
+          const result = this.snapshot.runResults.get(id);
+          if ('threadId' in event && result && event.threadId !== result.run.threadId) continue;
+          void this.readRunResult(id).catch(() => undefined);
+        }
+      });
+    }
     if (!this.initializePromise) this.initializePromise = this.reload();
     return this.initializePromise;
   }
@@ -80,6 +118,8 @@ export class AutomationRendererStore {
   dispose(): void {
     this.unsubscribe?.();
     this.unsubscribe = null;
+    this.coreUnsubscribe?.(); this.coreUnsubscribe = null;
+    this.queryGeneration++;
     this.initializePromise = null;
     this.reloadGeneration += 1;
     this.runLoadGenerations.clear();
@@ -122,6 +162,103 @@ export class AutomationRendererStore {
       this.patch({ loading: false, error: errorMessage(error) });
       throw error;
     }
+  }
+
+  /** Outcome projections and stop receipts have one renderer owner across surfaces. */
+  watchRun(id: string): { ready: Promise<void>; release: () => void } {
+    const lease = this.acquire();
+    this.watchedRuns.set(id, (this.watchedRuns.get(id) ?? 0) + 1);
+    let released = false;
+    return { ready: Promise.all([lease.ready, this.readRunResult(id)]).then(() => undefined), release: () => {
+      if (released) return; released = true;
+      const count = (this.watchedRuns.get(id) ?? 1) - 1;
+      if (count) this.watchedRuns.set(id, count); else this.watchedRuns.delete(id);
+      lease.release();
+    } };
+  }
+
+  async readRunResult(id: string): Promise<ScheduledRunResult> {
+    const lifetime = this.queryGeneration;
+    const generation = (this.resultGenerations.get(id) ?? 0) + 1;
+    this.resultGenerations.set(id, generation);
+    const result = await this.client.automationRequest('result', { id });
+    if (result.run.id !== id) throw new Error('The result does not belong to the requested run');
+    if (lifetime === this.queryGeneration && generation === this.resultGenerations.get(id)) {
+      this.patch({ runResults: new Map(this.snapshot.runResults).set(id, result) });
+    }
+    return this.snapshot.runResults.get(id) ?? result;
+  }
+
+  async loadTaskSummary(id: string): Promise<void> {
+    const lifetime = this.queryGeneration;
+    const generation = (this.summaryGenerations.get(id) ?? 0) + 1;
+    this.summaryGenerations.set(id, generation);
+    const baselineResults = new Map(this.resultGenerations);
+    const summary = await this.client.automationRequest('summary', { id });
+    if (lifetime !== this.queryGeneration || generation !== this.summaryGenerations.get(id)) return;
+    const runResults = new Map(this.snapshot.runResults);
+    for (const result of [summary.current, summary.latest]) {
+      if (!result) continue;
+      if (result.run.automationId !== id) throw new Error('Summary contains a run owned by another task');
+      if (baselineResults.get(result.run.id) !== this.resultGenerations.get(result.run.id)) continue;
+      this.resultGenerations.set(result.run.id, (this.resultGenerations.get(result.run.id) ?? 0) + 1);
+      runResults.set(result.run.id, result);
+    }
+    // Summaries reference the same result cache as history and stop controls.
+    const previous = this.snapshot.taskViews.get(id) ?? EMPTY_TASK_VIEW;
+    this.patch({ runResults, taskViews: new Map(this.snapshot.taskViews).set(id, { ...previous, summary: {
+      attentionCount: summary.attentionCount, currentRunId: summary.current?.run.id ?? null, latestRunId: summary.latest?.run.id ?? null,
+    } }) });
+  }
+
+  async loadTaskHistory(id: string, before?: string): Promise<void> {
+    const lifetime = this.queryGeneration;
+    const generation = (this.historyGenerations.get(id) ?? 0) + 1;
+    this.historyGenerations.set(id, generation);
+    this.patchTaskView(id, { loading: true, error: null });
+    try {
+      const [page, timing] = await Promise.all([
+        this.client.automationRequest('runs', { automationId: id, limit: 50, ...(before ? { before } : {}) }),
+        this.client.automationRequest('timing', { id }),
+      ]);
+      if (lifetime !== this.queryGeneration || generation !== this.historyGenerations.get(id)) return;
+      const results = await Promise.all(page.data.map((run) => this.readRunResult(run.id)));
+      if (results.some((result) => result.run.automationId !== id)) throw new Error('History contains a run owned by another task');
+      if (lifetime !== this.queryGeneration || generation !== this.historyGenerations.get(id)) return;
+      const previous = this.snapshot.taskViews.get(id) ?? EMPTY_TASK_VIEW;
+      const runIds = [...new Set([...results.map((result) => result.run.id), ...previous.runIds])]
+        .sort((left, right) => (this.snapshot.runResults.get(right)?.run.createdSequence ?? 0) - (this.snapshot.runResults.get(left)?.run.createdSequence ?? 0));
+      this.patchTaskView(id, { runIds, missed: timing.missed, nextBefore: page.data.length === 50 ? page.data.at(-1)!.id : null, loading: false });
+    } catch (error) {
+      if (lifetime === this.queryGeneration && generation === this.historyGenerations.get(id)) this.patchTaskView(id, { error: errorMessage(error), loading: false });
+      throw error;
+    }
+  }
+
+  stopRun(id: string): Promise<ScheduledRunResult> {
+    const flight = this.stopFlights.get(id);
+    if (flight) return flight;
+    const requestId = this.snapshot.runOperations.get(id)?.requestId ?? crypto.randomUUID();
+    this.resultGenerations.set(id, (this.resultGenerations.get(id) ?? 0) + 1);
+    this.patch({ runOperations: new Map(this.snapshot.runOperations).set(id, { pending: true, error: null, requestId }) });
+    const operation = this.client.automationRequest('runStop', { id, requestId }).then((result) => {
+      if (result.run.id !== id) throw new Error('Stop returned another run');
+      // A read started before this committed outcome cannot restore Running.
+      this.resultGenerations.set(id, (this.resultGenerations.get(id) ?? 0) + 1);
+      this.patch({ runResults: new Map(this.snapshot.runResults).set(id, result),
+        runOperations: new Map(this.snapshot.runOperations).set(id, { pending: false, error: null, requestId: null }) });
+      void this.loadTaskSummary(result.run.automationId).catch(() => undefined);
+      return result;
+    }).catch((error) => {
+      this.patch({ runOperations: new Map(this.snapshot.runOperations).set(id, { pending: false, error: errorMessage(error), requestId }) });
+      throw error;
+    }).finally(() => { this.stopFlights.delete(id); });
+    this.stopFlights.set(id, operation);
+    return operation;
+  }
+
+  private patchTaskView(id: string, patch: Partial<ScheduledTaskView>): void {
+    this.patch({ taskViews: new Map(this.snapshot.taskViews).set(id, { ...(this.snapshot.taskViews.get(id) ?? EMPTY_TASK_VIEW), ...patch }) });
   }
 
   select(id: string | null): void {
@@ -220,6 +357,7 @@ export class AutomationRendererStore {
       return;
     }
     this.upsertRun(notification.run);
+    if (this.watchedRuns.has(notification.run.id)) void this.readRunResult(notification.run.id).catch(() => undefined);
   }
 
   private applyRunsMarkedRead(automationId: string, eventSequence: number, readAt: number): void {

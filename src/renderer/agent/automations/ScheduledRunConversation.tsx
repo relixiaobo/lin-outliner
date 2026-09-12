@@ -1,3 +1,5 @@
+import { ScheduledRunStop } from './ScheduledRunStop';
+import { automationStore } from './automationStore';
 import type { RendererUserViewHints } from '../../../core/agent/protocol';
 import type { DocumentIndexStore } from '../../state/documentIndexStore';
 import type { ThreadNodeReferenceOpenHandler } from '../threadReferences';
@@ -52,7 +54,7 @@ export function ScheduledRunConversation({ target, active, indexStore, getUserVi
       <span className="thread-dock-title">{target.taskName}</span>
     </header>
     <p className="scheduled-run-time">{t.agent.automations.editor.runs} · {new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short', timeZone: target.timeZone }).format(target.scheduledFor)}</p>
-    <div className="scheduled-conversation-actions"><Button size="sm" variant="ghost" onClick={onDiscuss}>{t.agent.automations.work.discuss}</Button>
+    <div className="scheduled-conversation-actions"><ScheduledRunStop runId={target.runId} active={active} watch /><Button size="sm" variant="ghost" onClick={onDiscuss}>{t.agent.automations.work.discuss}</Button>
       <Button size="sm" variant="ghost" onClick={() => onOpenProcess(target.threadId, target.turnId)}>{t.agent.automations.work.process}</Button></div>
     <ToolTaskStrip ownerThreadId={target.threadId} tasks={[...snapshot.toolTasksById.values()].filter((item) => item.ownerThreadId === target.threadId)}
       onRead={(threadId, taskId) => threadStore.readToolTask(threadId, taskId)} onStop={(threadId, taskId) => threadStore.stopToolTask(threadId, taskId)}
@@ -68,7 +70,7 @@ export function ScheduledRunConversation({ target, active, indexStore, getUserVi
       onCreateThread={async () => false} onConfigurationChange={async () => undefined} onSend={async () => null} onEditUserMessage={async () => undefined}
       onReadTurnRecovery={(turn) => threadStore.readTurnRecovery(thread.id, turn.id)}
       onContinueTurn={(turn) => threadStore.continueTurn(thread.id, turn.id)} onRerunTurn={(turn, confirm) => threadStore.rerunTurn(thread.id, turn.id, confirm)}
-      onContinueInNewChat={async () => { onDiscuss(); }} onInterrupt={() => threadStore.interrupt(thread.id)}
+      onContinueInNewChat={async () => { onDiscuss(); }} onInterrupt={() => automationStore.stopRun(target.runId).then(() => undefined)}
       onOpenNodeReference={onOpenNode} onOpenThreadReference={onOpenThread} onOpenTurnDetails={(turn) => onOpenProcess(thread.id, turn.id)}
       onReadToolArguments={(turnId, item) => threadStore.readToolArguments(thread.id, turnId, item)} onReadToolOutput={(turnId, item) => threadStore.readItemOutput(thread.id, turnId, item)}
       onSubmitUserInput={(request, answers, intent) => threadStore.respondToUserInput(request, answers, { intent }).then(() => undefined)}

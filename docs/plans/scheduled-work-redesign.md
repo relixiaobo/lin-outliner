@@ -365,6 +365,15 @@ copied report reader. View process is a secondary record action. Back returns to
 the same task window and its record-list position. The user's previously selected
 conversation stays mounted, preserving its composer draft and scroll.
 
+Active history entries and their read-only conversations expose the same Stop
+run control, addressed to the exact scheduling run owner. Pending requests are
+shared across surfaces; failed delivery retries the same request identity. Only
+the returned canonical state can claim Stopping or interruption, and Stopping
+remains disabled until owned work settles. Pause schedule and process Stop retain
+their separate meanings. One renderer store owns task summaries, history, missed
+occurrences, result projections and stop operations; summaries/history reference
+the same result cache with ordering guards against stale asynchronous responses.
+
 A source/Turn/Item that cannot be resolved shows an unavailable error in the task
 window, rather than falling back to the latest or another conversation. Viewing
 the task alone never marks a run read; opening the resolved conversation may do

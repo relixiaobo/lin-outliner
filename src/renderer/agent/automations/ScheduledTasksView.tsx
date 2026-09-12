@@ -1,3 +1,4 @@
+import { ScheduledRunStop } from './ScheduledRunStop';
 import { createPortal } from 'react-dom';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { Automation, AutomationCreateInput, AutomationUpdateInput } from '../../../core/agent/automation';
@@ -63,12 +64,6 @@ export function ScheduledTasksView({ active, indexStore, view, onViewChange, onO
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const [provider, setProvider] = useState<AgentProviderSettingsView | null>(null);
-  const [summaries, setSummaries] = useState(new Map<string, { attentionCount: number; current: ScheduledRunResult | null; latest: ScheduledRunResult | null }>());
-  const [runs, setRuns] = useState<readonly ScheduledRunResult[]>([]);
-  const [missed, setMissed] = useState<readonly { contextHintId: string; scheduledFor: number }[]>([]);
-  const [historyOwner, setHistoryOwner] = useState<string | null>(null);
-  const [nextBefore, setNextBefore] = useState<string | null>(null);
-  const [runsLoading, setRunsLoading] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const menuRef = useRef<HTMLButtonElement | null>(null);
   const taskMenuRef = useRef<HTMLButtonElement | null>(null);
@@ -78,8 +73,18 @@ export function ScheduledTasksView({ active, indexStore, view, onViewChange, onO
   const windowRef = useRef<HTMLDivElement | null>(null);
   const id = windowTask === 'create' ? createdId : windowTask;
   const task = snapshot.automations.find((item) => item.id === id) ?? null;
-  const taskRuns = runs.filter((item) => item.run.automationId === id);
-  const current = id ? summaries.get(id)?.current : null;
+  const taskView = id ? snapshot.taskViews.get(id) : undefined;
+  const taskRuns = (taskView?.runIds ?? []).flatMap((runId) => { const result = snapshot.runResults.get(runId); return result ? [result] : []; });
+  const summaries = new Map([...snapshot.taskViews].flatMap(([id, view]) => view.summary ? [[id, {
+    attentionCount: view.summary.attentionCount,
+    current: view.summary.currentRunId ? snapshot.runResults.get(view.summary.currentRunId) : null,
+    latest: view.summary.latestRunId ? snapshot.runResults.get(view.summary.latestRunId) : null,
+  }] as const] : []));
+  const currentResult = id ? summaries.get(id)?.current : null;
+  const current = currentResult && ['waiting', 'running', 'stopping'].includes(currentResult.state) ? currentResult : null;
+  const missed = taskView?.missed ?? [];
+  const nextBefore = taskView?.nextBefore;
+  const runsLoading = taskView?.loading ?? false;
   const attentionCount = snapshot.automations.filter((item) => item.archivedAt === null && (summaries.get(item.id)?.attentionCount ?? 0) > 0).length;
 
   function remember(automationId = id ?? undefined, windowOpen = Boolean(windowTask), runId = view.automationRunId) {
@@ -111,22 +116,11 @@ export function ScheduledTasksView({ active, indexStore, view, onViewChange, onO
   }, [active]);
   useEffect(() => {
     if (!active) return;
-    let stale = false;
-    void Promise.all(snapshot.automations.map(async (item) => [item.id, await api.automationRequest('summary', { id: item.id })] as const))
-      .then((items) => { if (!stale) setSummaries(new Map(items)); }).catch((reason) => { if (!stale) setError(String(reason)); });
-    return () => { stale = true; };
+    void Promise.all(snapshot.automations.map((item) => automationStore.loadTaskSummary(item.id))).catch((reason) => setError(String(reason)));
   }, [active, snapshot.automations, snapshot.runs, refresh]);
   useEffect(() => {
     if (!active || !id) return;
-    let stale = false; setRunsLoading(true);
-    void Promise.all([api.automationRequest('runs', { automationId: id, limit: 50 }), api.automationRequest('timing', { id })])
-      .then(async ([page, timing]) => {
-        const results = await Promise.all(page.data.map((run) => api.automationRequest('result', { id: run.id })));
-        if (stale) return;
-        setRuns((previous) => [...results, ...previous.filter((item) => item.run.automationId === id && !results.some((value) => value.run.id === item.run.id))]);
-        setHistoryOwner(id); setNextBefore(page.data.length === 50 ? page.data.at(-1)!.id : null); setMissed(timing.missed);
-      }).catch((reason) => { if (!stale) setError(String(reason)); }).finally(() => { if (!stale) setRunsLoading(false); });
-    return () => { stale = true; };
+    void automationStore.loadTaskHistory(id).catch(() => undefined);
   }, [active, id, task?.revision, snapshot.runs, refresh]);
   async function perform<T>(operation: () => Promise<T>): Promise<T> {
     if (busyRef.current) throw new Error(t.busy);
@@ -152,7 +146,7 @@ export function ScheduledTasksView({ active, indexStore, view, onViewChange, onO
     else { setEditing(false); setSession((value) => value + 1); }
   }
   async function openRun(runId: string, owner: Automation | null = task) {
-    const result = await api.automationRequest('result', { id: runId });
+    const result = await automationStore.readRunResult(runId);
     if (result.run.automationId !== owner?.id) throw new Error(e.runUnavailable);
     const { threadId } = result.run;
     const turnId = result.resultTurnId ?? result.run.turnId;
@@ -161,7 +155,7 @@ export function ScheduledTasksView({ active, indexStore, view, onViewChange, onO
     remember(result.run.automationId, true, result.run.id);
     await onOpenConversation({ taskId: result.run.automationId, taskName: owner?.name ?? result.run.snapshot.automationName,
       runId: result.run.id, threadId, turnId, itemId: part?.itemId, scheduledFor: result.run.scheduledFor, timeZone: result.run.snapshot.schedule.timezone });
-    await api.automationRequest('runMarkRead', { id: runId }).catch(() => undefined);
+    await automationStore.markRunRead(result.run).catch(() => undefined);
   }
   function timing(item: Automation) { return item.archivedAt !== null ? w.archived : item.status === 'paused' ? t.filters.paused : item.nextOccurrenceAt === null ? t.noNext : t.next({ value: formatTime(item.nextOccurrenceAt, item.schedule.timezone) }); }
   const visible = snapshot.automations.filter((item) => (item.archivedAt !== null) === (filter === 'archived')
@@ -171,7 +165,7 @@ export function ScheduledTasksView({ active, indexStore, view, onViewChange, onO
   const history = <section className="scheduled-window-history" aria-label={e.runs}>
     <h3>{e.runs}</h3>
     {id && (summaries.get(id)?.attentionCount ?? 0) > 0 ? <p className="scheduled-setting-note" role="status">{w.attention} · {summaries.get(id)!.attentionCount}</p> : null}
-    {(task && historyOwner === id ? missed : []).map((time) => <section className="scheduled-issue" key={`${time.contextHintId}:${time.scheduledFor}`}><p>{w.missed} {formatTime(time.scheduledFor, task!.schedule.timezone)}</p>
+    {(task ? missed : []).map((time) => <section className="scheduled-issue" key={`${time.contextHintId}:${time.scheduledFor}`}><p>{w.missed} {formatTime(time.scheduledFor, task!.schedule.timezone)}</p>
       {(['fulfilled', 'skipped'] as const).map((resolution) => <Button key={resolution} size="sm" disabled={busy || task?.archivedAt !== null} onClick={() => act(() => api.automationRequest('resolveMissed', { ...time, id: id!, resolution, expectedRevision: task!.revision, requestId: crypto.randomUUID() }))}>{resolution === 'fulfilled' ? w.fulfill : w.skip}</Button>)}</section>)}
     {taskRuns.map((result) => <div className="scheduled-run-entry" key={result.run.id} data-run-id={result.run.id}>
       <div className="scheduled-run-entry-main"><button className="scheduled-task-row scheduled-run-row" type="button" disabled={busy || !result.run.threadId || !result.run.turnId} onClick={() => act(() => openRun(result.run.id))}>
@@ -179,17 +173,14 @@ export function ScheduledTasksView({ active, indexStore, view, onViewChange, onO
       </button>
       {result.run.threadId && result.run.turnId ? <IconButton icon={MoreIcon} label={w.process} disabled={busy} aria-haspopup="menu"
         onClick={(event) => { runMenuRef.current = event.currentTarget; setRunMenu((value) => value?.run.id === result.run.id ? null : result); }} /> : null}</div>
+      <ScheduledRunStop runId={result.run.id} active={active} />
       {result.issues.filter((issue) => !issue.acknowledged).map((issue) => <div className="scheduled-issue" key={issue.key}><p>{issue.text}</p>{issue.terminal ? <Button size="sm" variant="ghost" disabled={busy} onClick={() => act(() => api.automationRequest('acknowledge', { id: result.run.id, issueKey: issue.key, requestId: crypto.randomUUID() }))}>{w.acknowledge}</Button> : null}</div>)}
     </div>)}
     {runMenu && active ? <AnchoredActionMenu anchorRef={runMenuRef} className="thread-action-menu scheduled-editor-menu" surfaceProps={{ 'data-dialog-nested-overlay': 'true' }} ariaLabel={w.process}
       onClose={() => setRunMenu(null)} actions={[{ label: w.process, disabled: busy, onSelect: () => act(async () => { await openRun(runMenu.run.id); onOpenProcess(runMenu.run.threadId!, runMenu.resultTurnId ?? runMenu.run.turnId!); }) }]} /> : null}
     {runsLoading && !taskRuns.length ? <EmptyState size="inline" loading title={t.loading} /> : !taskRuns.length ? <EmptyState size="inline" title={e.noRuns} /> : null}
-    {nextBefore && historyOwner === id ? <Button size="sm" disabled={busy} variant="ghost" onClick={() => act(async () => {
-      const page = await api.automationRequest('runs', { automationId: id!, before: nextBefore, limit: 50 });
-      const results = await Promise.all(page.data.map((run) => api.automationRequest('result', { id: run.id })));
-      setRuns((previous) => [...previous, ...results.filter((item) => !previous.some((existing) => existing.run.id === item.run.id))]);
-      setNextBefore(page.data.length === 50 ? page.data.at(-1)!.id : null);
-    })}>{t.previousRuns}</Button> : null}
+    {taskView?.error ? <ErrorState size="inline" message={taskView.error} retryLabel={w.reloadTasks} onRetry={() => act(() => automationStore.loadTaskHistory(id!))} /> : null}
+    {nextBefore ? <Button size="sm" disabled={busy || runsLoading} variant="ghost" onClick={() => act(() => automationStore.loadTaskHistory(id!, nextBefore))}>{t.previousRuns}</Button> : null}
   </section>;
 
   return <section className="scheduled-surface" aria-label={w.workspace} onKeyDown={(event) => {

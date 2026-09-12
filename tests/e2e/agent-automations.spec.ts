@@ -188,3 +188,29 @@ test('archive and restore retain the task window and restore paused', async ({ p
   await expect(task.getByRole('button', { name: 'Edit', exact: true })).toBeEnabled();
   await expect(task.getByText('Paused', { exact: true })).toBeVisible();
 });
+
+test('scheduled run Stop is reachable from both task history and its read-only conversation', async ({ page }) => {
+  await start(page); const task = await createTask(page);
+  const run = await page.evaluate(async () => {
+    const task = (await window.lin!.automationRequest('list', {})).data[0]!;
+    const run = (await window.lin!.automationRequest('startNow', { id: task.id, expectedRevision: task.revision, requestId: 'stop-review' })).runs[0]!;
+    (window as unknown as { __LIN_E2E__: { setScheduledResult: (id: string, result: unknown) => void } }).__LIN_E2E__.setScheduledResult(run.id, { state: 'running' });
+    return run;
+  });
+  await expect(task.getByRole('button', { name: 'Stop run', exact: true })).toBeVisible();
+  await task.locator('.scheduled-run-row').click();
+  const conversation = page.locator('.scheduled-run-conversation');
+  await conversation.getByRole('button', { name: 'Stop run', exact: true }).click();
+  await expect(conversation.getByRole('button', { name: 'Stopping', exact: true })).toBeDisabled();
+  const calls = await commandCalls(page);
+  const stop = calls.filter((call) => call.cmd === 'automation/runStop');
+  expect(stop).toHaveLength(1);
+  expect(stop[0]!.args).toMatchObject({ id: run.id, requestId: expect.any(String) });
+  expect(stop[0]!.args).not.toHaveProperty('taskId');
+  expect(calls.filter((call) => call.cmd === 'turn/interrupt')).toHaveLength(0);
+  await page.getByRole('button', { name: 'Back to task', exact: true }).click();
+  await expect(task.getByRole('button', { name: 'Stopping', exact: true })).toBeDisabled();
+  await page.evaluate((id) => (window as unknown as { __LIN_E2E__: { setScheduledResult: (id: string, result: unknown) => void } }).__LIN_E2E__.setScheduledResult(id, { state: 'interrupted' }), run.id);
+  await expect(task.getByRole('button', { name: 'Stop run', exact: true })).toHaveCount(0);
+  await expect(task.getByRole('button', { name: 'Stopping', exact: true })).toHaveCount(0);
+});

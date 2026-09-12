@@ -1070,3 +1070,7 @@ button.scheduled-plan-link:hover { color: var(--text-primary); }
 .scheduled-run-time { margin: var(--space-5) var(--agent-content-x) 0; color: var(--text-secondary); font-size: var(--font-ui-sm); }
 .scheduled-run-entry-main { display: flex; align-items: center; gap: var(--space-2); }
 .scheduled-run-entry-main > .scheduled-run-row { flex: 1; min-width: 0; }
+.scheduled-conversation-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-4); }
+.scheduled-run-control { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-4); }
+.scheduled-run-entry > .scheduled-run-control { padding-inline: var(--space-6); }
+.scheduled-run-control:empty { display: none; }
