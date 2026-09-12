@@ -71,4 +71,24 @@ describe('ThreadRecoveryService', () => {
     expect(records.size).toBe(0);
     await rm(root, { recursive: true, force: true });
   });
+
+  test('reinspection removes an unsealed partial retention directory', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-recovery-reinspect-'));
+    const records = new Map<string, string>();
+    const source = thread('018f1f9e-7b6e-7e11-8e45-111111111111');
+    const revision = 'a'.repeat(64);
+    const service = new ThreadRecoveryService({
+      root,
+      journal: { read: () => [...records].map(([id, value]) => ({ id, value })), write: (id, value) => records.set(id, value) },
+      inspect: async () => ({ threads: [source], revision, source: null, rebuildUnavailable: 'none', blockers: [], resourceCount: 0 }),
+      withFence: async (_threads, operation) => operation(),
+      retain: async (_operation, evidence) => { await evidence.json('partial.json', { retained: true }); throw new Error('disk full'); },
+      steps: () => [], changed: () => undefined, completed: async () => undefined,
+    });
+    await expect(service.execute(source.id, 'remove', revision, async () => true)).rejects.toThrow('disk full');
+    const operation = service.pending()[0]!;
+    await expect(service.reinspect(source.id, operation.id)).resolves.toMatchObject({ operation: null });
+    await expect(readFile(join(root, operation.id, 'partial.json'))).rejects.toThrow();
+    await rm(root, { recursive: true, force: true });
+  });
 });

@@ -1,4 +1,5 @@
 import { mkdirSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { decodeThread } from '../../../core/agent/codec';
 import type { Thread } from '../../../core/agent/protocol';
@@ -136,6 +137,7 @@ export class ThreadRecoveryService {
     return this.mutex.run(async () => {
       const operation = this.require(threadId, operationId);
       if (operation.phase !== 'retaining' || operation.completedSteps !== 0) throw new Error('A recovery that has started mutation must resume its original operation');
+      await rm(this.evidence(operation).root, { recursive: true, force: true });
       this.save({ ...operation, phase: 'cancelled', error: null });
       return this.preview(threadId, await this.options.inspect(threadId));
     });

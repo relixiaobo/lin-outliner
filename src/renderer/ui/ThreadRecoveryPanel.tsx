@@ -64,7 +64,7 @@ export function ThreadRecoveryPanel({ recoveryId }: { readonly recoveryId: strin
         </> : <>
           {pending ? <Button disabled={busy} onClick={() => void run({ recoveryId, action: 'resume', operationId: operation.id })}>{t.resume}</Button> : null}
           {operation.phase === 'retaining' ? <Button disabled={busy} onClick={() => void run({ recoveryId, action: 'reinspect', operationId: operation.id })}>{t.reinspect}</Button> : null}
-          {operation.phase === 'applying' || operation.phase === 'complete' ? <Button disabled={busy}
+          {operation.phase === 'complete' ? <Button disabled={busy}
             onClick={() => void run({ recoveryId, action: 'reveal', operationId: operation.id })}>{t.reveal}</Button> : null}
         </>}
       </div>
