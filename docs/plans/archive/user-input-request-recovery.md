@@ -514,7 +514,7 @@ This feature and [background continuation](background-task-continuation-policy.m
 can each ship alone. Select an integration order for their shared
 `ThreadService`, `TurnLifecycle`, protocol, and renderer-store edits; reliable
 questions do not depend on adopting new background agreements. The
-[scheduled-work plan](../scheduled-work-redesign.md) consumes FR-14's answered, discussed,
+[scheduled-work plan](scheduled-work-redesign.md) consumes FR-14's answered, discussed,
 timed-out, cancelled, and failed settlements, distinct from unread results and
 run termination. It preserves its own run admission and introduces no second
 scheduled input owner. Whichever implementation lands later adapts the final

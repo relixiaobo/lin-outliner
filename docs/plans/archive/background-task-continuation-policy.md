@@ -266,7 +266,7 @@ coordinate any new shared interface separately. PR #670's Project/work-directory
 same execution addresses; this feature does not add directory ownership.
 Refresh open claims before implementation rather than relying on this snapshot.
 
-Coordinate with [scheduled work](../scheduled-work-redesign.md): process events keep
+Coordinate with [scheduled work](scheduled-work-redesign.md): process events keep
 their original run relationship; pure observations occupy no foreground slot,
 and an actual continuation uses the existing run/Turn admission owner. The
 [structured input lifecycle](../../spec/agent-core.md#structured-input-lifecycle)

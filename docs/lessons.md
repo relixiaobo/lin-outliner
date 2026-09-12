@@ -3039,3 +3039,13 @@ for identical arguments. Canonical reconstruction repaired replay but exposed a
 truthiness check that missed an empty extra key and silently dropped malformed
 fields before schema validation. Check absence explicitly, cover every object
 depth, pin existing digests, and verify that rejected calls enter no executor.
+
+
+## Shared views must preserve reachable lifecycle actions
+
+**Verify the visible action and its domain request after reusing a view in a
+different mode.** Passing a callback does not make an action reachable when a
+rendering flag hides its only control. In #682, the read-only conversation hid
+the composer containing Stop. Expose the run action independently, route it
+through the scheduling owner, and verify real cancellation from every supported
+surface, including return navigation and unchanged future timing.

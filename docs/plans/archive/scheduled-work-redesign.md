@@ -75,7 +75,7 @@ in the same complete feature. It adds no replacement model tool.
 
 - **CON-1, hard:** Preserve the TypeScript/Electron process boundary, native
   security defaults, canonical mutation and provenance owners, actual isolation,
-  and clone/production data separation from [AGENTS.md](../../AGENTS.md).
+  and clone/production data separation from [AGENTS.md](../../../AGENTS.md).
 - **CON-2, hard:** Consume shared execution, resource, configuration, and recovery
   contracts; inspection failure cannot fabricate execution failure or completion.
 - **CON-3, selected product boundary:** Execution requires Tenon and the local
@@ -578,7 +578,7 @@ FLOW-3 and BR-6/7.
 
 **NFR-1:** The whole path supports keyboard operation, focus restoration, native
 scrolling, light/dark, contrast, reduced motion, and reduced transparency under
-the [design system](../spec/design-system.md). UI chrome uses the existing token,
+the [design system](../../spec/design-system.md). UI chrome uses the existing token,
 icon, menu, and overlay contracts. No raw protocol IDs or debug state are normal
 task labels.
 
@@ -681,21 +681,21 @@ and file scopes before implementation.
 
 | Mechanism / evidence | Observed position | Consequence for this design |
 | --- | --- | --- |
-| Context and Projects, #646/#649/#651; [Agent Core](../spec/agent-core.md) | Existing owner boundary | A scheduled assignment saves its own work location and each execution captures its actual address/policy. A conversation default may initialize an explicit choice but is never consulted as mutable run configuration. Scheduling adds no Project model tools. |
-| Isolation and workbench simplification, #658/#660; [tool design](../spec/agent-tool-design.md) | Implemented; #660 supersedes private verification/Git machinery from #655/#657 | Use generic Goal/Tool Task, native Git/test commands, Skills, and actual isolation. No new verification receipt ledger, Git publication controller, directory claim, or replacement delegation protocol. |
-| Background lifetime and observations, #663; [tool design](../spec/agent-tool-design.md) | Implemented | BR-6/7 consume live observations and terminal receipts separately. Cross-Thread inspection uses validated run/Task ownership; late delivery continuations require shared foreground admission. Result rendering must not terminate surviving background work. |
-| Bounded output and source evidence, #661; [resources](../spec/agent-core.md) | Implemented | Display partial/oversized results honestly; use existing complete-output and resource references, not copied previews as evidence. |
+| Context and Projects, #646/#649/#651; [Agent Core](../../spec/agent-core.md) | Existing owner boundary | A scheduled assignment saves its own work location and each execution captures its actual address/policy. A conversation default may initialize an explicit choice but is never consulted as mutable run configuration. Scheduling adds no Project model tools. |
+| Isolation and workbench simplification, #658/#660; [tool design](../../spec/agent-tool-design.md) | Implemented; #660 supersedes private verification/Git machinery from #655/#657 | Use generic Goal/Tool Task, native Git/test commands, Skills, and actual isolation. No new verification receipt ledger, Git publication controller, directory claim, or replacement delegation protocol. |
+| Background lifetime and observations, #663; [tool design](../../spec/agent-tool-design.md) | Implemented | BR-6/7 consume live observations and terminal receipts separately. Cross-Thread inspection uses validated run/Task ownership; late delivery continuations require shared foreground admission. Result rendering must not terminate surviving background work. |
+| Bounded output and source evidence, #661; [resources](../../spec/agent-core.md) | Implemented | Display partial/oversized results honestly; use existing complete-output and resource references, not copied previews as evidence. |
 | HTTP web search, #662 | Implemented | Research tasks use configured common search tools; scheduling does not require browser state or add a private fetch pipeline. |
 | File-first Settings and Skills, #636/#638/#640/#641/#643/#644/#656 | Implemented | Task configuration consumes accepted configuration; global edits remain UI/file/Skill owned. The #666 model-picker fix is also integrated and introduces no new scheduling prerequisite. |
 | Outline CLI/Skill, #584/#606; delegation CLI/Skill, #628/#637 | Implemented | DEC-6 follows packaged CLI discovery, literal Bash stdin, bounded receipts, and Host admission. Reuse their transport/admission approach without repurposing document or delegation operations. |
-| [Startup fault isolation](../spec/architecture.md#desktop-host-lifecycle), #664 | Implemented | Consume the current scoped readiness, issue actions, admission fencing, and retry ownership, including [Agent startup availability](../spec/agent-thread-rendering.md#startup-availability), when changing Automation lifecycle/Host wiring. |
-| [Published conversation records](../spec/agent-core.md#published-conversation-records), #669 | Canonical source/publication owner | Build result process navigation, history access, continuity, and handoff on `ThreadRecordSources` and `ThreadRecordPublisher`. Preserve approved discovery across non-excluded persistent roots, including Automation roots and self; delegated/ephemeral isolation and file capabilities still apply. Do not add another transcript tree or new history model tools. |
-| [Memory/profile](archive/memory-agent-profile.md), #665 | Design integrated; runtime absent | Global preferences, identity, style, and learning remain with that owner. Task briefs contain work-specific instructions. Consume accepted configuration without a direct USER.md reader or task-local learned profile. |
-| [Targeted conversation recovery](targeted-thread-recovery.md) | Design only | Preserve definition/run fences and shared references. Coordinate final new assignment and run references with its recovery closure; no separate repair action or cleanup interpretation. |
-| [Bounded user input](../spec/agent-core.md#structured-input-lifecycle), #672 | Existing owner boundary | Consume its ordered request settlement, 60-second default deadline and independent session-local answer drafts. Scheduling verifies AC-39/40/41 for its own active-question attention and foreground slot against that owner; no parallel timeout or input ledger. |
-| [Project defaults](../spec/agent-core.md#optional-project-catalog) | Shared Project/location contract | Resolve an explicitly selected Project through its primary-folder owner while retaining the assignment's independent work-location choice. Share packaged CLI admission; changing the originating chat cannot redirect an accepted or future scheduled run. |
-| [Task responsibility](../spec/agent-tool-design.md), #673 | Existing owner boundary | Consume delivered launch/handoff, watch, operation receipts and exact-event disposition through the Task owner. Silent process observations do not acquire the foreground slot; scheduling verifies that required continuations retain their original run association and shared admission. Do not duplicate responsibility or event ownership. |
-| [Delegation](../spec/agent-delegation.md), #628/#637 | Implemented common mechanisms | Internal/external delegated work remains owned by generic Task/session mechanisms and keeps existing discovery and cancellation boundaries. |
+| [Startup fault isolation](../../spec/architecture.md#desktop-host-lifecycle), #664 | Implemented | Consume the current scoped readiness, issue actions, admission fencing, and retry ownership, including [Agent startup availability](../../spec/agent-thread-rendering.md#startup-availability), when changing Automation lifecycle/Host wiring. |
+| [Published conversation records](../../spec/agent-core.md#published-conversation-records), #669 | Canonical source/publication owner | Build result process navigation, history access, continuity, and handoff on `ThreadRecordSources` and `ThreadRecordPublisher`. Preserve approved discovery across non-excluded persistent roots, including Automation roots and self; delegated/ephemeral isolation and file capabilities still apply. Do not add another transcript tree or new history model tools. |
+| [Memory/profile](memory-agent-profile.md), #665 | Design integrated; runtime absent | Global preferences, identity, style, and learning remain with that owner. Task briefs contain work-specific instructions. Consume accepted configuration without a direct USER.md reader or task-local learned profile. |
+| [Targeted conversation recovery](../targeted-thread-recovery.md) | Design only | Preserve definition/run fences and shared references. Coordinate final new assignment and run references with its recovery closure; no separate repair action or cleanup interpretation. |
+| [Bounded user input](../../spec/agent-core.md#structured-input-lifecycle), #672 | Existing owner boundary | Consume its ordered request settlement, 60-second default deadline and independent session-local answer drafts. Scheduling verifies AC-39/40/41 for its own active-question attention and foreground slot against that owner; no parallel timeout or input ledger. |
+| [Project defaults](../../spec/agent-core.md#optional-project-catalog) | Shared Project/location contract | Resolve an explicitly selected Project through its primary-folder owner while retaining the assignment's independent work-location choice. Share packaged CLI admission; changing the originating chat cannot redirect an accepted or future scheduled run. |
+| [Task responsibility](../../spec/agent-tool-design.md), #673 | Existing owner boundary | Consume delivered launch/handoff, watch, operation receipts and exact-event disposition through the Task owner. Silent process observations do not acquire the foreground slot; scheduling verifies that required continuations retain their original run association and shared admission. Do not duplicate responsibility or event ownership. |
+| [Delegation](../../spec/agent-delegation.md), #628/#637 | Implemented common mechanisms | Internal/external delegated work remains owned by generic Task/session mechanisms and keeps existing discovery and cancellation boundaries. |
 
 **Implementation suggestions:** Keep the existing scheduling and Agent execution
 owners where they satisfy these product rules. Revise the assignment and
@@ -774,7 +774,7 @@ it does not change Task action inputs. Any integration at this shared seam must
 preserve the action-specific validation supplied by that PR.
 
 Discovery follows the delivered
-[published conversation record contract](../spec/agent-core.md#published-conversation-records):
+[published conversation record contract](../../spec/agent-core.md#published-conversation-records):
 non-excluded persistent roots across Profiles, Automation roots and self, with
 delegated/ephemeral isolation and file-capability checks. This design requires
 eligible task-owned results and explicit handoff references; it does not broaden

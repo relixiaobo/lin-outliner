@@ -626,6 +626,27 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Changed
 
+- **Scheduled tasks replace the Automation workspace (PR #682)** - Agent Deck
+  now opens one task window for saved instructions, timing, inline Outline/file
+  references, Project selection and run history. Editing, manual runs, pause,
+  archive/restore and exact run cancellation keep their separate owners. Run
+  results open the canonical conversation, including later completion Turns,
+  while preserving the original chat draft. Agents manage schedules through
+  foreground Bash and an authenticated `schedule` CLI/Skill; durable receipts,
+  local catch-up rules and exact issue acknowledgements preserve execution and
+  recovery boundaries. The removed model tool has no replacement in the default
+  catalog. This pre-release cut uses `agent/scheduled-tasks.sqlite` without
+  importing earlier Automation definitions or deleting userData automatically.
+  All review findings are resolved. Integration over #685/#686 preserved both
+  Host owners and passed typecheck, `docs:check`, 176 focused Core/permission/
+  Profile tests, 1,529 Renderer tests, 40 browser cases and all three real-Electron
+  scheduling smokes, including restart idempotency, question timeout and Stop
+  from both surfaces. Light/dark screenshots were inspected. A concurrent
+  Renderer run hit a YouTube timing failure and cascading React errors before
+  being stopped; the unchanged full suite then passed alone. Full Core remains
+  unclaimed after earlier SIGKILL/guard failures. The plan is archived and the
+  recovery plan consumes the final scheduling closure.
+
 - **Projects now own chat task defaults (PR #679)** - The composer provides searchable recent-first Project selection, direct chip removal, per-row editing and deletion, and creation with multiple source folders. New root tasks use the selected Project primary or application default; explicit task cwd and already admitted execution addresses remain unchanged. Independent conversation-folder settings, CLI operations and snapshot readers are retired without migration, requiring fresh isolated development data and the release cutover recorded on the board. The sole P2 keyboard-focus finding is resolved. Gate verification passed typecheck, docs:check, 100 focused unit tests and 17 final browser cases including the independent failure reproduction; light/dark screenshots were inspected. The source CLI authority case failed once and passed an isolated rerun. Existing design guard/metrics failures remain, the complete native Electron workflow was not rerun at the gate, and non-gating remote E2E samples were running at merge. Current specs own the delivered behavior and the plan is archived.
 
 - **Agents recover retained conversations through ordinary file tools (PR #669)** - active and completed conversation records publish exact source, Turn, tool, diagnostic and resource evidence under `thread-records/`, replacing completed-Turn transcripts and the `thread_search` / `thread_read` model tools. Discovery covers approved non-excluded persistent roots across Profiles, Automation roots and self while preserving delegated isolation and file capabilities. Publication follows rollback, rerun, exclusion, deletion, expiry and recovery ownership; long-line cursors share encoding/newline rules, and grep previews preserve context without repeated prefix scans. All three P2 review findings were resolved. The final gate passed typecheck, `docs:check`, whitespace checks and 130 focused tests with five existing skips; earlier review covered service/runtime/source contracts, and broader branch evidence plus full-Core limitations remain in the PR. The BOM search reproducer fell from about 8.1 seconds to 15 ms in local measurements. Non-gating E2E samples were still queued/running at merge. Specifications are updated, the plan is archived, and downstream plans consume the delivered owners.
