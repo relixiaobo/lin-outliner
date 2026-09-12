@@ -102,6 +102,8 @@ import type { DocumentProjection } from '../../core/types';
 import { decodeDelegateExecutionResult } from '../../delegate/contract';
 import { ResourceScope } from '../resourceScope';
 import { startupIssue } from '../startupIssue';
+import { ThreadRecoveryRuntime } from './recovery/ThreadRecoveryRuntime';
+import type { ThreadRecoveryOperation, ThreadRecoveryOptions, ThreadRecoveryParticipant, ThreadRecoveryService } from './recovery/ThreadRecoveryService';
 import {
 defaultEffectiveThreadConfiguration,
 type AgentConfigurationReadFailureReporter,
@@ -186,6 +188,7 @@ export interface ThreadServiceStores {
 }
 
 export interface ThreadServiceOptions {
+  readonly recoveryCheckpoint?: ThreadRecoveryOptions['checkpoint'];
   readonly stores: ThreadServiceStores;
   readonly executor: TurnExecutor;
   readonly attachmentScratchRoot: string;
@@ -373,6 +376,60 @@ export class ThreadService implements ThreadServiceExtensionHost {
    */
   private readonly unreadableThreadIds = new Set<ThreadId>();
   private readonly unreadableIssues = new Map<ThreadId, StartupIssue>();
+  private readonly recoveryRuntime: ThreadRecoveryRuntime;
+  private readonly recoveryListeners = new Set<() => void>();
+
+  conversationRecovery(): ThreadRecoveryService {
+    if (this.closing) throw new Error('Conversation recovery is unavailable while the application closes');
+    return this.recoveryRuntime.service;
+  }
+  bindRecoveryOwners(owners: readonly ThreadRecoveryParticipant[]): void { this.recoveryRuntime.bind(owners); }
+  isConversationRecoveryPending(threadId: string): boolean {
+    return this.recoveryRuntime.service.pending().some((operation) => operation.threads.some((thread) => thread.id === threadId));
+  }
+  subscribeRecovery(listener: () => void): () => void {
+    this.recoveryListeners.add(listener);
+    return () => { this.recoveryListeners.delete(listener); };
+  }
+
+  private recoveryChanged(operation: ThreadRecoveryOperation): void {
+    if (operation.phase === 'complete' || operation.phase === 'cancelled') {
+      const cleared = operation.phase === 'cancelled' ? [] : operation.action === 'remove' ? operation.threads.map((thread) => thread.id) : [operation.threadId];
+      for (const id of cleared) { this.unreadableThreadIds.delete(id); this.unreadableIssues.delete(id); }
+      this.startupQuarantinedThreadIds.clear();
+      for (const id of this.unreadableThreadIds) this.quarantineStartupSubtree(id);
+      for (const pending of this.recoveryRuntime.service.pending()) {
+        for (const thread of pending.threads) this.startupQuarantinedThreadIds.add(thread.id);
+      }
+      for (const thread of operation.threads) if (!this.recoveryRuntime.service.isFenced(thread.id)) {
+        this.core.stoppingThreads.delete(thread.id);
+        this.toolTasks.releaseRecovery([thread.id]);
+      }
+      if (operation.phase === 'complete' && operation.action === 'rebuild') {
+        this.records.restore(operation.threadId);
+        const thread = this.core.metadata.read(operation.threadId)?.thread;
+        if (thread) this.records.schedule(thread, undefined, true);
+      }
+      this.recordIndex.schedule();
+    } else {
+      this.unreadableThreadIds.add(operation.threadId);
+      for (const thread of operation.threads) {
+        this.startupQuarantinedThreadIds.add(thread.id);
+        this.core.stoppingThreads.add(thread.id);
+      }
+      this.toolTasks.fenceRecovery(operation.threads.map((thread) => thread.id));
+      this.unreadableIssues.set(operation.threadId, {
+        id: `thread:${operation.threadId}`, domain: 'agent', operation: 'thread-recovery',
+        category: 'invalid-data', threadId: operation.threadId, retryable: false, recovery: true,
+        message: operation.error ?? 'Confirmed conversation recovery is in progress.',
+        details: `Recovery: ${operation.id}\nPhase: ${operation.phase}\n${operation.error ?? ''}`,
+        actions: ['copy-details'],
+      });
+    }
+    for (const listener of this.recoveryListeners) {
+      try { listener(); } catch (error) { console.warn('[agent] Recovery status observation failed', error); }
+    }
+  }
 
   startupIssues(): readonly StartupIssue[] { return [...this.unreadableIssues.values()]; }
 
@@ -385,6 +442,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
     }
     // A child with its own unreadable history remains a source, not just a dependent.
     for (const source of this.unreadableThreadIds) sources.set(source, source);
+    for (const operation of this.recoveryRuntime?.service.pending() ?? []) {
+      for (const thread of operation.threads) sources.set(thread.id, operation.threadId);
+    }
     return [...sources].map(([threadId, sourceThreadId]) => ({ threadId, sourceThreadId }));
   }
   private readonly resourceOps: ThreadResourceOps;
@@ -717,6 +777,23 @@ export class ThreadService implements ThreadServiceExtensionHost {
         this.toolTasks.wakeDelivery(notification.threadId);
       }
     });
+    this.recoveryRuntime = new ThreadRecoveryRuntime({
+      root: join(options.recordRoot, '..', 'agent', 'thread-recovery'),
+      recordRoot: options.recordRoot, scratchRoot: options.attachmentScratchRoot,
+      core: this.core, goals: this.goalStore, tasks: this.toolTasks, records: this.records,
+      resources: this.resourceOps, extensions: this.extensions,
+      eligible: (id) => this.unreadableIssues.has(id),
+      active: (id) => this.activeTurns.has(id),
+      pendingInput: (id) => this.pendingUserInputs.has(id),
+      changed: (operation) => this.recoveryChanged(operation),
+      completed: async (operation) => {
+        if (operation.action === 'rebuild') this.core.history.rolloutSnapshot(operation.threadId);
+      },
+      forgetExclusions: (ids) => this.transcriptExclusions.forget(ids),
+      checkpoint: options.recoveryCheckpoint,
+    });
+    this.core.recoveryAdmissionBlocked = (id) => this.recoveryRuntime.service.isFenced(id);
+    for (const operation of this.recoveryRuntime.service.pending()) this.recoveryChanged(operation);
   }
 
   static async open(
@@ -763,6 +840,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     if (this.initialized) return;
     // Before any Turn can complete: the subject resolver reads this synchronously.
     await this.transcriptExclusions.load();
+    await this.recoveryRuntime.service.resumePending();
     const knownThreadIds: ThreadId[] = [];
     const reconciledThreadIds: ThreadId[] = [];
     const resumableThreadIds: ThreadId[] = [];
@@ -772,6 +850,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         const page = this.core.metadata.list({ archived, cursor, limit: 100 });
         for (const thread of page.data) {
           knownThreadIds.push(thread.id);
+          if (this.recoveryRuntime.service.isFenced(thread.id)) continue;
           let reconciled = false;
           try {
             await this.catalogOps.reconcileThread(thread.id);
@@ -804,7 +883,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     }
     const knownThreads = new Set(knownThreadIds);
     const liveResourceReferences = new Map<ThreadId, readonly ThreadResourceReference[]>();
-    let resourceSnapshotComplete = true;
+    let resourceSnapshotComplete = this.recoveryRuntime.service.pending().length === 0;
     for (const threadId of knownThreadIds) {
       if (this.startupQuarantinedThreadIds.has(threadId)) {
         resourceSnapshotComplete = false;
@@ -912,13 +991,13 @@ export class ThreadService implements ThreadServiceExtensionHost {
    */
   private async reportUnreadableThread(
     threadId: ThreadId,
-    operation: 'read' | 'resume',
+    operation: 'read' | 'resume' | 'reconcile',
     error: unknown,
   ): Promise<void> {
     const issue = startupIssue('agent', error);
     this.unreadableIssues.set(threadId, {
       ...issue, details: `Thread: ${threadId}\n${issue.details}`.slice(0, 8_000), id: `thread:${threadId}`, operation: `thread-${operation}`,
-      threadId, retryable: false,
+      threadId, retryable: false, recovery: true,
     });
     try {
       await this.reportError({
@@ -969,6 +1048,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   async close(drainTimeoutMs = THREAD_SERVICE_CLOSE_DRAIN_TIMEOUT_MS): Promise<void> {
     this.closing = true;
     const failures: unknown[] = [];
+    await this.recoveryRuntime.service.drain();
     try {
       await this.toolTasks.close(drainTimeoutMs);
     } catch (error) {
@@ -1089,7 +1169,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
     return this.startupQuarantinedThreadIds.has(threadId);
   }
   persistentThreadExecutionContext(threadId: ThreadId): PersistentThreadExecutionContext { return this.catalogOps.persistentThreadExecutionContext(threadId); }
-  readTurnForHost(threadId: ThreadId, turnId: TurnId): Turn | null { return this.core.readTurn(threadId, turnId); }
+  readTurnForHost(threadId: ThreadId, turnId: TurnId): Turn | null {
+    return this.isConversationRecoveryPending(threadId) ? null : this.core.readTurn(threadId, turnId);
+  }
   delegationAdmissionContext(threadId: ThreadId, turnId: TurnId): {
     readonly thread: Thread;
     readonly configuration: EffectiveThreadConfiguration;

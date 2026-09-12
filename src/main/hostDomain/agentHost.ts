@@ -196,6 +196,8 @@ export interface AgentWorktreeCapability {
 }
 
 export interface AgentThreadCapability {
+  conversationRecovery: ThreadService['conversationRecovery'];
+  subscribeRecovery: ThreadService['subscribeRecovery'];
   startupIssues: ThreadService['startupIssues'];
   startupThreadAvailability: ThreadService['startupThreadAvailability'];
   request: ThreadService['request'];
@@ -513,6 +515,8 @@ async function composeAgentHost(options: AgentHostOptions, acquisition: Resource
     execute: (execution) => execution.admission.command.name === 'schedule' ? scheduleCli.execute(execution) : execution.admission.command.name === 'project' ? projectCli.execute(execution) : delegationCoordinator.execute(execution),
   });
   const threads: AgentThreadCapability = {
+    conversationRecovery: () => threadService.conversationRecovery(),
+    subscribeRecovery: (listener) => threadService.subscribeRecovery(listener),
     startupIssues: () => threadService.startupIssues(),
     startupThreadAvailability: () => threadService.startupThreadAvailability(),
     request: (...args) => threadService.request(...args),
@@ -579,6 +583,22 @@ async function composeAgentHost(options: AgentHostOptions, acquisition: Resource
     beforeSchedulerStart: () => threadService.projects.initialize(),
   });
   threadService.projects.attachAutomation(projectAutomationLifecycle(automationStore, automationScheduler, automationDispatcher));
+  threadService.bindRecoveryOwners([
+    {
+      name: 'scheduled-tasks',
+      withLock: (_ids, operation) => automationScheduler.runExclusive(operation),
+      inspect: async (ids) => {
+        const observed = automationStore.recoveryState(ids);
+        return { state: observed.state, blockers: observed.runs.flatMap((run) =>
+          run.worktree && run.worktree.removedAt === null
+            ? [`Scheduled run ${run.id} has a retained workspace that must settle through its owner.`] : []) };
+      },
+      retain: (_ids, evidence) => automationStore.retainRecovery(evidence),
+      remove: async (ids) => { automationStore.removeRecoveryThreads(ids); },
+    },
+    memory.recoveryParticipant(),
+    delegationCoordinator.recoveryParticipant(),
+  ]);
   automationReference.set(automationService);
   threadService.bindScheduledCompletionAdmission((threadId, admission, operation) => {
     const owner = scheduledOwnership.forBatch(admission.batchId, threadId);

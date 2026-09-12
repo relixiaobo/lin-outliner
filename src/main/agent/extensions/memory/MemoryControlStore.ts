@@ -279,6 +279,39 @@ export class MemoryControlStore {
     this.db.close();
   }
 
+  recoveryState(threadIds: readonly ThreadId[]): unknown {
+    return {
+      settings: this.db.prepare('SELECT * FROM settings ORDER BY key').all(),
+      publications: this.preparedPublications(),
+      rollbacks: this.activeRollbacks(),
+      sources: threadIds.map((id) => ({
+        source: this.source(id),
+        admissions: this.db.prepare('SELECT * FROM turn_admissions WHERE thread_id = ? ORDER BY turn_id').all(id),
+        origins: this.db.prepare('SELECT * FROM origin_claims WHERE thread_id = ? ORDER BY origin_item_id').all(id),
+        lineage: this.db.prepare('SELECT * FROM node_lineage WHERE thread_id = ? ORDER BY node_id, origin_item_id').all(id),
+        job: this.db.prepare('SELECT * FROM dirty_jobs WHERE key = ?').get(`phase1:${id}`) ?? null,
+      })),
+    };
+  }
+
+  retainRecovery(evidence: import('../../recovery/RecoveryEvidence').RecoveryEvidence): Promise<void> {
+    return evidence.sqlite('memory.sqlite', this.db);
+  }
+
+  removeRecoverySources(threadIds: readonly ThreadId[]): void {
+    this.transaction(() => {
+      for (const id of threadIds) this.db.prepare('DELETE FROM dirty_jobs WHERE key = ?').run(`phase1:${id}`);
+      for (const publication of this.preparedPublications()) {
+        if (publication.kind !== 'stage1') continue;
+        const payload = publication.payload as { threadId?: string };
+        if (payload.threadId && threadIds.includes(payload.threadId)) this.discardPreparedPublication(publication.id);
+      }
+      // Accepted origins, lineage, admissions and generated Nodes retain their
+      // meaning when the original conversation becomes unavailable.
+    });
+    this.changed();
+  }
+
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => { this.listeners.delete(listener); };

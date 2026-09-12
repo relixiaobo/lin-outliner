@@ -5,6 +5,7 @@ import type { AgentWritableThreadGoalStatus, ThreadGoal, ThreadGoalStatus } from
 import type { ThreadId, TurnId, TurnStatus } from '../../../../core/agent/protocol';
 import { AgentToolFailure } from '../../AgentToolFailure';
 import { openSqlite, type SqliteDatabase } from '../../persistence/sqlite';
+import type { RecoveryEvidence } from '../../recovery/RecoveryEvidence';
 
 interface GoalRow {
   thread_id: string;
@@ -59,6 +60,14 @@ export interface GoalContinuationState {
 
 export class GoalStore {
   private readonly db: SqliteDatabase;
+
+  recoveryState(threadIds: readonly ThreadId[]): unknown {
+    return threadIds.map((id) => ({
+      goal: this.read(id), continuation: this.readContinuationState(id), deferral: this.readDeferral(id),
+    }));
+  }
+
+  retainRecovery(evidence: RecoveryEvidence): Promise<void> { return evidence.sqlite('goals-and-tasks.sqlite', this.db); }
 
   constructor(path: string, database?: SqliteDatabase) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });

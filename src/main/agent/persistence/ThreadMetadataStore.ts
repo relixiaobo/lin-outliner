@@ -15,6 +15,7 @@ import type {
 import { decodeCursor, encodeCursor, pageLimit } from './cursor';
 import { closeSqliteAfterFailure, openSqlite, type SqliteDatabase, type SqliteValue } from './sqlite';
 import { ProjectCatalogStore } from './ProjectCatalogStore';
+import type { RecoveryEvidence } from '../recovery/RecoveryEvidence';
 
 export interface ThreadCatalogRecord {
   readonly thread: Thread;
@@ -70,12 +71,50 @@ export class ThreadMetadataStore {
   private readonly db: SqliteDatabase;
   private readonly recordCache = new Map<ThreadId, ThreadCatalogRecord>();
 
+  /** Resolve the actual foreign-key cascade, independently of readable history. */
+  recoveryClosure(threadId: ThreadId): readonly ThreadCatalogRecord[] {
+    const rows = this.db.prepare(`WITH RECURSIVE closure(id) AS (
+      SELECT id FROM threads WHERE id = ?
+      UNION SELECT child.id FROM threads child JOIN closure ON child.parent_thread_id = closure.id
+    ) SELECT threads.* FROM threads JOIN closure ON threads.id = closure.id ORDER BY threads.id`).all(threadId) as ThreadRow[];
+    if (!rows.some((row) => row.id === threadId)) throw new Error('Recovery conversation is no longer in the catalog');
+    const ids = new Set(rows.map((row) => row.id));
+    const edges = this.db.prepare('SELECT parent_thread_id, child_thread_id FROM spawn_edges').all() as Array<{ parent_thread_id: string; child_thread_id: string }>;
+    if (edges.some((edge) => ids.has(edge.parent_thread_id) && (!ids.has(edge.child_thread_id)
+        || rows.find((row) => row.id === edge.child_thread_id)?.parent_thread_id !== edge.parent_thread_id))
+      || rows.some((row) => row.id !== threadId && !edges.some((edge) => edge.child_thread_id === row.id && edge.parent_thread_id === row.parent_thread_id))) {
+      throw new Error('Conversation catalog and descendant ownership disagree');
+    }
+    const root = rows.find((row) => row.id === threadId)!;
+    if (root.parent_thread_id && ids.has(root.parent_thread_id)) throw new Error('Conversation lineage contains a cycle');
+    return [root, ...rows.filter((row) => row.id !== threadId)].map(recordFromRow);
+  }
+
+  recoveryState(threadIds: readonly ThreadId[]): unknown {
+    return threadIds.map((id) => ({
+      thread: this.db.prepare('SELECT * FROM threads WHERE id = ?').get(id) ?? null,
+      edges: this.db.prepare('SELECT * FROM spawn_edges WHERE parent_thread_id = ? OR child_thread_id = ? ORDER BY child_thread_id').all(id, id),
+      inputs: this.db.prepare('SELECT * FROM client_inputs WHERE thread_id = ? ORDER BY client_id').all(id),
+    }));
+  }
+
+  retainRecovery(evidence: RecoveryEvidence): Promise<void> { return evidence.sqlite('catalog.sqlite', this.db); }
+
+  recoveryJournal(): import('../recovery/ThreadRecoveryService').ThreadRecoveryOptions['journal'] {
+    return {
+      read: () => this.db.prepare('SELECT id, value FROM thread_recovery_operations ORDER BY id').all() as Array<{ id: string; value: string }>,
+      write: (id, value) => { this.db.prepare(`INSERT INTO thread_recovery_operations(id, value) VALUES (?, ?)
+        ON CONFLICT(id) DO UPDATE SET value = excluded.value`).run(id, value); },
+    };
+  }
+
   constructor(path: string, database?: SqliteDatabase) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
     this.db = database ?? openSqlite(path);
     try {
       this.db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;');
       this.db.exec(`
+      CREATE TABLE IF NOT EXISTS thread_recovery_operations (id TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;
       CREATE TABLE IF NOT EXISTS threads (
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL,

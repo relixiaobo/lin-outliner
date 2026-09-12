@@ -224,6 +224,21 @@ export class DelegationSessionStore {
     `).all(ownerThreadId) as SessionRow[]).map(sessionFromRow);
   }
 
+  recoveryState(threadIds: readonly ThreadId[]): unknown {
+    return threadIds.map((id) => ({
+      session: this.readSession(id),
+      owned: this.sessionsForOwner(id).map((session) => ({
+        session,
+        messages: this.messagesForSession(session.sessionId),
+        settlements: this.db.prepare('SELECT * FROM delegation_execution_settlements WHERE session_id = ? ORDER BY settlement_id').all(session.sessionId),
+      })),
+    }));
+  }
+
+  retainRecovery(evidence: import('../recovery/RecoveryEvidence').RecoveryEvidence): Promise<void> {
+    return evidence.sqlite('delegation.sqlite', this.db);
+  }
+
   openSessions(): readonly DelegationSessionBinding[] {
     return (this.db.prepare(`
       SELECT * FROM delegation_sessions WHERE state = 'open' ORDER BY created_at, session_id

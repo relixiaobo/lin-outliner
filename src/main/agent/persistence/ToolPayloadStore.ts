@@ -551,6 +551,10 @@ export class ToolPayloadStore {
     });
   }
 
+  async retainRecovery(threadId: ThreadId, evidence: import('../recovery/RecoveryEvidence').RecoveryEvidence): Promise<void> {
+    await this.withResourceLock(threadId, () => evidence.directory(`payloads/${threadId}`, join(this.rootPath, threadId)));
+  }
+
   private async withResourceLock<T>(threadId: ThreadId, operation: () => Promise<T>): Promise<T> {
     const previous = this.resourceOperationTails.get(threadId) ?? Promise.resolve();
     let release!: () => void;

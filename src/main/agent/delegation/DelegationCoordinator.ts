@@ -227,6 +227,46 @@ export class DelegationCoordinator {
     this.options.store.deleteSessionsForOwner(ownerThreadId);
   }
 
+  recoveryParticipant(): import('../recovery/ThreadRecoveryService').ThreadRecoveryParticipant {
+    const sessions = (ids: readonly ThreadId[]) => [...new Map(ids.flatMap((id) => [
+      ...this.options.store.sessionsForOwner(id),
+      ...[this.options.store.readSession(id)].filter((entry) => entry !== null),
+    ]).map((entry) => [entry.sessionId, entry])).values()];
+    return {
+      name: 'delegation',
+      withLock: <T>(threadIds: readonly string[], operation: () => Promise<T>) => {
+        const ids = sessions(threadIds).map((entry) => entry.sessionId).sort();
+        const enter = (index: number): Promise<T> => index === ids.length
+          ? operation() : this.gates.run(ids[index]!, () => enter(index + 1));
+        return enter(0);
+      },
+      inspect: async (ids) => {
+        const blockers: string[] = [];
+        for (const session of sessions(ids)) {
+          if (!ids.includes(session.ownerThreadId)) blockers.push(`Delegation ${session.sessionId} is owned by another conversation.`);
+          if (session.currentTaskId || this.options.store.queuedMessages(session.sessionId).length
+            || this.options.store.unsettledSettlements().some((entry) => entry.sessionId === session.sessionId)) {
+            blockers.push(`Delegation ${session.sessionId} has unsettled work.`);
+          }
+          if (session.worktree.kind !== 'none' && session.worktree.kind !== 'cleaned') {
+            blockers.push(`Delegation ${session.sessionId} has a retained or unsettled workspace.`);
+          }
+        }
+        return { state: this.options.store.recoveryState(ids), blockers };
+      },
+      retain: (_ids, evidence) => this.options.store.retainRecovery(evidence),
+      remove: async (ids) => {
+        for (const session of sessions(ids)) {
+          if (session.state !== 'closed') {
+            await this.options.runtime.prepareOwnerDeletion(session);
+            this.options.store.closeSession(session.sessionId, session.revision, this.now());
+          }
+        }
+        for (const id of ids) this.deleteOwnerSessions(id);
+      },
+    };
+  }
+
   execute(execution: DelegateCapabilityExecution): Promise<unknown> {
     if (execution.admission.command.name === 'run') return this.run(execution);
     if (execution.admission.command.name === 'send') return this.send(execution);

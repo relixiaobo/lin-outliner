@@ -1001,6 +1001,21 @@ export class ToolTaskStore {
       .map(taskFromRow);
   }
 
+  recoveryState(threadIds: readonly ThreadId[]): unknown {
+    return threadIds.map((id) => ({
+      tasks: this.listAll(id),
+      batches: this.db.prepare('SELECT * FROM tool_task_delivery_batches WHERE owner_thread_id = ? ORDER BY batch_id').all(id),
+      leases: this.db.prepare('SELECT * FROM tool_task_leases WHERE owner_thread_id = ? ORDER BY task_id').all(id),
+      successors: this.db.prepare(`SELECT successors.* FROM tool_task_context_successors successors JOIN tool_tasks tasks USING(task_id)
+        WHERE tasks.owner_thread_id = ? ORDER BY task_id`).all(id),
+    }));
+  }
+
+  removeRecoveryDelivery(threadId: ThreadId): void {
+    this.blockOwnerDelivery(threadId, Date.now());
+    this.db.prepare('DELETE FROM tool_task_delivery_batches WHERE owner_thread_id = ?').run(threadId);
+  }
+
   private require(taskId: string): ToolTaskRecord {
     const task = this.read(taskId);
     if (!task) throw new Error(`Tool Task not found: ${taskId}`);

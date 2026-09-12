@@ -206,6 +206,7 @@ import {
 } from '../core/keybindings';
 import type { ThemeMode } from '../core/theme';
 import { getMessages } from '../core/i18n';
+import { THREAD_RECOVERY_CHANNEL, decodeThreadRecoveryRequest } from '../core/threadRecovery';
 import { APP_NAME } from '../core/brand';
 import {
   ATTACHMENT_UPLOAD_CHUNK_BYTES,
@@ -820,6 +821,9 @@ async function initializeAgentHost(assertActive: () => void): Promise<void> {
     subscriptions.defer('automations', candidate.automations.subscribe((notification) => {
       windowApplicationHost.windows.main()?.webContents.send(AUTOMATION_NOTIFICATION_CHANNEL, notification);
     }));
+    subscriptions.defer('conversation-recovery', candidate.threads.subscribeRecovery(() => {
+      lifecycle.setThreadIssues(candidate.threads.startupIssues(), candidate.threads.startupThreadAvailability());
+    }));
     await candidate.initialize(outlineHost.document.liveProjection(), assertActive);
     assertActive();
     lifecycle.setThreadIssues(candidate.threads.startupIssues(), candidate.threads.startupThreadAvailability());
@@ -997,6 +1001,36 @@ function registerMainTransport(previewSession: Electron.Session): HostTransportC
 }
 
 function registerStartupTransport(ipcMain: OwnedIpcMain): void {
+  ipcMain.handle(THREAD_RECOVERY_CHANNEL, async (event, input: unknown) => {
+    assertMainRenderer(event, 'Conversation recovery');
+    const request = decodeThreadRecoveryRequest(input);
+    await lifecycle.ready('agent');
+    const owner = requireAgentHost().threads.conversationRecovery();
+    const threadId = request.recoveryId.slice('thread:'.length);
+    if (request.action === 'inspect') return { preview: await owner.inspect(threadId) };
+    if (request.action === 'resume') return { preview: await owner.resume(threadId, request.operationId) };
+    if (request.action === 'reinspect') return { preview: await owner.reinspect(threadId, request.operationId) };
+    if (request.action === 'reveal') {
+      const path = await owner.retainedPath(threadId, request.operationId);
+      const error = await shell.openPath(path);
+      if (error) throw new Error(error);
+      return { preview: await owner.inspect(threadId) };
+    }
+    if (request.action !== 'rebuild' && request.action !== 'remove') throw new Error('Invalid recovery mutation');
+    return owner.execute(threadId, request.action, request.revision, async (preview) => {
+      const text = getMessages(windowApplicationHost.effectiveLocale()).startup.recovery;
+      const parent = windowApplicationHost.windows.main();
+      const options: Electron.MessageBoxOptions = {
+        type: 'warning', title: request.action === 'remove' ? text.remove : text.rebuild,
+        message: request.action === 'remove' ? text.confirmRemove : text.confirmRebuild,
+        detail: `${text.scope}\n${preview.threads.map((thread) => `${thread.name ?? thread.threadId} (${thread.threadId})`).join('\n')}\n\n${text.preserved}\n\n${text.retained}: ${preview.retainedRoot}`,
+        buttons: [text.cancel, request.action === 'remove' ? text.remove : text.rebuild],
+        defaultId: 0, cancelId: 0, noLink: true,
+      };
+      const response = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options);
+      return response.response === 1;
+    });
+  });
   ipcMain.handle(STARTUP_ISSUE_ACTION_CHANNEL, async (event, input: unknown) => {
     assertMainRenderer(event, 'Startup issue action');
     if (!input || typeof input !== 'object') throw new Error('Invalid startup issue action');

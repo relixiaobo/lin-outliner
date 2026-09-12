@@ -23,7 +23,7 @@ Read these in order when changing Agent Core:
 
 | File | Owns |
 | --- | --- |
-| `agent-core.md` | Thread, Turn, Item, Goal, lifecycle, provenance, storage, transport, extensions, and trusted document transactions. |
+| `agent-core.md` | Thread, Turn, Item, Goal, lifecycle, targeted conversation recovery, provenance, storage, transport, extensions, and trusted document transactions. |
 | `agent-thread-rendering.md` | Canonical DTO rendering, dock state, pagination, interaction states, and visual behavior. |
 | `agent-delegation.md` | Root-owned Agent Sessions, CLI admission, Runner policy, hidden Threads, continuation, settlement, and legacy retirement. |
 | `agent-automations.md` | Scheduled-task windows, authenticated CLI/Skill access, local timing, durable claims, canonical results, cancellation, attention and worktrees. |

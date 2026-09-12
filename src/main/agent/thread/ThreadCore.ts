@@ -69,6 +69,7 @@ export class RecordedNotificationProjectionError extends Error {
 }
 
 export class ThreadCore {
+  recoveryAdmissionBlocked: (threadId: ThreadId) => boolean = () => false;
   readonly ephemeral = new Map<ThreadId, EphemeralThreadState>();
   readonly hiddenEphemeralThreads = new Set<ThreadId>();
   readonly stoppingThreads = new Set<ThreadId>();

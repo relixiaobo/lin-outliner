@@ -28,6 +28,15 @@ arbitrary path or reset instruction. Retry is lifecycle-owned and entity quarant
 has no cosmetic retry. Failed configuration bytes, workspace data, conversation
 records, and Project metadata are preserved.
 
+Unreadable Thread issues also expose a bounded recovery surface. The issue names
+the exact Thread and descendants found through trusted catalog lineage. The Host
+can return inspection, a verified rebuild, or an exact removal preview; it never
+accepts a renderer path or arbitrary reset target. Native confirmation is bound
+to the inspection digest. Retained originals and a restartable operation remain
+available after an interruption, while a stale scope or unresolved owner blocks
+the action. A successful removal or rebuild clears the session quarantine only
+after owner cleanup or staged-reader verification completes.
+
 ## Reporting
 
 The main process owns the reporting choke point:
