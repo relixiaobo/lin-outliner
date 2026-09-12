@@ -48,6 +48,7 @@ review. There is no active claim today; existing PM decisions persist.
 
 | Priority | Plan | Status | Next action / eligibility |
 | --- | --- | --- | --- |
+| P1 | [data-compatibility-foundation](plans/data-compatibility-foundation.md) | `draft` | Establish the versioned userData manifest, safe startup gate, verified backups, canonical Store migrations, derived rebuilds, and populated release-to-release upgrade tests before broader rollout. |
 | P2 | [targeted-thread-recovery](plans/archive/targeted-thread-recovery.md) | `done` | Targeted rebuild/removal now verifies source or exact closure, retains WAL-aware owner evidence, fences recovery across restart, and exposes recovery only after verified completion; [plan archived](plans/archive/targeted-thread-recovery.md). |
 | P2 | [file-preview-office](plans/file-preview-office.md) | `draft` | Prove TypeScript DOCX/XLSX extraction and archive limits with Python absent, then deliver shared Agent/preview reading in one feature; preserve the current PPTX owner. |
 | P2 | [url-static-reader](plans/url-static-reader.md) | `draft` | Share extraction while preserving Agent calls without UI selection, explicit acquisition and remote-image policy. Prefer after Office on shared preview/extraction files. |
