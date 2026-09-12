@@ -18,10 +18,11 @@ The development train is `0.8.0`; the latest published release remains `v0.7.0`
 The main E2E signal is reporting, not a merge gate. The latest completed
 [report](https://github.com/relixiaobo/lin-outliner/issues/476) is for `92b79cac`:
 five samples contain 26 deterministic and five intermittent failures. Its green
-workflow conclusion does not mean the test suite passed. The #682 main run
-[34677782176](https://github.com/relixiaobo/lin-outliner/actions/runs/34677782176)
-is queued at this refresh. Follow the issue for completed measurements and the
-workflow for pending runs; do not attribute old samples to a newer commit.
+workflow conclusion does not mean the test suite passed. Later main commits
+have no completed measurement at this refresh. Follow the issue for completed
+measurements and [live main runs](https://github.com/relixiaobo/lin-outliner/actions?query=branch%3Amain)
+for queued, superseded or cancelled runs; do not attribute old samples to a newer
+commit.
 
 ## Delivered Contracts
 
