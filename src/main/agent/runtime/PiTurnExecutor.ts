@@ -1,4 +1,3 @@
-import type { ProfilePromptContext } from '../profile/ProfileContext';
 import { NativeAgentRuntime } from './kernel/NativeAgentRuntime';
 import { planExecutionContextPublication } from '../context/ExecutionContextPublication';
 import {
@@ -118,7 +117,6 @@ export type ModelRuntimeToolFactory = (
 ) => readonly AgentTool[] | Promise<readonly AgentTool[]>;
 
 export interface PiTurnExecutorOptions {
-  readonly resolveProfileContext?: (context: TurnExecutionContext) => ProfilePromptContext | null;
   readonly resolveThreadRecord?: (currentThreadId: string, threadId: string) => Promise<string | null>;
   readonly onContextReplaced?: (context: TurnExecutionContext) => void;
   readonly createTools?: ModelRuntimeToolFactory;
@@ -201,7 +199,6 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
           recordIndexPath: this.options.recordIndexPath ?? null,
           currentRecordPath: tools.some(tool => tool.name === 'file_read') ? await context.resolveThreadRecord?.(context.thread.id) ?? null : null,
           persona: this.options.resolvePersona?.(context.thread) ?? null,
-          profileContext: this.options.resolveProfileContext?.(context) ?? null,
         });
     const systemPrompt = stablePrompt?.text
       ?? context.configuration.developerInstructions.join('\n\n');
@@ -271,7 +268,6 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
             recordIndexPath: this.options.recordIndexPath ?? null,
           currentRecordPath: tools.some(tool => tool.name === 'file_read') ? await context.resolveThreadRecord?.(context.thread.id) ?? null : null,
             persona: this.options.resolvePersona?.(context.thread) ?? null,
-          profileContext: this.options.resolveProfileContext?.(context) ?? null,
           });
       const systemPrompt = stablePrompt?.text
         ?? context.configuration.developerInstructions.join('\n\n');
@@ -367,6 +363,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         : async () => {
             await normalizer.flush();
             await context.publishPendingContextObservations?.();
+            await context.refreshThreadContext?.();
             await this.options.beforeProviderContext?.(context);
             turnScopedReads.beginBoundary();
             try {

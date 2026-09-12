@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import type { SqliteDatabase } from '../../src/main/agent/persistence/sqlite';
 import type { ProfileEvidence, ProfileLearningChange } from '../../src/core/agent/profileFiles';
 import { ProfileFileStore, profileFileDigest } from '../../src/main/agent/profile/ProfileFileStore';
-import { captureProfileTurn, profilePromptForTurn, profileComponentText } from '../../src/main/agent/profile/ProfileContext';
+import { captureProfileTurn, profileStateForTurn, profileContextText } from '../../src/main/agent/profile/ProfileContext';
 import { parseUserProfile, renderUserProfile } from '../../src/main/agent/profile/ProfileMarkdown';
 
 const cleanups: (() => void)[] = [];
@@ -96,11 +96,11 @@ describe('Profile files', () => {
     captureProfileTurn(store, 'turn:one', 'default', true);
     store.applyLearning('learn:b', store.inspect('user').revision, [proposal('b', 'Use a short outline for reports.')], [source('b')]);
     captureProfileTurn(store, 'turn:one', 'default', true);
-    expect(profilePromptForTurn(store, 'turn:one', true)?.user).toContain('with the conclusion');
+    expect(profileStateForTurn(store, 'turn:one', true).profile_user_reports?.value).toContain('with the conclusion');
     captureProfileTurn(store, 'turn:two', 'default', true);
-    expect(profilePromptForTurn(store, 'turn:two', true)?.user).toContain('short outline');
+    expect(profileStateForTurn(store, 'turn:two', true).profile_user_reports?.value).toContain('short outline');
     captureProfileTurn(store, 'turn:off', 'default', false);
-    expect(profilePromptForTurn(store, 'turn:off', false)?.user).toBeNull();
+    expect(profileStateForTurn(store, 'turn:off', false).profile_user_reports).toBeUndefined();
   });
 
   test('rejects malformed keys, credentials and component overflow without accepting bytes', () => {
@@ -173,8 +173,8 @@ describe('Profile files', () => {
     const admitted = captureProfileTurn(store, 'turn:bounded', 'default', true);
     expect(admitted.entries.length).toBeGreaterThan(0);
     expect(admitted.entries.length).toBeLessThan(12);
-    const prompt = profilePromptForTurn(store, 'turn:bounded', true)!;
-    expect(estimateTextTokens(profileComponentText(prompt).join('\n\n'))).toBeLessThanOrEqual(2000);
+    const prompt = profileStateForTurn(store, 'turn:bounded', true)!;
+    expect(estimateTextTokens(profileContextText(prompt))).toBeLessThanOrEqual(2000);
   });
 
 

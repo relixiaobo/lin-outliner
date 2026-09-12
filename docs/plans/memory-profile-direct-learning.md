@@ -60,11 +60,61 @@ Global/per-Thread disable continues to govern automatic learning and learned con
 
 ### Context contract and precedence
 
-Capture accepted Profile revisions for each root Turn, including source hashes and selected entry IDs, and keep them fixed for that Turn's execution/retries. Later edits activate on the next eligible root Turn. Delegated/internal memory sessions receive no independent automatic user profile. Preserve the frozen model/tool/permission configuration and canonical earlier history.
+Capture accepted Profile revisions once for each root Turn; ordinary edits take
+effect at the next admission. Pass that admission's exact Turn ID and input to
+extension context evaluation rather than rediscovering an active Turn before it
+exists. Reuse the existing `additionalContext.threadState` owner: a complete
+state snapshot is persisted as canonical context evidence at each input boundary,
+and the projector emits only changed keyed entries or explicit revocations.
+This is the existing Skill update principle (baseline, changes, checkpoint),
+using the generic Thread-state mechanism rather than adding a Profile journal
+or another payload kind.
 
-Composition identifies each source explicitly. Host policy and current applicable user instructions remain governing. Explicit configuration developer instructions constrain the selected identity/style components; identity defines role, style defines defaults, and scoped user preferences refine those defaults when applicable. A learned preference cannot override explicit identity or capabilities. The provider-visible prompt and existing diagnostics retain the exact active text/revisions so prior context remains explainable.
+Identity, style, file-routing instructions and each selected user preference
+have stable keys and stable revocation scopes. A changed value explicitly
+supersedes its earlier value; removing a file, entry, source support, or automatic
+learning eligibility emits the existing named revocation. Preserve old canonical
+messages byte-for-byte. File revisions, hashes, raw source links and observation
+times remain Host inspection/provenance data and never enter model text. A new
+independent confirmation therefore changes source metadata without changing
+provider input. Unselected entries cannot perturb selected context through a
+whole-file digest.
 
-Start with the approved 2,000-token combined ceiling and 600-token learned-entry ceiling, using the existing token estimator. Reject over-budget authored components with an editing path; do not truncate them silently. Select complete learned entries in stable order within the remaining budget. Keep applicability text with every entry; an exception does not replace a global preference. Use ordinary Outline/history lookup for detail and do not fabricate a Memory Node citation for a profile preference.
+Keep system instructions and frozen developer configuration stable. Dynamic
+Profile instructions follow them in source-labelled context on the admitted user
+message. Host policy and current applicable user instructions govern; explicit
+configuration developer instructions constrain selected identity/style, identity
+may replace built-in persona defaults, and scoped preferences refine style.
+Learning changes no tools, model or permissions. Profile text never becomes
+independent reader evidence for later extraction.
+
+Use the existing complete additional-context checkpoint during compaction:
+restore only the state at the covered cursor, then apply the preserved tail.
+After context clear, provide a fresh baseline. Fork and replay consume canonical
+evidence; the next ordinary root admission reconciles inherited state with
+current accepted files. Missing context payloads use the existing degradation
+path, with a fresh complete state at the next evaluation. Unchanged state is
+omitted during projection, not guessed from a side cache.
+
+Start with the approved 2,000-token combined ceiling and 600-token learned-entry
+ceiling, counting the actual keyed context rendering with the existing estimator.
+Reject authored overflow with an editing path; select complete learned entries in
+stable order. Source/Reset invalidation can withdraw captured learned entries at subsequent
+input or provider boundaries, while ordinary edits wait for the next Turn. The
+existing request-preparation lifecycle appends a complete Thread-state snapshot
+only when its keyed state changes. Its latest-baseline lookup is shared with
+compaction; no per-provider replay flag or Profile-only update log is introduced.
+Rerun copies the original admission observation for later steering/withdrawal
+checks and replays canonical evidence rather than reading newer files. Removal
+withdraws current authority; it does not erase prior conversation history.
+
+Keep cache-affinity and provider breakpoint policy with their existing owner.
+Verify stable system text and unchanged earlier provider messages across Profile
+updates, metadata-only confirmations, removals and restarts. Compaction legitimately rebuilds the summarized prefix while preserving cache
+affinity; context clear starts a new epoch. Subsequent
+updates must preserve the new prefix. Do not claim a provider cache-hit gain from
+local fingerprints alone; real hit rates also depend on provider boundaries,
+retention and request settings.
 
 ### Inspection, editing and Reset
 
@@ -74,7 +124,7 @@ Extend the existing Memory Reset review with the exact learned-profile target/re
 
 ### Ownership and collision check
 
-Primary files: new private Profile file/entry/publication owner; `Phase1`, `MemoryControlStore`, `MemoryExtension`, the existing Memory Reset target/operations; `PiTurnExecutor` and stable prompt composition; ordinary file-tool publication hooks; Host composition; Settings Agent editor and localized strings; focused Core/renderer/Electron tests; current Memory/Agent/tool specs and configuration Skill documentation.
+Primary files: new private Profile file/entry/publication owner; `Phase1`, `MemoryControlStore`, `MemoryExtension`, the existing Memory Reset target/operations; `ExtensionRegistry`, `TurnLifecycle`, generic context projection/checkpoints, and stable prompt composition; ordinary file-tool publication hooks; Host composition; Settings Agent editor and localized strings; focused Core/renderer/Electron tests; current Memory/Agent/tool specs and configuration Skill documentation.
 
 No dependency, build, workflow, Core command protocol, task-board or changelog changes are planned. Existing schema/DTO owners may gain Profile-specific fields in their own modules. PR #682 overlaps `agentHost.ts` and `agentLocalTools.ts`: keep Profile additions to named composition/publication hooks, consume its final Task execution contracts unchanged, and resolve integration against the remote claim. Memory #685 is merged; startup and unified-record prerequisites are available. Main owns board integration and merge.
 

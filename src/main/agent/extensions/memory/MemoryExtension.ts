@@ -1,11 +1,12 @@
 import { profileFileDigest, type ProfileFileStore } from '../../profile/ProfileFileStore';
 import { isoLocalDate } from '../../../../core/localDate';
-import { captureProfileTurn, profilePromptForTurn } from '../../profile/ProfileContext';
+import { captureProfileTurn, captureReplayedProfileTurn, profileStateForTurn } from '../../profile/ProfileContext';
 import type { ProfileFileKind, ProfileEvidence, ProfileSourceView } from '../../../../core/agent/profileFiles';
 import { renderedMarkdownNodeReferenceIds } from '../../../../core/markdownNodeReferences';
 import type {
   AgentCoreExtension,
   ThreadHistoryRollbackContext,
+  ThreadContextInput,
   ThreadServiceExtensionHost,
   ToolLifecycleResult,
   TurnAdmissionContext,
@@ -433,20 +434,23 @@ export class MemoryExtension implements AgentCoreExtension {
       admittedAt: Date.now(),
     });
     if (this.options.profiles && !context.thread.ephemeral && context.thread.parentThreadId === null) {
-      try { captureProfileTurn(this.options.profiles, context.turnId, context.configuration.profileName ?? 'default', eligible); }
+      try {
+        if (context.replayedTurnId) captureReplayedProfileTurn(this.options.profiles, context.turnId, context.replayedTurnId);
+        else captureProfileTurn(this.options.profiles, context.turnId, context.configuration.profileName ?? 'default', eligible);
+      }
       catch (error) { this.options.onError?.(error, 'profile-context'); }
     }
     return { extensionId: this.id, snapshotId: `${status.featureModeGeneration}:${status.resetEpoch}:${status.memoryVisibilityGeneration}` };
   }
 
-  profileContext(thread: Thread, turnId: string) {
-    if (!this.options.profiles || thread.ephemeral || thread.parentThreadId !== null) return null;
+  private profileContext(thread: Thread, turnId: string) {
+    if (!this.options.profiles || thread.ephemeral || thread.parentThreadId !== null) return {};
     const admission = this.control.admission(turnId);
     const learned = Boolean(admission?.eligibleAtAdmission) && this.control.featureMode() === 'enabled'
       && admission?.featureModeGeneration === this.control.status().featureModeGeneration
       && admission?.resetEpoch === this.control.status().resetEpoch && !this.control.isTurnExcluded(turnId);
-    try { return profilePromptForTurn(this.options.profiles, turnId, learned); }
-    catch (error) { this.options.onError?.(error, 'profile-context'); return null; }
+    try { return profileStateForTurn(this.options.profiles, turnId, learned); }
+    catch (error) { this.options.onError?.(error, 'profile-context'); return {}; }
   }
 
   inspectProfileFiles(profileName = 'default') {
@@ -498,56 +502,29 @@ export class MemoryExtension implements AgentCoreExtension {
     return true;
   }
 
-  contributeThreadContext(thread: Thread) {
-    const activeTurn = this.currentTurn(thread.id);
-    if (!activeTurn) return null;
-    const admission = this.control.admission(activeTurn.id);
-    const explicitlyRequested = activeTurn.provenance.trigger.kind === 'user' && turnHasExplicitMemoryIntent(activeTurn);
-    if (!admission?.eligibleAtAdmission || this.control.isTurnExcluded(activeTurn.id)) {
-      this.turnMemoryUsage.delete(activeTurn.id);
-      return explicitlyRequested ? {
-        extensionId: this.id,
-        additionalContext: {
-          memory: {
-            kind: 'application' as const,
-            scope: 'Memory',
-            value: 'Memory is disabled for this Turn. Do not create, edit, tag, move, or delete Memory Nodes. Tell the user that Memory must be enabled before this request can be applied.',
-          },
-        },
-      } : null;
-    }
-    if (
-      this.control.featureMode() !== 'enabled'
+  contributeThreadContext(thread: Thread, input: ThreadContextInput) {
+    const additionalContext = this.profileContext(thread, input.turnId);
+    const admission = this.control.admission(input.turnId);
+    const unavailable = !admission?.eligibleAtAdmission || this.control.isTurnExcluded(input.turnId)
+      || this.control.featureMode() !== 'enabled'
       || admission.featureModeGeneration !== this.control.status().featureModeGeneration
-    ) {
-      this.turnMemoryUsage.delete(activeTurn.id);
-      return explicitlyRequested ? {
-        extensionId: this.id,
-        additionalContext: {
-          memory: {
-            kind: 'application' as const,
-            scope: 'Memory',
-            value: 'Memory became unavailable for this Turn. Do not mutate Memory Nodes. Tell the user to retry after Memory is enabled.',
-          },
-        },
-      } : null;
+      || admission.resetEpoch !== this.control.status().resetEpoch;
+    if (unavailable) {
+      this.turnMemoryUsage.delete(input.turnId);
+      const explicitlyRequested = input.content.some((part) => part.type === 'text' && EXPLICIT_MEMORY_INTENT.test(part.text));
+      return { extensionId: this.id, additionalContext: {
+        ...additionalContext,
+        ...(explicitlyRequested ? { memory: {
+          kind: 'application' as const, scope: 'Memory',
+          value: 'Automatic Memory is unavailable for this Turn. Do not mutate Memory Nodes or create learned profile entries. Explicitly authored configuration can still be edited through its owner.',
+        } } : {}),
+      } };
     }
-    if (!this.turnMemoryUsage.has(activeTurn.id)) {
-      this.turnMemoryUsage.set(activeTurn.id, {
-        nodeIds: new Set(),
-        threadId: thread.id,
-      });
-    }
-    return {
-      extensionId: this.id,
-      additionalContext: {
-        memory: {
-          kind: 'application' as const,
-          scope: 'Memory',
-          value: MEMORY_OPERATION_CONTEXT,
-        },
-      },
-    };
+    if (!this.turnMemoryUsage.has(input.turnId)) this.turnMemoryUsage.set(input.turnId, { nodeIds: new Set(), threadId: thread.id });
+    return { extensionId: this.id, additionalContext: {
+      ...additionalContext,
+      memory: { kind: 'application' as const, scope: 'Memory', value: MEMORY_OPERATION_CONTEXT },
+    } };
   }
 
   onToolCompleted(context: ToolLifecycleResult): void {
@@ -765,11 +742,6 @@ export class MemoryExtension implements AgentCoreExtension {
     };
   }
 
-  private currentTurn(threadId: ThreadId): Turn | null {
-    const turns = this.requireHost().readThread({ threadId, includeTurns: true }).thread.turns ?? [];
-    return [...turns].reverse().find((turn) => turn.status === 'inProgress') ?? null;
-  }
-
   private reconcileRollbackHooks(host: MemoryThreadHost): void {
     for (const rollback of this.control.activeRollbacks()) {
       if (rollback.status !== 'prepared') continue;
@@ -832,12 +804,6 @@ export class MemoryExtension implements AgentCoreExtension {
     if (!this.pipeline) throw new Error('Memory extension is not bound to ThreadService');
     return this.pipeline;
   }
-}
-
-function turnHasExplicitMemoryIntent(turn: Turn): boolean {
-  return turn.items.some((item) => item.type === 'userMessage' && item.content.some((part) => (
-    part.type === 'text' && EXPLICIT_MEMORY_INTENT.test(part.text)
-  )));
 }
 
 function isMemoryPublication(operation: Operation | undefined): boolean {

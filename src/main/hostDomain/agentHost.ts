@@ -336,7 +336,6 @@ async function composeAgentHost(options: AgentHostOptions, acquisition: Resource
   const turnExecutor = new PiTurnExecutor({
     ...options.createTurnExecutorOptions(composition),
     createTools: (context) => toolReference.get().createTools(context),
-    resolveProfileContext: (context) => memory.profileContext(context.thread, context.turn.id),
     resolveThreadRecord: (currentThreadId, threadId) => threadReference.get().resolveThreadRecord(currentThreadId, threadId),
     onContextReplaced: (context) => toolReference.get().invalidateFileContext(context),
     beforeProviderContext: (context) => toolReference.get().prepareProviderContext(context),

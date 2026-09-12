@@ -348,7 +348,7 @@ describe('Codex Memory contracts', () => {
 
   test('routes Memory lookup without injecting prose and counts only an inline citation of an exact get', () => {
     const { extension, store, targetThread, activeTurn, projection } = memoryUsageHarness();
-    const context = extension.contributeThreadContext(targetThread);
+    const context = extension.contributeThreadContext(targetThread, { turnId: activeTurn.id, content: [] });
     expect(context?.additionalContext?.memory?.value).toContain('use outline find');
     expect(context?.additionalContext?.memory?.value).toContain('outline --json get');
     expect(context?.additionalContext?.memory?.value).toContain('[[node://UUID]]');
@@ -365,7 +365,7 @@ describe('Codex Memory contracts', () => {
 
   test('ignores a default summary get for citation accounting', () => {
     const { extension, store, targetThread, activeTurn, projection } = memoryUsageHarness();
-    extension.contributeThreadContext(targetThread);
+    extension.contributeThreadContext(targetThread, { turnId: activeTurn.id, content: [] });
     completeOutlineGet(extension, targetThread, activeTurn, projection, [MEMORY_NODE_ID], {
       command: `outline get ${MEMORY_NODE_ID}`,
     });
@@ -379,7 +379,7 @@ describe('Codex Memory contracts', () => {
 
   test('does not count find results, ordinary Nodes, failed gets, or uncited Memory reads', () => {
     const { extension, store, targetThread, activeTurn, projection } = memoryUsageHarness();
-    extension.contributeThreadContext(targetThread);
+    extension.contributeThreadContext(targetThread, { turnId: activeTurn.id, content: [] });
     completeOutlineGet(extension, targetThread, activeTurn, projection, [MEMORY_NODE_ID], {
       command: `outline find ${MEMORY_NODE_ID}`,
     });
@@ -393,7 +393,7 @@ describe('Codex Memory contracts', () => {
 
   test('does not count literal Memory markers in code or existing Markdown links', () => {
     const { extension, store, targetThread, activeTurn, projection } = memoryUsageHarness();
-    extension.contributeThreadContext(targetThread);
+    extension.contributeThreadContext(targetThread, { turnId: activeTurn.id, content: [] });
     completeOutlineGet(extension, targetThread, activeTurn, projection, [MEMORY_NODE_ID]);
     const marker = formatNodeReferenceMarker(MEMORY_NODE_ID);
     const response = [
@@ -410,7 +410,7 @@ describe('Codex Memory contracts', () => {
     const projection = memoryProjection(10);
     const { extension, store, targetThread, activeTurn } = memoryUsageHarness(projection);
     const memoryNodeIds = canonicalMemoryGraph(projection).nodes.map((entry) => entry.node.id);
-    extension.contributeThreadContext(targetThread);
+    extension.contributeThreadContext(targetThread, { turnId: activeTurn.id, content: [] });
     completeOutlineGet(extension, targetThread, activeTurn, projection, memoryNodeIds);
     completeOutlineGet(extension, targetThread, activeTurn, projection, memoryNodeIds);
 
@@ -1090,11 +1090,11 @@ describe('Codex Memory contracts', () => {
       const extension = new MemoryExtension(store, timeline, { profiles });
       const next = userTurn('Write a research report.', undefined, { kind: 'user' }, 'turn:profile-next', 'item:profile-next');
       extension.contributeTurnAdmission(admissionContext(thread, next));
-      expect(extension.profileContext(thread, next.id)?.user).toContain('Lead with the conclusion.');
+      expect(extension.contributeThreadContext(thread, { turnId: next.id, content: [] }).additionalContext.profile_user_reports?.value).toContain('Lead with the conclusion.');
       const off = userTurn('Another report.', undefined, { kind: 'user' }, 'turn:profile-off', 'item:profile-off');
       store.setThreadMode(thread.id, 'disabled');
       extension.contributeTurnAdmission(admissionContext(thread, off));
-      expect(extension.profileContext(thread, off.id)?.user).toBeNull();
+      expect(extension.contributeThreadContext(thread, { turnId: off.id, content: [] }).additionalContext.profile_user_reports).toBeUndefined();
     } finally { profiles.close(); rmSync(directory, { recursive: true, force: true }); }
   });
 

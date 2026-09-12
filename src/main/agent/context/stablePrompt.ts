@@ -1,4 +1,3 @@
-import { profileComponentText, type ProfilePromptContext } from '../profile/ProfileContext';
 import { createHash } from 'node:crypto';
 import {
   DEFAULT_AGENT_PRESENTATIONS,
@@ -73,7 +72,6 @@ const L0_TEXT = [
 ].join('\n');
 
 export function composeStablePrompt(input: {
-  readonly profileContext?: ProfilePromptContext | null;
   readonly thread: Thread;
   readonly configuration: EffectiveThreadConfiguration;
   /** Provider-visible runtime tool names. Defaults to configuration for direct composition callers. */
@@ -93,7 +91,7 @@ export function composeStablePrompt(input: {
     { id: 'framework-firmware', layer: 'L0', text: L0_TEXT },
     ...capabilityBlocks(input.thread, availableToolNames),
     ...recordsBlocks(input.thread, availableToolNames, input.recordIndexPath ?? null, input.currentRecordPath ?? null),
-    identityBlock(input.thread, input.configuration, input.persona?.trim() || null, input.profileContext),
+    identityBlock(input.thread, input.configuration, input.persona?.trim() || null),
   ];
   const withFingerprints = blocks.map((block) => ({ ...block, fingerprint: fingerprint(block.text) }));
   const layerText = (layer: StablePromptLayer) => withFingerprints
@@ -211,7 +209,6 @@ function identityBlock(
   thread: Thread,
   configuration: EffectiveThreadConfiguration,
   persona: string | null,
-  profile?: ProfilePromptContext | null,
 ): Omit<StablePromptBlock, 'fingerprint'> {
   const instructions = configuration.developerInstructions.map((instruction) => instruction.trim()).filter(Boolean);
   if (thread.threadSource === 'memory_consolidation') {
@@ -246,8 +243,7 @@ function identityBlock(
     id: 'agent-identity',
     layer: 'L2',
     text: [
-      profile?.identity ? `You are ${persona ?? DEFAULT_AGENT_PERSONA_NAME}.` : agentPersonaPrompt(persona ?? DEFAULT_AGENT_PERSONA_NAME),
-      ...(profile ? profileComponentText(profile) : []),
+      agentPersonaPrompt(persona ?? DEFAULT_AGENT_PERSONA_NAME),
       instructions.length > 0 ? '# Profile developer instructions' : null,
       ...instructions,
     ].filter((line): line is string => line !== null).join('\n\n'),

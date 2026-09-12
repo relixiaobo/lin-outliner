@@ -80,7 +80,10 @@ defines default style. `USER.md` holds global current personal preferences and
 background across Profiles and Projects. File content cannot grant permissions,
 change a model or rename the visible Agent. Developer instructions and current
 applicable user instructions constrain these components. Accepted edits apply on
-the next root Turn; the current Turn retains its accepted snapshot.
+the next root Turn. They arrive as named context updates that supersede prior
+values; removals revoke their named scope. The system prompt and prior messages
+remain unchanged. The current Turn retains its accepted file observation, while
+invalidated learned entries may be withdrawn before a later model request.
 
 For an explicit request to remember, correct or forget a stable personal
 preference, edit `USER.md` directly with ordinary file tools. Do not create an

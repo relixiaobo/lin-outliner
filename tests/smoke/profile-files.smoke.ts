@@ -51,7 +51,7 @@ test('Profile files share native settings, source revisions and conflict-preserv
   } finally { await closeSmokeApp(smoke); await rm(userDataDir, { recursive: true, force: true }); }
 });
 
-test('root Turns activate Profile revisions without changing frozen tools or model', async () => {
+test('Profile updates preserve system text and prior provider messages while appending current state', async () => {
   test.setTimeout(90_000);
   const userDataDir = await mkdtemp('/tmp/tenon-profile-context-');
   await mkdir(join(userDataDir, 'config'));
@@ -96,7 +96,9 @@ test('root Turns activate Profile revisions without changing frozen tools or mod
     }), thread.id);
     await start();
     await expect.poll(() => requests.length).toBe(1);
-    expect(JSON.stringify(requests[0].messages.find((message: any) => message.role === 'system' || message.role === 'developer'))).toContain('CONCLUSION_FIRST_PROFILE');
+    const firstSystem = requests[0].messages.find((message: any) => message.role === 'system' || message.role === 'developer');
+    expect(JSON.stringify(firstSystem)).not.toContain('CONCLUSION_FIRST_PROFILE');
+    expect(JSON.stringify(requests[0].messages.filter((message: any) => message.role === 'user'))).toContain('CONCLUSION_FIRST_PROFILE');
     await writeFile(userPath, '# User\n\n## reports\nScope: Reports\nEVIDENCE_FIRST_PROFILE\n');
     await writeFile(join(userDataDir, 'agent/config.json'), '{"profiles":{"default":{"tools":[]}}}');
     finishFirst!();
@@ -104,12 +106,21 @@ test('root Turns activate Profile revisions without changing frozen tools or mod
     await expect.poll(async () => (await page.evaluate((threadId) => window.lin!.agentCoreRequest('thread/read', { threadId }), thread.id)).thread.status.type).toBe('idle');
     await start();
     await expect.poll(() => requests.length).toBe(2);
-    const currentSystem = JSON.stringify(requests[1].messages.find((message: any) => message.role === 'system' || message.role === 'developer'));
-    expect(currentSystem).toContain('EVIDENCE_FIRST_PROFILE');
-    expect(currentSystem).not.toContain('CONCLUSION_FIRST_PROFILE');
+    const currentSystem = requests[1].messages.find((message: any) => message.role === 'system' || message.role === 'developer');
+    expect(currentSystem).toEqual(firstSystem);
+    expect(requests[1].messages.slice(0, requests[0].messages.length)).toEqual(requests[0].messages);
+    const update = JSON.stringify(requests[1].messages.slice(requests[0].messages.length));
+    expect(update).toContain('EVIDENCE_FIRST_PROFILE');
+    expect(update).not.toContain('CONCLUSION_FIRST_PROFILE');
+    expect(update).toContain('replaces its earlier value');
     expect(requests[1].tools).toEqual(requests[0].tools);
     expect(requests[1].model).toBe(requests[0].model);
-    expect(JSON.stringify(requests[0].messages.find((message: any) => message.role === 'system' || message.role === 'developer'))).toContain('CONCLUSION_FIRST_PROFILE');
+    await expect.poll(async () => (await page.evaluate((threadId) => window.lin!.agentCoreRequest('thread/read', { threadId }), thread.id)).thread.status.type).toBe('idle');
+    await start();
+    await expect.poll(() => requests.length).toBe(3);
+    expect(requests[2].messages.slice(0, requests[1].messages.length)).toEqual(requests[1].messages);
+    expect(JSON.stringify(requests[2].messages.slice(requests[1].messages.length))).not.toContain('EVIDENCE_FIRST_PROFILE');
+    expect(requests[2].tools).toEqual(requests[0].tools);
     await expect.poll(async () => (await page.evaluate((threadId) => window.lin!.agentCoreRequest('thread/read', { threadId }), thread.id)).thread.status.type).toBe('idle');
   } finally {
     finishFirst?.();

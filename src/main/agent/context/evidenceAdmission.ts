@@ -168,7 +168,7 @@ function turnEnvironment(input: {
   };
 }
 
-function additionalContextPayload(
+export function additionalContextPayload(
   direct: AdditionalContext | undefined,
   extensions: readonly AdmittedThreadContextContribution[],
   includeThreadState: boolean,

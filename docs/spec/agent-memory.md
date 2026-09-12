@@ -394,23 +394,52 @@ retain their own authority. Global and per-Thread Memory rules control automatic
 learning and learned context; authored identity/style and personal context remain
 configuration. No disabled-period backfill is introduced.
 
-A root Turn fixes accepted file revisions and selected entry IDs for its
-execution/retries; a later edit is activated at the next root Turn. Delegated
-and internal Memory sessions receive no independent automatic Profile. The
-existing stable-prompt diagnostics preserve exact active text and revision/source
-labels. Host policy and current applicable user instructions govern;
-configuration developer instructions constrain identity/style components, and
-scoped user preferences refine style defaults without changing identity or
-capabilities. The Thread's model/tool/permission snapshot remains unchanged.
+A root Turn fixes accepted file observations for its execution/retries; ordinary
+edits activate at the next root Turn. `MemoryExtension` receives the exact admitted
+Turn ID and input, including when that Turn is not yet in visible history. It
+contributes Profile identity, style, routing rules and individual user preferences
+as stable keyed `additionalContext.threadState` entries. Full snapshots are
+canonical context evidence; the shared projector emits only added/changed text or
+named revocations. Each replacement explicitly supersedes its earlier value.
+Metadata-only source confirmation and edits to unselected entries do not change
+provider-visible context. Revisions, hashes, raw source links and times remain in
+Host inspection/provenance rather than model text.
 
-The combined automatic Profile ceiling is 2,000 estimated tokens, including
-source/routing text, with at most 600 tokens of complete learned entries. The
-existing token estimator owns counting. Authored overflow produces an activation
-error and omits those components instead of truncating them; learned entries use
-stable order within the remaining budget. Optional file or context inspection
-failure does not stop ordinary conversation. Detailed Node/history knowledge
-continues to use existing tools; a Profile preference needs no fabricated Node
-citation.
+Profile contents no longer modify the system prompt. L0/L1/L2 and frozen developer
+configuration retain their existing owner; dynamic Profile context follows prior
+history on the current input. Host-labelled Profile identity can override built-in
+persona defaults, while explicit developer configuration and applicable current
+user instructions govern. Scoped preferences refine style without changing model,
+tools or permissions. Earlier messages remain byte-for-byte intact, preserving
+eligible shared provider prefixes. Existing cache affinity/breakpoints remain with
+the cache owner; these structural checks do not measure actual provider hit rates.
+
+Compaction reuses the latest complete additional-context checkpoint at the covered
+cursor and then applies the preserved tail. Context clear starts a new baseline;
+compaction rebuilds the summarized prefix without changing cache affinity. Forks
+inherit exact canonical evidence and reconcile current Profile state on their next
+ordinary root admission. Rerun preserves its original file observation and input
+evidence. Before each provider context is projected, the existing request-preparation
+lifecycle publishes changed extension state once; this includes source invalidation,
+Reset or learned-context disablement during a Turn or before rerun. Profile file
+edits remain fixed to admission, so this refresh withdraws invalid captured entries
+without adding a newer preference mid-Turn. Removal ends current applicability; it
+does not erase prior conversation history.
+
+`AdditionalContextState` shares latest-baseline lookup and state equality between
+runtime publication, projection and compaction. Unchanged runtime state creates no
+new evidence Item. Missing checkpoint payloads use the existing degradation path;
+the next complete evaluation supplies a fresh baseline. Profile changes have no
+independent context payload kind, renderer reminder or cache journal. Delegated
+and internal Memory sessions receive no independent automatic Profile.
+
+The combined Profile ceiling is 2,000 estimated tokens, with at most 600 tokens of
+complete learned entries. Admission counts the same escaped context envelope used
+by canonical projection. Authored overflow produces an activation error and omits
+those components instead of truncating them; learned entries use stable order
+within the remaining budget. Optional file/context failure does not stop ordinary
+conversation. Detailed Node/history knowledge continues to use existing tools; a
+Profile preference needs no fabricated Node citation.
 
 Settings > Agents exposes the same three editable files, expected-digest saves,
 conflict-preserving drafts and exact source previews (bounded to 16,000
