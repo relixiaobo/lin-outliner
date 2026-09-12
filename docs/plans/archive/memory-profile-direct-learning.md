@@ -2,7 +2,7 @@
 
 ## Goal
 
-Deliver the remaining Profile unit of [Global Memory and Agent Profile Files](archive/memory-agent-profile.md): current personal context has one editable authority in `USER.md`, explicit identity/style have their own files, and accepted applicable context reaches the next root Turn. Meaningful dated events continue through Node Memory.
+Deliver the remaining Profile unit of [Global Memory and Agent Profile Files](memory-agent-profile.md): current personal context has one editable authority in `USER.md`, explicit identity/style have their own files, and accepted applicable context reaches the next root Turn. Meaningful dated events continue through Node Memory.
 
 ## Non-goals
 

@@ -386,6 +386,17 @@ Raw file success alone is not an accepted update. Public
 `agent/profile-status.json` reports observed/saved/accepted state and the latest
 root Turn that selected the revision, including activation errors.
 
+Profile recovery state has an explicit retention boundary. `profile_turns` keeps
+only snapshots whose canonical Turns remain retained and replayable; startup
+reconciliation prunes snapshots for deleted history, and Thread deletion removes
+the deleted Thread's snapshots immediately. Accepted publication rows compact
+their full before/after document bodies to receipt metadata after settlement and
+are bounded to the recent 512 receipts and a 90-day window. Prepared or
+conflicted publications retain the payload required for recovery until they
+settle or are cancelled. This cleanup affects private recovery metadata only;
+accepted Profile files, source metadata, tombstone semantics, canonical Thread
+history and context evidence keep their existing ownership and retention rules.
+
 Original-source unavailability does not invalidate an accepted preference.
 Rollback suppresses affected learned entries at preparation, removes unsupported
 entries only after committed invalidation, and preserves independent reader
