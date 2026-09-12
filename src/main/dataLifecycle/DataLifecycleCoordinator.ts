@@ -24,7 +24,7 @@ export interface DataLifecycleOptions {
   readonly userData: string;
   readonly applicationVersion: string;
   readonly barrier: LifecycleWriterBarrier;
-  readonly registry?: DataStoreRegistry;
+  readonly registry: DataStoreRegistry;
   readonly checkpoint?: DataLifecycleCheckpoint;
   readonly changed?: (state: DataLifecycleState) => void;
   readonly prepareRestoredExecution?: (generation: string) => Promise<void>;
@@ -53,7 +53,7 @@ export class DataLifecycleCoordinator {
   private outlineInspection: OutlineDataInspection | null = null;
 
   constructor(private readonly options: DataLifecycleOptions) {
-    this.registry = options.registry ?? new DataStoreRegistry();
+    this.registry = options.registry;
     this.historyRepair = new ThreadProjectionRebuilder(options.userData, this.registry);
     this.journal = new DataOperationJournal(options.userData, (name) => this.checkpoint(name));
     this.backups = new DataBackupStore(options.userData, this.registry, {

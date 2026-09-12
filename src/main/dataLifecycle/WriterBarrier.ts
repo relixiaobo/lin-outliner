@@ -2,13 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { OutlineClientSupervisor, type OutlineRuntimeLaunch } from '../../outline/client';
+import type { OutlineRuntimeLaunch } from '../../outline/client';
 import { decodeOutlineDataInspection, type OutlineDataInspection } from '../../outline/contract/dataInspection';
 import { OutlineRuntimeLock, resolveOutlineRuntimePaths } from '../../outline/runtimeLock';
 import { assertOwnedPath, syncDirectory, writeDurableJson, type DataLifecycleCheckpoint } from './durableFiles';
 
 export interface WriterBarrierOptions {
   readonly launch: OutlineRuntimeLaunch;
+  readonly runtime: { quiesce(): Promise<void>; initialize(token: string): Promise<void> };
   readonly assertNoLiveProducers: () => Promise<void>;
   readonly checkpoint?: DataLifecycleCheckpoint;
 }
@@ -16,16 +17,14 @@ export interface WriterBarrierOptions {
 export class DataWriterBarrier {
   private lock: OutlineRuntimeLock | null = null;
   private readonly paths;
-  private readonly supervisor: OutlineClientSupervisor;
   constructor(private readonly userData: string, private readonly options: WriterBarrierOptions) {
     this.paths = resolveOutlineRuntimePaths(join(userData, 'outline-runtime'));
-    this.supervisor = new OutlineClientSupervisor({ root: this.paths.root, contentRoot: join(userData, 'content'), noStart: true });
   }
 
   async acquire(): Promise<void> {
     if (this.lock) throw new Error('Data maintenance already owns the writer barrier');
     await this.options.assertNoLiveProducers();
-    await this.supervisor.quiesceForMaintenance();
+    await this.options.runtime.quiesce();
     await this.acquireRuntimeLock();
     try {
       // A producer discovered after the first observation invalidates acquisition.
@@ -57,17 +56,9 @@ export class DataWriterBarrier {
     const permitPath = await assertOwnedPath(this.userData, 'data-lifecycle/runtime-permit.json');
     await writeDurableJson(permitPath, { version: 1, operationId, pid: process.pid, token }, this.options.checkpoint);
     await this.release();
-    const bootstrap = new OutlineClientSupervisor({ root: this.paths.root, contentRoot: join(this.userData, 'content'),
-      launch: { ...this.options.launch, env: { ...this.options.launch.env, TENON_DATA_LIFECYCLE_TOKEN: token } },
-      origin: 'desktop' });
     try {
-      const client = await bootstrap.connect();
-      client.close();
-      await bootstrap.shutdown();
+      await this.options.runtime.initialize(token);
       await this.acquireRuntimeLock();
-    } catch (error) {
-      await bootstrap.shutdown().catch(() => undefined);
-      throw error;
     } finally {
       await rm(permitPath, { force: true });
       await syncDirectory(join(this.userData, 'data-lifecycle'));

@@ -127,6 +127,10 @@ const requiredDomainConstructions = new Map<string, string>([
   ['OutlineDocumentService', 'outline-desktop-host'],
   ['OutlineDesktopAssetService', 'outline-desktop-host'],
   ['NodeAccessStore', 'outline-desktop-host'],
+  ['DataStoreRegistry', 'data-lifecycle'],
+  ['RestoredExecutionFence', 'data-lifecycle'],
+  ['DataWriterBarrier', 'data-lifecycle'],
+  ['DataLifecycleCoordinator', 'data-lifecycle'],
 ]);
 const domainConstructions = collectDomainConstructions(
   currentInventory,
@@ -355,6 +359,7 @@ function ownerDeclaredByFunction(node: ts.Node): string | null {
   const owners: Readonly<Record<string, string>> = {
     configureSessionSecurity: 'default-session-security',
     registerOutlineTransport: 'outline',
+    registerStartupTransport: 'startup',
     registerUpdateTransport: 'updates',
     registerActionTransport: 'actions',
     registerAgentTransport: 'agent-memory-automation',
@@ -480,7 +485,11 @@ function currentPlatformOwner(effect: Pick<Effect, 'path'>): string | null {
   return null;
 }
 
-function currentDomainOwner(effect: Pick<Effect, 'path'>): string | null {
+function currentDomainOwner(effect: Pick<Effect, 'path'> & { readonly expression?: string }): string | null {
+  // Maintenance has one composition owner; its ordinary Runtime supervisor
+  // remains inside OutlineDesktopHost rather than creating a competing Host.
+  if (effect.path === 'src/main/desktopHost.ts' && ['DataStoreRegistry', 'RestoredExecutionFence', 'DataWriterBarrier', 'DataLifecycleCoordinator'].includes(effect.expression ?? '')) return 'data-lifecycle';
+  if (effect.path.startsWith('src/main/dataLifecycle/')) return 'data-lifecycle';
   if (effect.path === 'src/main/hostDomain/agentHost.ts'
     || effect.path === 'src/main/hostDomain/managedSkillsHost.ts') return 'agent-host';
   if (effect.path === 'src/main/hostDomain/outlineDesktopHost.ts') return 'outline-desktop-host';

@@ -296,6 +296,10 @@ const backgroundEffects = resources.child('background-effects');
 const dataRegistry = new DataStoreRegistry();
 const restoredExecution = new RestoredExecutionFence(resolvedUserDataDir, dataRegistry);
 const dataBarrier: DataWriterBarrier = new DataWriterBarrier(resolvedUserDataDir, {
+  runtime: {
+    quiesce: () => outlineHost.maintenance.quiesce(),
+    initialize: (token) => outlineHost.maintenance.initialize(token),
+  },
   launch: desktopOutlineRuntimeLaunch({
     userDataDir: resolvedUserDataDir, moduleDir: environment.moduleDir, isPackaged: app.isPackaged,
     resourcesPath: process.resourcesPath, execPath: process.execPath, reportError,

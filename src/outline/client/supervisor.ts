@@ -40,7 +40,7 @@ export class OutlineClientSupervisor {
     }
   }
 
-  async connect(signal?: AbortSignal): Promise<OutlineClient> {
+  async connect(signal?: AbortSignal, dataLifecycleToken?: string): Promise<OutlineClient> {
     outlineCapabilityContractDigest();
     const timeoutMs = Math.max(1, this.options.startupTimeoutMs ?? OUTLINE_DEFAULT_STARTUP_TIMEOUT_MS);
     const deadline = Date.now() + timeoutMs;
@@ -55,7 +55,7 @@ export class OutlineClientSupervisor {
     }
     if (existing) return existing;
     if (this.options.noStart) throw runtimeUnavailable('Outline Runtime is not running and automatic start is disabled.');
-    const launch = this.launchRuntime();
+    const launch = this.launchRuntime(dataLifecycleToken);
     try {
       let lastError: unknown;
       while (Date.now() < deadline) {
@@ -330,7 +330,7 @@ export class OutlineClientSupervisor {
       && await descriptorHasMatchingRuntimeOwner(this.options.root, descriptor);
   }
 
-  private launchRuntime(): { failure(): Error | null; close(): void } {
+  private launchRuntime(dataLifecycleToken?: string): { failure(): Error | null; close(): void } {
     if (!this.options.contentRoot) {
       throw runtimeUnavailable('Automatic Runtime start requires an explicit ContentStore root.');
     }
@@ -346,6 +346,7 @@ export class OutlineClientSupervisor {
         ...launch.env,
         TENON_OUTLINE_STARTUP_REPORT_FD: fileObservation ? '' : '3',
         TENON_OUTLINE_STARTUP_REPORT_PATH: fileObservation?.path ?? '',
+        TENON_DATA_LIFECYCLE_TOKEN: dataLifecycleToken ?? '',
         ...(this.options.expectedDevelopmentSessionId ? {
           TENON_OUTLINE_RUNTIME_DEVELOPMENT_SESSION_ID: this.options.expectedDevelopmentSessionId,
         } : {}),

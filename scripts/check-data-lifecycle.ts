@@ -13,6 +13,7 @@ import { openLifecycleDatabase } from '../src/main/dataLifecycle/sqlite';
 import { ThreadMetadataStore } from '../src/main/agent/persistence/ThreadMetadataStore';
 import { ThreadHistoryProjectionStore } from '../src/main/agent/persistence/ThreadHistoryProjectionStore';
 import { AgentResourceStore } from '../src/main/agent/persistence/AgentResourceStore';
+import { OutlineClientSupervisor } from '../src/outline/client';
 
 const repo = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const packageInfo = JSON.parse(await readFile(join(repo, 'package.json'), 'utf8')) as { version: string; dependencies: Record<string, string> };
@@ -45,8 +46,11 @@ await cp(source, working, { recursive: true, dereference: false, errorOnExist: t
 function create() {
   const registry = new DataStoreRegistry();
   const fence = new RestoredExecutionFence(working, registry);
+  const launch = { command: process.execPath, args: [join(repo, 'src/outline/runtime/server/entry.ts'), '--root', join(working, 'outline-runtime'), '--content-root', join(working, 'content')] };
+  const supervisor = new OutlineClientSupervisor({ root: join(working, 'outline-runtime'), contentRoot: join(working, 'content'), launch, origin: 'desktop' });
   const barrier = new DataWriterBarrier(working, {
-    launch: { command: process.execPath, args: [join(repo, 'src/outline/runtime/server/entry.ts'), '--root', join(working, 'outline-runtime'), '--content-root', join(working, 'content')] },
+    launch,
+    runtime: { quiesce: () => supervisor.quiesceForMaintenance(), initialize: async (token) => { (await supervisor.connect(undefined, token)).close(); await supervisor.shutdown(); } },
     assertNoLiveProducers: () => fence.assertNoLiveProducers(),
   });
   return new DataLifecycleCoordinator({ userData: working, applicationVersion: packageInfo.version, registry, barrier,

@@ -17,8 +17,11 @@ async function root() { const value = await mkdtemp(join(tmpdir(), 'tenon-data-c
 function create(userData: string, checkpoint?: (name: string) => void | Promise<void>) {
   const registry = new DataStoreRegistry();
   const execution = new RestoredExecutionFence(userData, registry);
+  const launch = { command: process.execPath, args: [resolve('src/outline/runtime/server/entry.ts'), '--root', join(userData, 'outline-runtime'), '--content-root', join(userData, 'content')] };
+  const supervisor = new OutlineClientSupervisor({ root: join(userData, 'outline-runtime'), contentRoot: join(userData, 'content'), launch, origin: 'desktop' });
   const barrier = new DataWriterBarrier(userData, {
-    launch: { command: process.execPath, args: [resolve('src/outline/runtime/server/entry.ts'), '--root', join(userData, 'outline-runtime'), '--content-root', join(userData, 'content')] },
+    launch,
+    runtime: { quiesce: () => supervisor.quiesceForMaintenance(), initialize: async (token) => { (await supervisor.connect(undefined, token)).close(); await supervisor.shutdown(); } },
     assertNoLiveProducers: () => execution.assertNoLiveProducers(),
   });
   const coordinator = new DataLifecycleCoordinator({ userData, registry, barrier, applicationVersion: '0.8.0',
