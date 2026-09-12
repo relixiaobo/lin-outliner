@@ -1,4 +1,4 @@
-import { contentStoreSchema } from './ContentStore.schema';
+import { CONTENT_SCHEMA_VERSION, contentStoreSchema } from './ContentStore.schema';
 import { createHash } from 'node:crypto';
 import { constants, createReadStream, type Stats } from 'node:fs';
 import {
@@ -29,7 +29,6 @@ import {
   type ExactRevisionReference,
 } from './types';
 
-const CONTENT_SCHEMA_VERSION = 2;
 const DEFAULT_ADMISSION_LEASE_MS = 24 * 60 * 60 * 1_000;
 const DEFAULT_MAXIMUM_BYTES = 2 * 1024 * 1024 * 1024;
 const DEFAULT_PUBLICATION_STALE_MS = 30_000;
@@ -530,7 +529,7 @@ export class ContentStore {
               .get<{ value: string }>()
           : undefined;
         if (!version || version.value !== String(CONTENT_SCHEMA_VERSION)) {
-          throw new Error('Unsupported or legacy ContentStore format; reset userData manually before startup.');
+          throw new Error('Unsupported ContentStore format. Use data recovery or a compatible application to inspect the retained data.');
         }
       }
       this.database.exec(contentStoreSchema);

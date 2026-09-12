@@ -420,6 +420,11 @@ export class WorkspaceTransactionLog {
     });
   }
 
+  /** Completes a journal-proven initialization, without running retention or GC. */
+  async completeInitialization(): Promise<void> {
+    return this.enqueueWrite(async () => this.prepareLogForAppend(await this.requireWritableState()));
+  }
+
   async health(measureExactRevisionBytes?: ExactRevisionByteMeasurer): Promise<WorkspaceTransactionLogHealth> {
     return this.enqueueWrite(async () => this.publicHealth(await this.ensureState(), measureExactRevisionBytes));
   }

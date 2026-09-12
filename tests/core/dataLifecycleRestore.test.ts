@@ -3,11 +3,14 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { DataStoreRegistry } from '../../src/main/dataLifecycle/storeRegistry';
 import { DataBackupStore } from '../../src/main/dataLifecycle/BackupStore';
 import { DataOperationJournal, type DataOperation } from '../../src/main/dataLifecycle/OperationJournal';
 import { DataRestoreSession } from '../../src/main/dataLifecycle/RestoreSession';
 import { openLifecycleDatabase } from '../../src/main/dataLifecycle/sqlite';
+import { OutlineRuntimeLock, resolveOutlineRuntimePaths } from '../../src/outline/runtimeLock';
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
@@ -22,13 +25,31 @@ async function fixture() {
   const source = await backups.create('0.8.0');
   await writeFile(join(root, 'agent/user/USER.md'), '# Later\n');
   const operation: DataOperation = { version: 1, id: randomUUID(), kind: 'restore', phase: 'preparing',
-    createdAt: Date.now(), backupId: randomUUID(), sourceBackupId: source.id, completedRoots: [], generation: randomUUID() };
+    createdAt: Date.now(), backupId: randomUUID(), sourceBackupId: source.id, completedRoots: [], generation: randomUUID(),
+    targetDigest: registry.contractDigest(), applicationVersion: '0.8.0' };
   const journal = new DataOperationJournal(root);
   await journal.write(operation);
   return { root, registry, backups, operation, journal };
 }
 
 describe('journaled dataset restoration', () => {
+  test('recovers a real process kill after installation without releasing an unverified writer', async () => {
+    const { root, backups, journal, operation } = await fixture();
+    const failure = await new Promise<NodeJS.ErrnoException & { signal?: string }>((resolve, reject) => {
+      execFile(process.execPath, [fileURLToPath(new URL('../fixtures/dataLifecycleCrash.ts', import.meta.url)), root, 'installed-root:agent'],
+        { timeout: 15_000 }, (error) => error ? resolve(error) : reject(new Error('Crash fixture unexpectedly completed')));
+    });
+    expect(failure.signal).toBe('SIGKILL');
+    const lock = await OutlineRuntimeLock.acquire(resolveOutlineRuntimePaths(join(root, 'outline-runtime')), {
+      pid: process.pid, instanceId: 'restore-after-kill', createdAt: new Date().toISOString(),
+    });
+    expect(lock).not.toBeNull();
+    try {
+      await new DataRestoreSession(root, backups, journal).run((await journal.read())!, '0.8.0');
+      expect(await readFile(join(root, 'agent/user/USER.md'), 'utf8')).toBe('# Original\n');
+      expect(await readFile(join(backups.path(operation.backupId), 'files/agent/user/USER.md'), 'utf8')).toBe('# Later\n');
+    } finally { await lock?.release(); }
+  }, 20_000);
   for (const boundary of ['restore-execution-fenced', 'operation:installing', 'retained-root:agent', 'installed-root:agent', 'restore-data-verified']) {
     test(`resumes after ${boundary} while retaining the original data and execution fence`, async () => {
       const { root, registry, backups, operation } = await fixture();

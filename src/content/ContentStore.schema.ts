@@ -1,4 +1,5 @@
 /** Shared by the Store constructor and read-only compatibility inspection. */
+export const CONTENT_SCHEMA_VERSION = 2;
 export const contentStoreSchema = `
       CREATE TABLE IF NOT EXISTS content_meta(
         key TEXT PRIMARY KEY,

@@ -145,6 +145,8 @@ export interface MemoryStage2Finalization {
 }
 
 export class MemoryControlStore {
+  private restoredJobIds = '[]';
+  setRestoredJobIds(ids: readonly string[]): void { this.restoredJobIds = JSON.stringify(ids); }
   private readonly listeners = new Set<() => void>();
   private changeQueued = false;
   private generatedNodesCache: readonly MemoryGeneratedNodeRecord[] | null = null;
@@ -799,13 +801,15 @@ export class MemoryControlStore {
   nextJob(now = Date.now(), resetOnly = false): MemoryDirtyJob | null {
     const row = this.db.prepare(`
       SELECT key, kind, payload_json, attempt, available_at
-      FROM dirty_jobs WHERE available_at <= ? AND (? = 0 OR kind = 'reset') ORDER BY available_at, updated_at, key LIMIT 1
-    `).get(now, resetOnly ? 1 : 0) as JobRow | undefined;
+      FROM dirty_jobs WHERE available_at <= ? AND (? = 0 OR kind = 'reset')
+        AND (key || ':' || updated_at) NOT IN (SELECT value FROM json_each(?))
+      ORDER BY available_at, updated_at, key LIMIT 1
+    `).get(now, resetOnly ? 1 : 0, this.restoredJobIds) as JobRow | undefined;
     return row ? decodeMemoryJob(row) : null;
   }
 
   nextJobAvailableAt(resetOnly = false): number | null {
-    const row = this.db.prepare("SELECT MIN(available_at) AS available_at FROM dirty_jobs WHERE ? = 0 OR kind = 'reset'").get(resetOnly ? 1 : 0) as {
+    const row = this.db.prepare("SELECT MIN(available_at) AS available_at FROM dirty_jobs WHERE (? = 0 OR kind = 'reset') AND (key || ':' || updated_at) NOT IN (SELECT value FROM json_each(?))").get(resetOnly ? 1 : 0, this.restoredJobIds) as {
       available_at: number | null;
     };
     return row.available_at;

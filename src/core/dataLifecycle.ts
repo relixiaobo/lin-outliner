@@ -23,6 +23,7 @@ export interface DataBackupSummary {
   readonly fileCount: number;
   readonly verified: boolean;
   readonly pinned: boolean;
+  readonly purpose: 'backup' | 'retention';
 }
 
 /** Opaque IDs authorize owner lookup. Filesystem paths never enter this protocol. */
@@ -35,10 +36,18 @@ export interface DataLifecycleState {
   readonly backups: readonly DataBackupSummary[];
   readonly restoredGeneration: string | null;
   readonly automaticExecutionPaused: boolean;
+  readonly canCancelOperation: boolean;
 }
 
 export type DataLifecycleRequest =
-  | { readonly action: 'inspect' | 'backup' | 'retry' | 'export-diagnostics' }
+  | { readonly action: 'status' }
+  | { readonly action: 'inspect' }
+  | { readonly action: 'backup' }
+  | { readonly action: 'retry' }
+  | { readonly action: 'export-diagnostics' }
+  | { readonly action: 'reveal'; readonly backupId: string }
+  | { readonly action: 'cancel'; readonly operationId: string; readonly revision: number }
+  | { readonly action: 'repair-history'; readonly revision: number }
   | { readonly action: 'restore'; readonly backupId: string; readonly revision: number }
   | { readonly action: 'resume-execution'; readonly generation: string; readonly revision: number };
 
@@ -52,12 +61,15 @@ export function decodeDataLifecycleRequest(value: unknown): DataLifecycleRequest
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid data recovery request');
   const record = value as Record<string, unknown>;
   const keys = record.action === 'restore' ? ['action', 'backupId', 'revision']
+    : record.action === 'reveal' ? ['action', 'backupId']
+      : record.action === 'cancel' ? ['action', 'operationId', 'revision']
+        : record.action === 'repair-history' ? ['action', 'revision']
     : record.action === 'resume-execution' ? ['action', 'generation', 'revision']
-      : ['inspect', 'backup', 'retry', 'export-diagnostics'].includes(String(record.action)) ? ['action'] : null;
+      : ['status', 'inspect', 'backup', 'retry', 'export-diagnostics'].includes(String(record.action)) ? ['action'] : null;
   if (!keys || Object.keys(record).length !== keys.length || Object.keys(record).some((key) => !keys.includes(key))) {
     throw new Error('Invalid data recovery action');
   }
-  for (const key of ['backupId', 'generation']) {
+  for (const key of ['backupId', 'generation', 'operationId']) {
     if (key in record && (typeof record[key] !== 'string' || !DATA_OPERATION_ID.test(record[key]))) {
       throw new Error('Invalid data recovery identity');
     }
@@ -72,5 +84,5 @@ export const DATA_OPERATION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[47][0-9a-f]{3}-[89ab
 
 export function initialDataLifecycleState(): DataLifecycleState {
   return { revision: 0, phase: 'inspecting', operationId: null, progress: null,
-    issues: [], backups: [], restoredGeneration: null, automaticExecutionPaused: false };
+    issues: [], backups: [], restoredGeneration: null, automaticExecutionPaused: false, canCancelOperation: false };
 }

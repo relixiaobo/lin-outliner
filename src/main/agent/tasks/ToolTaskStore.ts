@@ -120,11 +120,14 @@ interface ToolTaskLeaseRow {
 }
 
 export class ToolTaskStore {
+  private restoredTaskIds = '[]';
+  setRestoredTaskIds(ids: readonly string[]): void { this.restoredTaskIds = JSON.stringify(ids); }
+
   constructor(private readonly db: SqliteDatabase) {
     const columns = this.db.prepare('PRAGMA table_info(tool_tasks)').all() as Array<{ name: string }>;
     if (columns.length > 0 && ['execution_context_json', 'isolation_json', 'continuation_json', 'control_receipts_json']
       .some((required) => !columns.some(({ name }) => name === required))) {
-      throw new Error('Tool Task storage format changed. Start this pre-release build with fresh userData.');
+      throw new Error('Tool Task storage has an unsupported format. Use data recovery or a compatible application.');
     }
     this.db.exec(toolTaskStoreSchema);
   }
@@ -508,8 +511,9 @@ export class ToolTaskStore {
 
   nonterminal(): readonly ToolTaskRecord[] {
     return (this.db.prepare(`
-      SELECT * FROM tool_tasks WHERE state IN ('running', 'settling') ORDER BY started_at, task_id
-    `).all() as ToolTaskRow[]).map(taskFromRow);
+      SELECT * FROM tool_tasks WHERE state IN ('running', 'settling')
+        AND task_id NOT IN (SELECT value FROM json_each(?)) ORDER BY started_at, task_id
+    `).all(this.restoredTaskIds) as ToolTaskRow[]).map(taskFromRow);
   }
 
   coveredChildren(taskId: string): readonly ToolTaskRecord[] {
@@ -688,8 +692,8 @@ export class ToolTaskStore {
       SELECT 1 FROM tool_tasks
       WHERE owner_thread_id = ? AND background_enabled = 1 AND (
         state IN ('running', 'settling') OR delivery_state IN ('pending', 'delivering')
-      ) LIMIT 1
-    `).get(threadId));
+      ) AND task_id NOT IN (SELECT value FROM json_each(?)) LIMIT 1
+    `).get(threadId, this.restoredTaskIds));
   }
 
   prepareDelivery(input: {
@@ -824,8 +828,9 @@ export class ToolTaskStore {
       WHERE owner_thread_id = ? AND delivery_state = 'pending'
         AND background_enabled = 1
         AND state IN ('succeeded', 'failed', 'cancelled', 'timed_out', 'lost')
+        AND task_id NOT IN (SELECT value FROM json_each(?))
       ORDER BY completed_at, task_id LIMIT ?
-    `).all(ownerThreadId, limit) as ToolTaskRow[]).map(taskFromRow);
+    `).all(ownerThreadId, this.restoredTaskIds, limit) as ToolTaskRow[]).map(taskFromRow);
   }
 
   ownersWithPendingDelivery(): readonly ThreadId[] {
@@ -834,8 +839,9 @@ export class ToolTaskStore {
       WHERE delivery_state = 'pending'
         AND background_enabled = 1
         AND state IN ('succeeded', 'failed', 'cancelled', 'timed_out', 'lost')
+        AND task_id NOT IN (SELECT value FROM json_each(?))
       ORDER BY owner_thread_id
-    `).all() as Array<{ owner_thread_id: string }>).map((row) => row.owner_thread_id);
+    `).all(this.restoredTaskIds) as Array<{ owner_thread_id: string }>).map((row) => row.owner_thread_id);
   }
 
   expireDetail(taskId: string, state: Exclude<ToolTaskDetailState, 'available'>, now: number): ToolTaskRecord {

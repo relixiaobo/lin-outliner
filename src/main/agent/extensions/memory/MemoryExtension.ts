@@ -104,6 +104,7 @@ export interface MemoryThreadHost extends ThreadServiceExtensionHost {
 export interface MemoryExtensionOptions {
   readonly profiles?: ProfileFileStore;
   readonly canRun?: () => boolean;
+  readonly restoredGeneration?: string | null;
   readonly onError?: (error: unknown, operation: 'graph-digest' | 'graph-wake' | 'profile-context') => void;
 }
 
@@ -210,6 +211,9 @@ export class MemoryExtension implements AgentCoreExtension {
   private async prepareTurnAdmission(): Promise<void> {
     const host = this.requireHost();
     await this.timeline.ensureTagDefinitions();
+    // Restored pending work remains inspectable; startup cannot recreate its
+    // publication authority. Fresh turns may enqueue newly authorized work.
+    if (this.options.restoredGeneration) return;
     this.reconcileRollbackHooks(host);
     try { this.options.profiles?.recover(); } catch (error) { this.options.onError?.(error, 'profile-context'); }
     // The orphan sweep deletes every admission row whose Turn it cannot see, so it
@@ -234,7 +238,7 @@ export class MemoryExtension implements AgentCoreExtension {
   async startWorker(): Promise<void> {
     if (this.initialized) return;
     await this.prepareForTurnAdmission();
-    await this.requirePipeline().start();
+    await this.requirePipeline().start({ recoverHistoricalWork: !this.options.restoredGeneration });
     this.initialized = true;
   }
 

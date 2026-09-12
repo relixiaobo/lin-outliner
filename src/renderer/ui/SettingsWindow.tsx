@@ -11,6 +11,7 @@ import { ChevronLeftIcon, ChevronRightIcon, CloseIcon, SearchIcon, SettingsIcon,
 import { PreferenceRow } from './configuration/PreferenceRow';
 import { SettingsFeedback } from './configuration/SettingsFeedback';
 import { ConfigurationPane } from './configuration/ManagerWindow';
+import { DataRecoveryPanel } from './DataRecoveryPanel';
 
 const PANE_ICONS = { settings: SettingsIcon, models: AppWindowIcon, agents: AgentIcon, skills: SkillIcon, memory: RecentsIcon, access: PasswordIcon, data: DatabaseIcon, shortcuts: CommandIcon, diagnostics: OptionsIcon };
 function initialPane(): SettingsPane {
@@ -228,6 +229,7 @@ export function SettingsWindow() {
               <section aria-label={copy.appearanceGroup}>{rows(['appearance.theme', 'appearance.language'])}</section>
               <section aria-label={copy.updatesGroup}><h2 className="configuration-group-title">{copy.updatesGroup}</h2>{rows(['updates.checkAutomatically'])}</section>
             </> : <>
+              {destination === 'data' ? <DataRecoveryPanel active={!searching && pane === destination} /> : null}
               <ConfigurationPane destination={destination} active={!searching && pane === destination} toolbarTarget={toolbarTarget} />
               {destination === 'diagnostics' ? <>
                 <details className="settings-disclosure"><summary>{copy.requestOptions}</summary>

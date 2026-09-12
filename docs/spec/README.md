@@ -39,6 +39,7 @@ Read these in order when changing Agent Core:
 | File | Owns |
 | --- | --- |
 | [`architecture.md`](architecture.md) | Electron process boundaries, document ownership, persistence, and security posture. |
+| [`data-lifecycle.md`](data-lifecycle.md) | Local compatibility admission, verified backups, resumable recovery, and restored execution authority. |
 | [`commands.md`](commands.md) | Document command surface and mutation routing. |
 | [`action-registry.md`](action-registry.md) | The object/action model, the main-owned action seam, the action catalog, and parameter candidate policies. |
 | [`ui-behavior.md`](ui-behavior.md) | Outliner editing, selection, navigation, drag, menus, and interaction rules. |

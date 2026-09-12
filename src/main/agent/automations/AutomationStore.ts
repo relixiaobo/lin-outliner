@@ -92,6 +92,8 @@ export interface DueClaimResult {
 }
 
 export class AutomationStore {
+  private restoredRunIds = '[]';
+  setRestoredRunIds(ids: readonly string[]): void { this.restoredRunIds = JSON.stringify(ids); }
   private readonly db: SqliteDatabase;
   private projectResolver: ((id: string) => import('../../../core/agent/project').Project) | null = null;
 
@@ -537,8 +539,9 @@ export class AutomationStore {
     const rows = this.db.prepare(`
       SELECT * FROM automation_runs
       WHERE state = 'pending' ${automationId ? 'AND automation_id = ?' : ''}
+        AND id NOT IN (SELECT value FROM json_each(?))
       ORDER BY created_at ASC, id ASC
-    `).all(...(automationId ? [automationId] : [])) as AutomationRunRow[];
+    `).all(...(automationId ? [automationId] : []), this.restoredRunIds) as AutomationRunRow[];
     return Object.freeze(rows.map(runFromRow));
   }
 

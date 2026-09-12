@@ -272,6 +272,8 @@ export class OutlineRuntimeWorkspace {
     return this.readModel.revision;
   }
 
+  completeMaintenanceInitialization(): Promise<void> { return this.store.completeInitialization(); }
+
   durableRevision(): number {
     return this.durableRevisionValue;
   }

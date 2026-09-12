@@ -5,6 +5,7 @@ import { access, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Readable } from 'node:stream';
 import { decodeProcessIsolationEvidence, unstartedProcessIsolation, type ProcessIsolationEvidence } from '../../../core/agent/processIsolation';
+import { assertTaskDataAdmission } from '../../dataLifecycle/taskAdmission';
 import type {
   ToolTaskFinalReceipt,
   ToolTaskSupervisorConfig,
@@ -25,6 +26,7 @@ async function main(): Promise<void> {
   const configPath = process.argv[2];
   if (!configPath) throw new Error('Tool Task supervisor requires a config path');
   const config = decodeConfig(JSON.parse(await readFile(configPath, 'utf8')));
+  await assertTaskDataAdmission(configPath, config.taskId);
   activeConfig = config;
   const startedAt = config.startedAt;
   const timeoutStartedAt = Date.now();

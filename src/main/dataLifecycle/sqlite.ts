@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module';
-import type { SqliteDatabase } from '../agent/persistence/sqlite';
+import type { SqliteDatabase, SqliteStatement } from '../agent/persistence/sqlite';
 import type { DataLifecycleCheckpoint } from './durableFiles';
 
 export type LifecycleDatabaseFactory = (path: string, readOnly: boolean) => SqliteDatabase;
@@ -23,7 +23,27 @@ export const openLifecycleDatabase: LifecycleDatabaseFactory = (path, readOnly) 
     database.exec('PRAGMA busy_timeout = 1000');
     if (readOnly) database.exec('PRAGMA query_only = ON');
     else database.exec('PRAGMA foreign_keys = ON; PRAGMA synchronous = FULL');
-    return database;
+    if (!process.versions.bun) return database;
+    // Bun uses sqlite3_close_v2: live statements can retain a writable WAL
+    // connection after close returns. Finalize its statements before releasing
+    // the physical owner so later read-only inspection cannot trigger that write.
+    const statements = new Set<WeakRef<SqliteStatement & { finalize(): void }>>();
+    let closed = false;
+    return {
+      exec: (sql) => database.exec(sql),
+      prepare: (sql) => {
+        const statement = database.prepare(sql) as SqliteStatement & { finalize(): void };
+        statements.add(new WeakRef(statement));
+        return statement;
+      },
+      close: () => {
+        if (closed) return;
+        closed = true;
+        for (const reference of statements) reference.deref()?.finalize();
+        statements.clear();
+        database.close();
+      },
+    };
   } catch (error) { database.close(); throw error; }
 };
 

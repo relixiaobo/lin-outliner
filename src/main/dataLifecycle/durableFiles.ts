@@ -1,6 +1,6 @@
 import { constants } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
-import { copyFile, lstat, mkdir, open, realpath, rename, rm } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, open, readlink, realpath, rename, rm, symlink } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 
 export type DataLifecycleCheckpoint = (name: string) => void | Promise<void>;
@@ -11,7 +11,9 @@ export function missing(error: unknown): boolean {
 }
 
 export async function syncDirectory(path: string, checkpoint?: DataLifecycleCheckpoint): Promise<void> {
-  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  // macOS exposes /tmp and /var through system aliases. Sync their real directory
+  // after the caller has validated its managed path; never open the link itself.
+  const file = await open(await realpath(path), constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     await checkpoint?.('before-directory-sync');
     await file.sync();
@@ -19,11 +21,41 @@ export async function syncDirectory(path: string, checkpoint?: DataLifecycleChec
   await checkpoint?.('directory-synced');
 }
 
+/** Persist every newly created directory entry before relying on a child record. */
+export async function ensureDurableDirectory(path: string, checkpoint?: DataLifecycleCheckpoint): Promise<void> {
+  const absent: string[] = [];
+  let current = resolve(path);
+  while (true) {
+    const info = await lstat(current).catch((error: unknown) => { if (missing(error)) return null; throw error; });
+    if (info) {
+      const ancestorAlias = current !== resolve(path) && info.isSymbolicLink()
+        && (await lstat(await realpath(current))).isDirectory();
+      if (!info.isDirectory() && !ancestorAlias || info.isSymbolicLink() && !ancestorAlias) throw new Error('Durable storage requires an owned directory');
+      break;
+    }
+    absent.push(current);
+    const parent = dirname(current);
+    if (parent === current) throw new Error('Durable storage parent is unavailable');
+    current = parent;
+  }
+  for (const directory of absent.reverse()) {
+    await mkdir(directory, { mode: 0o700 }).catch((error: unknown) => {
+      if (!record(error) || error.code !== 'EEXIST') throw error;
+    });
+    const info = await lstat(directory);
+    if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('Durable directory ownership changed');
+    await syncDirectory(directory, checkpoint);
+    await syncDirectory(dirname(directory), checkpoint);
+  }
+  // A prior attempt may have created the directory just before its sync failed.
+  if (dirname(resolve(path)) !== resolve(path)) await syncDirectory(dirname(resolve(path)), checkpoint);
+}
+
 /** File sync precedes rename; directory sync precedes any dependent mutation. */
 export async function writeDurableFile(
   path: string, bytes: string | Uint8Array, checkpoint?: DataLifecycleCheckpoint,
 ): Promise<void> {
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  await ensureDurableDirectory(dirname(path), checkpoint);
   const temporary = `${path}.${randomUUID()}.tmp`;
   try {
     const file = await open(temporary, 'wx', 0o600);
@@ -53,14 +85,15 @@ export async function readPrivateJson(path: string, maximumBytes = 4 * 1024 * 10
   try {
     const info = await file.stat();
     if (!info.isFile() || info.size > maximumBytes) throw new Error('Invalid or oversized lifecycle record');
-    const chunks: Buffer[] = [];
+    const content = Buffer.alloc(info.size + 1);
     let bytes = 0;
-    for await (const chunk of file.createReadStream({ autoClose: false })) {
-      bytes += chunk.length;
-      if (bytes > maximumBytes) throw new Error('Oversized lifecycle record');
-      chunks.push(chunk as Buffer);
+    while (bytes < content.length) {
+      const result = await file.read(content, bytes, content.length - bytes, bytes);
+      if (result.bytesRead === 0) break;
+      bytes += result.bytesRead;
     }
-    return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
+    if (bytes !== info.size) throw new Error('Lifecycle record changed during inspection');
+    return JSON.parse(content.subarray(0, bytes).toString('utf8')) as unknown;
   } finally { await file.close(); }
 }
 
@@ -76,7 +109,7 @@ export function ownedPath(root: string, name: string): string {
   return target;
 }
 
-export async function assertOwnedPath(root: string, name: string): Promise<string> {
+export async function assertOwnedPath(root: string, name: string, allowFinalLink = false): Promise<string> {
   ownedPath(root, name);
   const rootInfo = await lstat(root);
   if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) throw new Error('Managed storage root must be an owned directory');
@@ -88,11 +121,29 @@ export async function assertOwnedPath(root: string, name: string): Promise<strin
     current = resolve(current, part);
     const info = await lstat(current).catch((error: unknown) => { if (missing(error)) return null; throw error; });
     if (!info) break;
-    if (info.isSymbolicLink() || (index < parts.length - 1 && !info.isDirectory())) {
+    if (info.isSymbolicLink() && !(allowFinalLink && index === parts.length - 1)
+      || index < parts.length - 1 && !info.isDirectory()) {
       throw new Error('Managed storage contains an unowned path');
     }
   }
   return target;
+}
+
+export async function fingerprintLink(path: string): Promise<FileFingerprint & { readonly linkTarget: string }> {
+  if (!(await lstat(path)).isSymbolicLink()) throw new Error('Expected a retained symbolic link');
+  const linkTarget = await readlink(path);
+  return { linkTarget, bytes: Buffer.byteLength(linkTarget), sha256: createHash('sha256').update(linkTarget).digest('hex') };
+}
+
+/** Preserve a working-material reference without reading or writing its target. */
+export async function copyLinkDurably(source: string, target: string, checkpoint?: DataLifecycleCheckpoint): Promise<FileFingerprint & { readonly linkTarget: string }> {
+  const before = await fingerprintLink(source);
+  await ensureDurableDirectory(dirname(target), checkpoint);
+  await symlink(before.linkTarget, target);
+  const after = await fingerprintLink(source);
+  if (before.sha256 !== after.sha256) throw new Error('Working-material link changed during retention');
+  await syncDirectory(dirname(target), checkpoint);
+  return before;
 }
 
 export async function fingerprint(path: string): Promise<FileFingerprint> {
@@ -102,8 +153,14 @@ export async function fingerprint(path: string): Promise<FileFingerprint> {
     if (!before.isFile()) throw new Error('Expected an owned regular file');
     const digest = createHash('sha256');
     let bytes = 0;
-    for await (const chunk of file.createReadStream({ autoClose: false })) {
-      digest.update(chunk); bytes += chunk.length;
+    const buffer = Buffer.alloc(64 * 1024);
+    // The handle has one close owner. Explicit reads avoid sharing descriptor lifetime
+    // with a stream and keep bounded inspection under one close owner.
+    while (true) {
+      const result = await file.read(buffer, 0, buffer.length, bytes);
+      if (!result.bytesRead) break;
+      digest.update(buffer.subarray(0, result.bytesRead)); bytes += result.bytesRead;
+      if (bytes > before.size) throw new Error('Storage grew while its checksum was being read');
     }
     const after = await file.stat();
     if (before.size !== bytes || before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs) {
@@ -115,7 +172,7 @@ export async function fingerprint(path: string): Promise<FileFingerprint> {
 
 export async function copyDurably(source: string, target: string, checkpoint?: DataLifecycleCheckpoint): Promise<FileFingerprint> {
   const before = await fingerprint(source);
-  await mkdir(dirname(target), { recursive: true, mode: 0o700 });
+  await ensureDurableDirectory(dirname(target), checkpoint);
   await copyFile(source, target, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE);
   const file = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW);
   try { await file.chmod(0o600); await checkpoint?.('before-file-sync'); await file.sync(); }

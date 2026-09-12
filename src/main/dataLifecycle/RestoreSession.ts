@@ -1,14 +1,16 @@
-import { lstat, mkdir, rename, rm } from 'node:fs/promises';
+import { lstat, rename, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { DataBackupStore, type DataBackupManifest } from './BackupStore';
 import { MANAGED_DATA_ROOTS } from './inventory';
 import { DataOperationJournal, type DataOperation } from './OperationJournal';
-import { assertOwnedPath, copyDurably, fingerprint, missing, ownedPath, syncDirectory,
+import { assertOwnedPath, ensureDurableDirectory, copyDurably, copyLinkDurably, fingerprint, fingerprintLink, missing, ownedPath, syncDirectory,
   writeDurableJson, type DataLifecycleCheckpoint } from './durableFiles';
 
 export interface RestoreSessionOptions {
   readonly checkpoint?: DataLifecycleCheckpoint;
   readonly progress?: (completed: number, total: number) => void;
+  readonly validateStaged?: (root: string) => Promise<void>;
+  readonly canSnapshotCurrent?: () => Promise<boolean>;
 }
 
 /** Caller holds the dataset writer barrier for the entire lifetime of this operation. */
@@ -25,40 +27,45 @@ export class DataRestoreSession {
     const operationRoot = await assertOwnedPath(this.userData, `data-lifecycle/operations/${operation.id}`);
     const staging = join(operationRoot, 'staging');
     const retained = join(operationRoot, 'retained');
-    await mkdir(operationRoot, { recursive: true, mode: 0o700 });
+    await ensureDurableDirectory(operationRoot);
     if (operation.phase === 'complete') return operation;
 
     if (operation.phase === 'preparing' || operation.phase === 'retaining') {
       operation = { ...operation, phase: 'retaining' };
       await this.journal.write(operation);
-      await this.backups.create(applicationVersion, operation.backupId);
-      // This receipt lives outside restored roots and cannot be rolled back by the backup.
-      await writeDurableJson(join(this.userData, 'data-lifecycle/execution-fence.json'), {
-        version: 1, generation: operation.generation, operationId: operation.id, paused: true,
-      }, this.options.checkpoint);
-      await this.options.checkpoint?.('restore-execution-fenced');
+      // Damaged current databases must be preserved too; validating them is not
+      // a prerequisite for installing a separately verified recovery source.
+      const canSnapshot = await this.options.canSnapshotCurrent?.() ?? true;
+      await this.backups.create(applicationVersion, operation.backupId, canSnapshot ? 'backup' : 'retention');
       operation = { ...operation, phase: 'staging' };
       await this.journal.write(operation);
     }
 
     if (operation.phase === 'staging') {
       await rm(staging, { recursive: true, force: true });
-      await mkdir(staging, { recursive: true, mode: 0o700 });
+      await ensureDurableDirectory(staging);
       for (const root of backup.roots) {
-        if (root.kind === 'directory') await mkdir(ownedPath(staging, root.path), { recursive: true, mode: 0o700 });
+        if (root.kind === 'directory') await ensureDurableDirectory(ownedPath(staging, root.path));
       }
       for (const [index, file] of backup.files.entries()) {
-        const source = await assertOwnedPath(join(this.backups.path(backup.id), 'files'), file.path);
-        await copyDurably(source, ownedPath(staging, file.path), this.options.checkpoint);
+        const source = await assertOwnedPath(join(this.backups.path(backup.id), 'files'), file.path, file.kind === 'link');
+        if (file.kind === 'link') await copyLinkDurably(source, ownedPath(staging, file.path), this.options.checkpoint);
+        else await copyDurably(source, ownedPath(staging, file.path), this.options.checkpoint);
         this.options.progress?.(index + 1, backup.files.length);
       }
       await this.verifyInstalled(staging, backup);
+      await this.options.validateStaged?.(staging);
       operation = { ...operation, phase: 'installing' };
       await this.journal.write(operation);
     }
 
     if (operation.phase === 'installing') {
-      await mkdir(retained, { recursive: true, mode: 0o700 });
+      // The fence is outside restored roots and precedes the first replacement.
+      await writeDurableJson(join(this.userData, 'data-lifecycle/execution-fence.json'), {
+        version: 1, generation: operation.generation, operationId: operation.id, paused: true,
+      }, this.options.checkpoint);
+      await this.options.checkpoint?.('restore-execution-fenced');
+      await ensureDurableDirectory(retained);
       for (const root of backup.roots) {
         if (!(MANAGED_DATA_ROOTS as readonly string[]).includes(root.path)) throw new Error('Restore root is outside its declared scope');
         if (operation.completedRoots.includes(root.path)) continue;
@@ -69,7 +76,7 @@ export class DataRestoreSession {
         const originalExists = await exists(original);
         const stagedExists = await exists(staged);
         if (!originalExists && targetExists && (stagedExists || root.kind === 'missing')) {
-          await mkdir(dirname(original), { recursive: true, mode: 0o700 });
+          await ensureDurableDirectory(dirname(original));
           await this.options.checkpoint?.(`before-retain-root:${root.path}`);
           await rename(target, original);
           await syncDirectory(dirname(target), this.options.checkpoint);
@@ -78,7 +85,7 @@ export class DataRestoreSession {
         }
         if (root.kind !== 'missing' && await exists(staged)) {
           if (await exists(target)) throw new Error('An unexpected writer replaced a restore destination');
-          await mkdir(dirname(target), { recursive: true, mode: 0o700 });
+          await ensureDurableDirectory(dirname(target));
           await rename(staged, target);
           await syncDirectory(dirname(target), this.options.checkpoint);
           await syncDirectory(dirname(staged), this.options.checkpoint);
@@ -108,7 +115,8 @@ export class DataRestoreSession {
     }
     for (const entry of manifest.files) {
       if (selected && entry.path !== selected && !entry.path.startsWith(`${selected}/`)) continue;
-      const actual = await fingerprint(await assertOwnedPath(root, entry.path));
+      const path = await assertOwnedPath(root, entry.path, entry.kind === 'link');
+      const actual = entry.kind === 'link' ? await fingerprintLink(path) : await fingerprint(path);
       if (actual.bytes !== entry.bytes || actual.sha256 !== entry.sha256) throw new Error('Installed backup content failed verification');
     }
   }

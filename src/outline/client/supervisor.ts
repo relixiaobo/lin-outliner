@@ -11,6 +11,7 @@ import {
 import type { RuntimeDescriptor, RuntimeStatus } from '../contract/schemas';
 import { acquireOutlineRuntimeRetirementClaim } from './retirement';
 import { readOutlineStartupFailure } from '../contract/startupFailure';
+import { createStartupFileObservation } from './startupObservation';
 
 export interface OutlineRuntimeLaunch {
   readonly command: string;
@@ -152,6 +153,20 @@ export class OutlineClientSupervisor {
       probe.cleanup();
       client.close();
     }
+  }
+
+  /** Explicit desktop maintenance operation; unlike connect, it never starts a writer. */
+  async quiesceForMaintenance(signal?: AbortSignal): Promise<void> {
+    const descriptor = await readOutlineRuntimeDescriptor(this.options.root);
+    if (!descriptor) return;
+    try { this.assertCompatibleDescriptor(descriptor); }
+    catch (error) {
+      if (!isProtocolIncompatible(error)) throw error;
+      const deadline = Date.now() + (this.options.startupTimeoutMs ?? OUTLINE_DEFAULT_STARTUP_TIMEOUT_MS);
+      if (await this.retireMismatchedRuntime(deadline, signal)) return;
+      throw error;
+    }
+    await this.shutdown(signal);
   }
 
   private async tryConnectBefore(deadline: number, signal?: AbortSignal): Promise<OutlineClient | null> {
@@ -320,15 +335,17 @@ export class OutlineClientSupervisor {
       throw runtimeUnavailable('Automatic Runtime start requires an explicit ContentStore root.');
     }
     const launch = this.options.launch ?? defaultLaunch(this.options.root, this.options.contentRoot);
+    const fileObservation = process.versions.bun ? createStartupFileObservation() : null;
     const child = spawn(launch.command, [...launch.args], {
       detached: launch.detached ?? true,
-      stdio: ['ignore', 'ignore', 'ignore', 'pipe'],
+      stdio: fileObservation ? ['ignore', 'ignore', 'ignore'] : ['ignore', 'ignore', 'ignore', 'pipe'],
       env: {
         ...process.env,
         ELECTRON_RUN_AS_NODE: '1',
         TENON_CONTENT_ROOT: this.options.contentRoot,
         ...launch.env,
-        TENON_OUTLINE_STARTUP_REPORT_FD: '3',
+        TENON_OUTLINE_STARTUP_REPORT_FD: fileObservation ? '' : '3',
+        TENON_OUTLINE_STARTUP_REPORT_PATH: fileObservation?.path ?? '',
         ...(this.options.expectedDevelopmentSessionId ? {
           TENON_OUTLINE_RUNTIME_DEVELOPMENT_SESSION_ID: this.options.expectedDevelopmentSessionId,
         } : {}),
@@ -355,7 +372,10 @@ export class OutlineClientSupervisor {
       if (code !== 0) failure ??= new Error(`Outline Runtime exited during startup (${signal ?? code ?? 'unknown'}).`);
     });
     child.unref();
-    return { failure: () => failure, close: () => observation?.destroy() };
+    return { failure: () => fileObservation?.read() ?? failure, close: () => {
+      if (observation && !observation.destroyed) observation.destroy();
+      fileObservation?.close();
+    } };
   }
 }
 

@@ -58,16 +58,16 @@ export class MemoryPipeline {
     this.recovered = true;
   }
 
-  async start(): Promise<void> {
+  async start(options: { readonly recoverHistoricalWork?: boolean } = {}): Promise<void> {
     if (this.started) return;
-    await this.recover();
+    if (options.recoverHistoricalWork !== false) await this.recover();
     this.started = true;
     if (this.control.featureMode() !== 'enabled') {
       this.suspended = true;
       this.wake();
       return;
     }
-    this.scanEligibleThreads();
+    if (options.recoverHistoricalWork !== false) this.scanEligibleThreads();
     this.wake();
   }
 

@@ -1,19 +1,20 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { lstat, mkdir, open, readdir, rm, statfs } from 'node:fs/promises';
+import { open, readdir, rm, statfs } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { DATA_OPERATION_ID, type DataBackupSummary } from '../../core/dataLifecycle';
-import { assertOwnedPath, copyDurably, fingerprint, missing, ownedPath, readPrivateJson, record,
+import { assertOwnedPath, ensureDurableDirectory, copyDurably, copyLinkDurably, fingerprint, fingerprintLink, missing, ownedPath, readPrivateJson, record,
   syncDirectory, writeDurableJson, type DataLifecycleCheckpoint, type FileFingerprint } from './durableFiles';
 import { DataStoreRegistry } from './storeRegistry';
-import { inspectManagedFiles, isManagedDataPath, MANAGED_DATA_ROOTS, MAX_BACKUP_FILES, type ManagedRoot } from './inventory';
+import { inspectManagedFiles, isManagedDataPath, isWorkingMaterialLink, MANAGED_DATA_ROOTS, MAX_BACKUP_FILES, type ManagedRoot } from './inventory';
 import { verifyDatabase } from './sqlite';
 
-export interface BackupFile extends FileFingerprint { readonly path: string; readonly kind: 'sqlite' | 'file' }
+export interface BackupFile extends FileFingerprint { readonly path: string; readonly kind: 'sqlite' | 'file' | 'link'; readonly linkTarget?: string }
 export interface DataBackupManifest {
   readonly version: 1;
   readonly id: string;
   readonly createdAt: number;
   readonly applicationVersion: string;
+  readonly purpose: 'backup' | 'retention';
   readonly storeVersions: Readonly<Record<string, number>>;
   readonly roots: readonly ManagedRoot[];
   readonly files: readonly BackupFile[];
@@ -37,30 +38,31 @@ export class DataBackupStore {
     return ownedPath(this.root, id);
   }
 
-  async create(applicationVersion: string, id: string = randomUUID()): Promise<DataBackupManifest> {
+  async create(applicationVersion: string, id: string = randomUUID(), purpose: 'backup' | 'retention' = 'backup'): Promise<DataBackupManifest> {
     await assertOwnedPath(this.userData, 'data-lifecycle/backups');
-    await mkdir(this.root, { recursive: true, mode: 0o700 });
+    await ensureDurableDirectory(this.root);
     const existing = await this.read(id).catch((error: unknown) => { if (missing(error)) return null; throw error; });
     if (existing) { await this.verify(existing); return existing; }
-    const inventory = await inspectManagedFiles(this.userData, this.registry);
-    const size = inventory.files.reduce((total, file) => total + file.bytes, 0);
+    const inventory = await inspectManagedFiles(this.userData, this.registry, purpose === 'retention');
+    const size = inventory.estimatedBytes;
     const filesystem = await statfs(this.userData);
     const available = this.options.availableBytes ? await this.options.availableBytes() : filesystem.bavail * filesystem.bsize;
     if (available < size * 3 + 16 * 1024 * 1024) throw Object.assign(new Error('Not enough free space to retain and restore a verified backup.'), { code: 'ENOSPC' });
     const directory = this.path(id);
     // This ID belongs to the current journal. No complete backup can be removed here.
     await rm(directory, { recursive: true, force: true });
-    await mkdir(join(directory, 'files'), { recursive: true, mode: 0o700 });
-    const inspection = await this.registry.inspect(this.userData, true);
+    await ensureDurableDirectory(join(directory, 'files'));
+    const inspection = purpose === 'backup' ? await this.registry.inspect(this.userData, true) : [];
     const invalid = inspection.find((entry) => entry.issue);
     if (invalid) throw new Error(`Cannot snapshot ${invalid.store.id}: ${invalid.issue!.message}`);
     const files: BackupFile[] = [];
     for (const [index, source] of inventory.files.entries()) {
-      const sourcePath = await assertOwnedPath(this.userData, source.path);
+      const sourcePath = await assertOwnedPath(this.userData, source.path, source.kind === 'link');
       const target = ownedPath(join(directory, 'files'), source.path);
-      await mkdir(dirname(target), { recursive: true, mode: 0o700 });
-      let retained: FileFingerprint;
-      if (source.kind === 'sqlite') {
+      await ensureDurableDirectory(dirname(target));
+      let retained: FileFingerprint & { readonly linkTarget?: string };
+      if (source.kind === 'link') retained = await copyLinkDurably(sourcePath, target, this.options.checkpoint);
+      else if (source.kind === 'sqlite') {
         // The coordinator owns the writer barrier. VACUUM INTO includes committed WAL.
         const database = this.registry.openDatabase(sourcePath, false);
         try { database.prepare('VACUUM INTO ?').run(target); }
@@ -78,7 +80,7 @@ export class DataBackupStore {
       this.options.progress?.(index + 1, inventory.files.length);
       await this.options.checkpoint?.(`backup-file:${index}`);
     }
-    const manifest: DataBackupManifest = { version: 1, id, createdAt: Date.now(), applicationVersion,
+    const manifest: DataBackupManifest = { version: 1, id, createdAt: Date.now(), applicationVersion, purpose,
       storeVersions: Object.fromEntries(inspection.filter((entry) => entry.exists).map((entry) => [entry.store.id, entry.observedVersion])),
       roots: inventory.roots, files, excluded: inventory.excluded };
     await writeDurableJson(join(directory, 'manifest.json'), manifest, this.options.checkpoint);
@@ -107,8 +109,8 @@ export class DataBackupStore {
     if (requireComplete && !(await this.read(manifest.id))) throw new Error('Backup is incomplete');
     const root = join(this.path(manifest.id), 'files');
     for (const file of manifest.files) {
-      const source = await assertOwnedPath(root, file.path);
-      const actual = await fingerprint(source);
+      const source = await assertOwnedPath(root, file.path, file.kind === 'link');
+      const actual = file.kind === 'link' ? await fingerprintLink(source) : await fingerprint(source);
       if (actual.sha256 !== file.sha256 || actual.bytes !== file.bytes) throw new Error('Backup file is missing or changed');
     }
   }
@@ -119,17 +121,20 @@ export class DataBackupStore {
     for (const id of names.filter((name) => DATA_OPERATION_ID.test(name))) {
       const manifest = await this.read(id).catch(() => null);
       if (!manifest) continue;
+      // Empty pre-initialization checkpoints are internal recovery evidence,
+      // not a default user-facing action that clears a populated workspace.
+      if (manifest.files.length === 0) continue;
       const verified = await this.verify(manifest).then(() => true, () => false);
       results.push({ id, createdAt: manifest.createdAt, applicationVersion: manifest.applicationVersion,
         bytes: manifest.files.reduce((total, file) => total + file.bytes, 0), fileCount: manifest.files.length,
-        verified, pinned: pinned.has(id) });
+        verified, pinned: pinned.has(id), purpose: manifest.purpose });
     }
     return results.sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
   }
 
   async prune(pinned: ReadonlySet<string>): Promise<void> {
     const backups = await this.list(pinned);
-    for (const backup of backups.filter((entry) => entry.verified).slice(3)) {
+    for (const backup of backups.filter((entry) => entry.verified && entry.purpose === 'backup').slice(3)) {
       if (!pinned.has(backup.id)) await rm(this.path(backup.id), { recursive: true, force: true });
     }
     if (backups.length > 3) await syncDirectory(this.root);
@@ -142,6 +147,7 @@ export function decodeBackupManifest(value: unknown): DataBackupManifest {
   if (!record(value) || value.version !== 1 || typeof value.id !== 'string' || !DATA_OPERATION_ID.test(value.id)
     || !Number.isSafeInteger(value.createdAt) || typeof value.applicationVersion !== 'string'
     || value.applicationVersion.length > 100 || !record(value.storeVersions)
+    || (value.purpose !== 'backup' && value.purpose !== 'retention')
     || !Array.isArray(value.roots) || value.roots.length !== MANAGED_DATA_ROOTS.length
     || !Array.isArray(value.files) || value.files.length > MAX_BACKUP_FILES || !Array.isArray(value.excluded)) {
     throw new Error('Invalid backup manifest');
@@ -155,10 +161,21 @@ export function decodeBackupManifest(value: unknown): DataBackupManifest {
   const paths = new Set<string>();
   for (const file of value.files) {
     if (!record(file) || typeof file.path !== 'string' || !isManagedDataPath(file.path) || paths.has(file.path)
-      || !['sqlite', 'file'].includes(String(file.kind)) || typeof file.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(file.sha256)
+      || !['sqlite', 'file', 'link'].includes(String(file.kind)) || typeof file.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(file.sha256)
       || !Number.isSafeInteger(file.bytes) || (file.bytes as number) < 0) throw new Error('Invalid backup file entry');
     ownedPath('/managed', file.path);
+    if (file.kind === 'link' && (!isWorkingMaterialLink(file.path) || typeof file.linkTarget !== 'string'
+      || file.linkTarget.length > 4096 || file.linkTarget.includes('\0')
+      || createHash('sha256').update(file.linkTarget).digest('hex') !== file.sha256)) throw new Error('Invalid retained working-material link');
     paths.add(file.path);
+  }
+  for (const file of value.files as BackupFile[]) {
+    const parts = file.path.split('/');
+    for (let index = 1; index < parts.length; index++) {
+      if (paths.has(parts.slice(0, index).join('/'))) throw new Error('Backup file traversal crosses a non-directory entry');
+    }
+    const root = (value.roots as ManagedRoot[]).find((entry) => file.path === entry.path || file.path.startsWith(`${entry.path}/`));
+    if (!root || root.kind === 'missing' || root.kind === 'file' && file.path !== root.path || root.kind === 'directory' && file.path === root.path) throw new Error('Backup file contradicts its root type');
   }
   for (const [key, version] of Object.entries(value.storeVersions)) {
     if (!/^[a-z][a-z0-9-]{0,100}$/.test(key) || !Number.isSafeInteger(version) || (version as number) < 0) throw new Error('Invalid backup Store version');

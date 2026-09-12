@@ -89,6 +89,44 @@
   font-size: var(--font-size-sm);
 }
 
+.data-recovery-panel {
+  display: grid;
+  gap: var(--space-4);
+  margin-block: var(--space-lg);
+  padding-block: var(--space-lg);
+  border-top: 1px solid var(--separator);
+  overflow-wrap: anywhere;
+}
+
+.data-recovery-panel h2 {
+  margin: 0;
+  font-size: var(--font-ui-sm);
+  font-weight: 600;
+}
+
+.data-recovery-panel p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-ui-sm);
+}
+
+.data-recovery-panel ul {
+  margin: 0;
+  padding-inline-start: var(--space-xl);
+}
+
+.data-recovery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+.data-recovery-paused {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-4);
+}
+
 .startup-agent-pane {
   justify-content: center;
   overflow: auto;

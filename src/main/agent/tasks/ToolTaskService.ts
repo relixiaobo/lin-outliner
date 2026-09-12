@@ -3,6 +3,7 @@ import { decodeProcessIsolationEvidence, sameIsolationRequest, unstartedProcessI
 import { createHash, randomUUID } from 'node:crypto';
 import type { TaskExecutionContext } from '../../../core/agent/executionContext';
 import { ExecutionAdmissionError, executionDigest, pendingExecutionContext, resolveExecutionAddress, revalidateExecutionContext, validateExecutionContext } from './ExecutionContext';
+import { UNRESTRICTED_RESTORED_WORK, type RestoredWorkAdmission } from '../restoredWork';
 import { discoverExecutionContext, validateDiscoveredSources } from './ExecutionContextDiscovery';
 import type { ExecutionContextObservationPayload, ThreadContextPayload, ThreadContextPayloadReference } from '../../../core/agent/protocol';
 import type { ChildProcess } from 'node:child_process';
@@ -189,7 +190,8 @@ export class ToolTaskService {
     private readonly now: () => number = Date.now,
     private readonly limits: ToolTaskServiceLimits = DEFAULT_TOOL_TASK_LIMITS,
     private readonly schedulerLimits: ToolTaskSchedulerLimits = DEFAULT_TOOL_TASK_SCHEDULER_LIMITS,
-  ) {}
+    private readonly restoredWork: RestoredWorkAdmission = UNRESTRICTED_RESTORED_WORK,
+  ) { store.setRestoredTaskIds(restoredWork.blockedIdentities('task')); }
 
   bindHost(host: ToolTaskHost): void {
     if (this.host) throw new Error('Tool Task host is already bound');
@@ -831,6 +833,7 @@ export class ToolTaskService {
   }
 
   async stop(taskId: string, ownerThreadId: ThreadId, sourceTurnId?: TurnId, source: TaskStopProvenance['source'] = 'user'): Promise<ToolTaskRecord | null> {
+    if (!this.restoredWork.allows('task', taskId)) throw new Error('A restored Task has no current process-control authority. Start new work explicitly.');
     let task = this.store.owned(taskId, ownerThreadId);
     if (!task) return null;
     // Terminal tasks only revoke pending delivery; their producer may already
@@ -1070,6 +1073,7 @@ export class ToolTaskService {
   }
 
   private async reconcileTaskOnce(task: ToolTaskRecord): Promise<void> {
+    if (!this.restoredWork.allows('task', task.taskId)) return;
     if (this.recoveryOwners.has(task.ownerThreadId)) return;
     if (this.hostOperations.has(task.taskId)) return;
     if (isToolTaskTerminal(task.state)) {

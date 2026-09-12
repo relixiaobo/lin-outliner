@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readlink, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -73,5 +73,20 @@ describe('verified data backups', () => {
     const { root, registry } = await fixture();
     const backup = await new DataBackupStore(root, registry).create('0.8.0');
     expect(() => decodeBackupManifest({ ...backup, files: [{ path: 'agent/../../outside', kind: 'file', bytes: 1, sha256: 'a'.repeat(64) }] })).toThrow();
+  });
+
+  test('retains working-material links without traversing their external targets', async () => {
+    const { root, registry } = await fixture();
+    const external = await mkdtemp(join(tmpdir(), 'tenon-link-target-')); roots.push(external);
+    await writeFile(join(external, 'private.txt'), 'External bytes are not part of this backup');
+    await mkdir(join(root, 'agent/workspaces/project'), { recursive: true });
+    await symlink(external, join(root, 'agent/workspaces/project/external'));
+    const store = new DataBackupStore(root, registry);
+    const backup = await store.create('0.8.0');
+    expect(backup.files.find((entry) => entry.path === 'agent/workspaces/project/external')?.kind).toBe('link');
+    expect(backup.files.some((entry) => entry.path.endsWith('/private.txt'))).toBe(false);
+    expect(await readlink(join(store.path(backup.id), 'files/agent/workspaces/project/external'))).toBe(external);
+    const link = backup.files.find((entry) => entry.kind === 'link')!;
+    expect(() => decodeBackupManifest({ ...backup, files: [...backup.files, { path: `${link.path}/escape.txt`, kind: 'file', bytes: 0, sha256: 'b'.repeat(64) }] })).toThrow('non-directory');
   });
 });

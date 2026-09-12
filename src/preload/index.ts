@@ -11,6 +11,8 @@ import {
   STARTUP_ISSUE_ACTION_CHANNEL, type StartupIssueAction, type StartupState,
 } from '../core/startup';
 import { THREAD_RECOVERY_CHANNEL, type ThreadRecoveryRequest, type ThreadRecoveryResponse } from '../core/threadRecovery';
+import { DATA_LIFECYCLE_CHANNEL, DATA_LIFECYCLE_CHANGED_CHANNEL, type DataLifecycleRequest,
+  type DataLifecycleResponse, type DataLifecycleState } from '../core/dataLifecycle';
 import { buildLauncherPreloadApi } from './launcher';
 import { LAUNCHER_PRELOAD_ROLE_ARG } from '../core/launcher/commands';
 import {
@@ -345,6 +347,14 @@ const api = {
       const handler = (_event: Electron.IpcRendererEvent, state: StartupState) => listener(state);
       ipcRenderer.on(STARTUP_STATE_CHANNEL, handler);
       return () => ipcRenderer.removeListener(STARTUP_STATE_CHANNEL, handler);
+    },
+  },
+  dataLifecycle: {
+    request: (request: DataLifecycleRequest) => ipcRenderer.invoke(DATA_LIFECYCLE_CHANNEL, request) as Promise<DataLifecycleResponse>,
+    onChanged: (listener: (state: DataLifecycleState) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, state: DataLifecycleState) => listener(state);
+      ipcRenderer.on(DATA_LIFECYCLE_CHANGED_CHANNEL, handler);
+      return () => ipcRenderer.removeListener(DATA_LIFECYCLE_CHANGED_CHANNEL, handler);
     },
   },
   // Which OS window material the main process applied, so the renderer can make

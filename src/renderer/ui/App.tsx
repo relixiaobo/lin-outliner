@@ -18,6 +18,7 @@ import { buildRendererUserViewHints } from './agent/userViewContext';
 import { Sidebar } from './Sidebar';
 import { WindowChrome } from './WindowChrome';
 import { StartupFailure } from './StartupFailure';
+import { DataRecoveryPanel } from './DataRecoveryPanel';
 import { StartupAgentPane } from './StartupAgentPane';
 import { useStartupState } from './useStartupState';
 import { ActionNotice, nextActionNotice, type ActionNoticeState } from './ActionNotice';
@@ -664,6 +665,7 @@ export function App() {
           onToggleSidebar={() => setSidebarOpen((open) => !open)}
         />
         <div className="app-shell app-startup-shell" aria-busy={!startup.failure}>
+          {!startup.failure && window.lin?.dataLifecycle ? <div className="startup-failure"><DataRecoveryPanel statusOnly /></div> : null}
           {startup.failure && (
             <StartupFailure
               failure={startup.failure}

@@ -30,6 +30,7 @@ export interface ResolvedAutomationConfiguration {
 
 export interface AutomationDispatcherOptions {
   readonly canDispatch?: () => boolean;
+  readonly canRecoverRun?: (id: string) => boolean;
   readonly holdsForegroundSlot?: (run: AutomationRun) => boolean;
   readonly store: AutomationStore;
   readonly threads: ThreadService;
@@ -95,6 +96,7 @@ export class AutomationDispatcher {
   }
 
   async dispatch(run: AutomationRun): Promise<AutomationRun> {
+    if (this.options.canRecoverRun?.(run.id) === false) return run;
     const current = this.options.store.readRun(run.id);
     if (!current || current.state !== 'pending') return current ?? run;
     if (current.threadId && this.options.threads.isConversationRecoveryPending(current.threadId)) return current;
@@ -242,6 +244,7 @@ export class AutomationDispatcher {
   }
 
   isRunActive(run: AutomationRun): boolean {
+    if (this.options.canRecoverRun?.(run.id) === false) return false;
     if (run.threadId && this.options.threads.isConversationRecoveryPending(run.threadId)) return true;
     if (run.state === 'pending') return true;
     if (run.state !== 'dispatched' || !run.threadId || !run.turnId) return false;
