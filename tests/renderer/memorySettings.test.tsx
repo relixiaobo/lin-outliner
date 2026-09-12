@@ -45,6 +45,20 @@ describe('Memory owner UI', () => {
     expect(rendered.document.body.textContent).not.toContain('Waiting for Memory to finish applying the change');
   });
 
+  test('reports Profile removal separately when the reviewed note Reset conflicts', async () => {
+    const rendered = render(async (name) => {
+      if (name === 'memory_inspect') return status(true);
+      if (name === 'memory_manage') return { operation: 'reset', reset: {
+        operationId: 'reset:partial-profile', state: 'conflicted', profileState: 'removed', admittedAt: 1, targetEpoch: 1,
+      } };
+      throw new Error(name);
+    }, <MemoryManager />);
+    await flush();
+    await act(async () => rendered.button('Reset Memory').click());
+    expect(rendered.document.body.textContent).toContain('Learned profile entries were removed; the reviewed note reset has not completed.');
+    expect(rendered.document.body.textContent).not.toContain('Memory reset.');
+  });
+
   test('Reset uses the native owner decision and only reports finalized as complete', async () => {
     let reset: MemoryResetView = { operationId: 'memory:reset:test', state: 'prepared', admittedAt: 1, targetEpoch: 1 };
     const rendered = render(async (name, args) => {

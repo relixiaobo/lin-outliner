@@ -100,6 +100,8 @@ export interface TurnExecutionContext {
     summary: string,
   ): Promise<ContextEvidenceThreadItem>;
   publishPendingContextObservations?(): Promise<void>;
+  /** Append changed extension state before the provider reads its next context. */
+  refreshThreadContext?(): Promise<void>;
   persistTurnDiagnostics(
     payload: TurnDiagnosticsPayload,
   ): Promise<TurnDiagnosticsPayloadReference>;

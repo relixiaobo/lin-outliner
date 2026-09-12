@@ -1005,7 +1005,11 @@ directs users to Settings, the preview controls, or App/Help menus for these
 operations rather than inventing keys or touching private stores.
 
 Global Memory enablement and Skill availability/source bindings remain public
-file preferences. Memory content is ordinary Outline data. See
+file preferences. Dated Memory is ordinary Outline data; current personal
+preferences use managed USER.md edits through the same ordinary file tools.
+Identity/style components and Profile correction/forgetting use public files and
+owner-published acceptance/activation status. No new model management tool is
+introduced. See
 [Memory](agent-memory.md#user-surface), [Skills](agent-skills.md), and
 [Preview translation](workspace-layout.md) for the retained user workflows.
 

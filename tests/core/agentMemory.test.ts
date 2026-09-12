@@ -1,3 +1,4 @@
+import { ProfileFileStore } from '../../src/main/agent/profile/ProfileFileStore';
 import { captureConsolidationSnapshot, selectConsolidationNodes } from '../../src/main/agent/extensions/memory/ConsolidationSnapshot';
 import { planConsolidation } from '../../src/main/agent/extensions/memory/ConsolidationPlan';
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
@@ -347,7 +348,7 @@ describe('Codex Memory contracts', () => {
 
   test('routes Memory lookup without injecting prose and counts only an inline citation of an exact get', () => {
     const { extension, store, targetThread, activeTurn, projection } = memoryUsageHarness();
-    const context = extension.contributeThreadContext(targetThread);
+    const context = extension.contributeThreadContext(targetThread, { turnId: activeTurn.id, content: [] });
     expect(context?.additionalContext?.memory?.value).toContain('use outline find');
     expect(context?.additionalContext?.memory?.value).toContain('outline --json get');
     expect(context?.additionalContext?.memory?.value).toContain('[[node://UUID]]');
@@ -364,7 +365,7 @@ describe('Codex Memory contracts', () => {
 
   test('ignores a default summary get for citation accounting', () => {
     const { extension, store, targetThread, activeTurn, projection } = memoryUsageHarness();
-    extension.contributeThreadContext(targetThread);
+    extension.contributeThreadContext(targetThread, { turnId: activeTurn.id, content: [] });
     completeOutlineGet(extension, targetThread, activeTurn, projection, [MEMORY_NODE_ID], {
       command: `outline get ${MEMORY_NODE_ID}`,
     });
@@ -378,7 +379,7 @@ describe('Codex Memory contracts', () => {
 
   test('does not count find results, ordinary Nodes, failed gets, or uncited Memory reads', () => {
     const { extension, store, targetThread, activeTurn, projection } = memoryUsageHarness();
-    extension.contributeThreadContext(targetThread);
+    extension.contributeThreadContext(targetThread, { turnId: activeTurn.id, content: [] });
     completeOutlineGet(extension, targetThread, activeTurn, projection, [MEMORY_NODE_ID], {
       command: `outline find ${MEMORY_NODE_ID}`,
     });
@@ -392,7 +393,7 @@ describe('Codex Memory contracts', () => {
 
   test('does not count literal Memory markers in code or existing Markdown links', () => {
     const { extension, store, targetThread, activeTurn, projection } = memoryUsageHarness();
-    extension.contributeThreadContext(targetThread);
+    extension.contributeThreadContext(targetThread, { turnId: activeTurn.id, content: [] });
     completeOutlineGet(extension, targetThread, activeTurn, projection, [MEMORY_NODE_ID]);
     const marker = formatNodeReferenceMarker(MEMORY_NODE_ID);
     const response = [
@@ -409,7 +410,7 @@ describe('Codex Memory contracts', () => {
     const projection = memoryProjection(10);
     const { extension, store, targetThread, activeTurn } = memoryUsageHarness(projection);
     const memoryNodeIds = canonicalMemoryGraph(projection).nodes.map((entry) => entry.node.id);
-    extension.contributeThreadContext(targetThread);
+    extension.contributeThreadContext(targetThread, { turnId: activeTurn.id, content: [] });
     completeOutlineGet(extension, targetThread, activeTurn, projection, memoryNodeIds);
     completeOutlineGet(extension, targetThread, activeTurn, projection, memoryNodeIds);
 
@@ -1066,6 +1067,123 @@ describe('Codex Memory contracts', () => {
     expect(store.rollback('rollback:fixture')?.status).toBe('reconciled');
     expect(timeline.graph().nodes.some((entry) => entry.node.id === EPISODE_NODE_ID)).toBe(false);
     expect(timeline.graph().nodes.find((entry) => entry.category === 'belief')!.node.parentId).toBe(MEMORY_NODE_ID);
+  });
+
+  test('routes a personal preference directly to USER.md and uses it at the next admitted root Turn', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'memory-profile-routing-'));
+    const profiles = new ProfileFileStore(directory, new Database(':memory:') as unknown as SqliteDatabase);
+    try {
+      const store = memoryStore();
+      const state = mutableTimelineHost(memoryProjection());
+      const timeline = new TimelineMemoryStore(state.host);
+      const turn = userTurn('Always lead research reports with the conclusion.');
+      const thread = rootThread([turn]);
+      store.writeAdmission(admissionSnapshot(turn));
+      const phase = new Phase1(store, timeline, { run: async () => JSON.stringify({ dates: [], profile: [{
+        action: 'upsert', key: 'reports', scope: 'Research reports', text: 'Lead with the conclusion.', originItemIds: [ITEM_ID],
+        rationale: { futureUse: 'Later reports', novelty: 'Explicit ongoing request' },
+      }] }) }, () => true, profiles);
+      await expect(phase.run({ thread, turns: [turn] }, new AbortController().signal)).resolves.toBe('published');
+      expect(state.calls).toHaveLength(0);
+      expect(profiles.inspect('user').entries[0]).toMatchObject({ key: 'reports', authorship: 'learned' });
+      expect(store.processedOrigins(THREAD_ID).has(ITEM_ID)).toBe(true);
+      const extension = new MemoryExtension(store, timeline, { profiles });
+      const next = userTurn('Write a research report.', undefined, { kind: 'user' }, 'turn:profile-next', 'item:profile-next');
+      extension.contributeTurnAdmission(admissionContext(thread, next));
+      expect(extension.contributeThreadContext(thread, { turnId: next.id, content: [] }).additionalContext.profile_user_reports?.value).toContain('Lead with the conclusion.');
+      const off = userTurn('Another report.', undefined, { kind: 'user' }, 'turn:profile-off', 'item:profile-off');
+      store.setThreadMode(thread.id, 'disabled');
+      extension.contributeTurnAdmission(admissionContext(thread, off));
+      expect(extension.contributeThreadContext(thread, { turnId: off.id, content: [] }).additionalContext.profile_user_reports).toBeUndefined();
+    } finally { profiles.close(); rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  test('settles a Profile-only receipt after the original conversation becomes unavailable', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'memory-profile-source-loss-'));
+    const profiles = new ProfileFileStore(directory, new Database(':memory:') as unknown as SqliteDatabase);
+    try {
+      const store = memoryStore();
+      const timeline = new TimelineMemoryStore(mutableTimelineHost(memoryProjection()).host);
+      const turn = userTurn('Always put conclusions first.');
+      const thread = rootThread([turn]);
+      store.writeAdmission(admissionSnapshot(turn));
+      let available = true;
+      const phase = new Phase1(store, timeline, { run: async () => JSON.stringify({ dates: [], profile: [{
+        action: 'upsert', key: 'reports', scope: 'Reports', text: 'Conclusions first.', originItemIds: [ITEM_ID],
+        rationale: { futureUse: 'Reports', novelty: 'Preference' },
+      }] }) }, () => { if (!available) throw new Error('Source unavailable'); return true; }, profiles);
+      const finalize = store.finalizeStage1.bind(store);
+      store.finalizeStage1 = () => { throw new Error('Lost coverage settlement'); };
+      await expect(phase.run({ thread, turns: [turn] }, new AbortController().signal)).rejects.toThrow('Lost coverage');
+      const journal = store.preparedPublications()[0]!;
+      available = false;
+      store.finalizeStage1 = finalize;
+      await phase.recoverPrepared(journal, false);
+      expect(store.publication(journal.id)?.status).toBe('finalized');
+      expect(profiles.inspect('user').entries[0].sources[0].originItemId).toBe(ITEM_ID);
+    } finally { profiles.close(); rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  test('recovers accepted Profile output and pending Node output under the same extraction journal', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'memory-profile-settlement-'));
+    const profiles = new ProfileFileStore(directory, new Database(':memory:') as unknown as SqliteDatabase);
+    try {
+      const store = memoryStore();
+      const state = mutableTimelineHost(memoryProjection());
+      const timeline = new TimelineMemoryStore(state.host);
+      const turn = userTurn('Keep conclusions first. We deferred synchronization until conflict rules are defined.');
+      const thread = rootThread([turn]);
+      store.writeAdmission(admissionSnapshot(turn));
+      const original = state.host.runPlannedChanges;
+      state.host.runPlannedChanges = async () => { throw new Error('Simulated Node publication interruption'); };
+      let modelCalls = 0;
+      const phase = new Phase1(store, timeline, { run: async () => {
+        modelCalls++;
+        return JSON.stringify({ dates: [{ sourceDate: '2026-07-24', episode: null,
+          beliefs: [statement('Synchronization awaits defined conflict rules.', [ITEM_ID], 'context')], questions: [], guidance: [] }],
+          profile: [{ action: 'upsert', key: 'reports', scope: 'Reports', text: 'Put conclusions first.', originItemIds: [ITEM_ID],
+            rationale: { futureUse: 'Later reports', novelty: 'Explicit instruction' } }] });
+      } }, () => true, profiles);
+      await expect(phase.run({ thread, turns: [turn] }, new AbortController().signal)).rejects.toThrow('interruption');
+      const first = profiles.inspect('user');
+      expect(first.entries).toHaveLength(1);
+      expect(store.processedOrigins(THREAD_ID).size).toBe(0);
+      const journal = store.preparedPublications()[0]!;
+      state.host.runPlannedChanges = original;
+      await phase.recoverPrepared(journal, false);
+      expect(store.processedOrigins(THREAD_ID).has(ITEM_ID)).toBe(true);
+      expect(profiles.inspect('user').revision).toBe(first.revision);
+      expect(timeline.graph().nodes.filter((entry) => entry.node.content.text === 'Synchronization awaits defined conflict rules.')).toHaveLength(1);
+      expect(modelCalls).toBe(1);
+    } finally { profiles.close(); rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  test('extends the reviewed Reset to learned Profile entries and preserves authored content', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'memory-profile-reset-'));
+    const profiles = new ProfileFileStore(directory, new Database(':memory:') as unknown as SqliteDatabase);
+    try {
+      profiles.applyLearning('learn:reset', 0, [{ action: 'upsert', key: 'reports', scope: 'Reports', text: 'Conclusions first.',
+        originItemIds: [ITEM_ID], rationale: { futureUse: 'Reports', novelty: 'Preference' } }], [{
+        threadId: THREAD_ID, turnId: TURN_ID, originItemId: ITEM_ID, sourceDate: '2026-07-24', readerText: true, observedAt: 1,
+      }]);
+      const first = profiles.inspect('user');
+      profiles.edit({ kind: 'user', expectedDigest: first.savedDigest, content: first.content + '\n## language\nScope: General\nUse Chinese.\n', author: 'manual' });
+      const store = memoryStore();
+      const state = mutableTimelineHost(memoryProjection());
+      const timeline = new TimelineMemoryStore(state.host);
+      const extension = new MemoryExtension(store, timeline, { profiles });
+      extension.bindHost(memoryThreadHost(rootThread([])));
+      const target = extension.reviewReset();
+      expect(target.profile?.keys).toEqual(['reports']);
+      const observed = profiles.inspect('user');
+      profiles.edit({ kind: 'user', expectedDigest: observed.savedDigest,
+        content: observed.content.replace('Use Chinese.', 'Use Chinese for reports.'), author: 'manual' });
+      await expect(extension.reset(target, async () => {})).rejects.toThrow('changed after Reset review');
+      expect(store.preparedPublications()).toHaveLength(0);
+      await extension.reset(extension.reviewReset(), async () => {});
+      expect(profiles.inspect('user').entries.map((entry) => entry.key)).toEqual(['language']);
+      expect(store.status().resetEpoch).toBe(1);
+    } finally { profiles.close(); rmSync(directory, { recursive: true, force: true }); }
   });
 
   test('fingerprints all eligible evidence while sending the oldest complete unprocessed batch', () => {

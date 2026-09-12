@@ -154,8 +154,9 @@ correction, or additional independent support for retained content, with narrow
 applicability and sufficient context. One-off requests,
 routine completion, generic advice, silence, and repeated Agent prose do not
 establish useful durable knowledge. Existing project documents, configuration,
-and Skills retain their own facts. The Node-only unit still allows supported
-stable preferences; direct USER.md routing belongs to the profile unit.
+and Skills retain their own facts. Stable personal preferences and background
+route directly to the global `USER.md` profile. Independently useful dated
+events and contextual knowledge continue to route to Nodes.
 
 Completed tool evidence keeps enough bounded attribution to interpret an outcome:
 command evidence includes the canonical tool label, command, host `cwd`, output, and
@@ -323,9 +324,143 @@ released to user authority, or is deleted. Private job payloads distinguish
 consolidation from day naming explicitly; the pipeline consumes completed/deferred
 outcomes instead of inferring work from reason strings or boolean sentinels.
 
+## Profile Files And Direct Learning
+
+`agent/user/USER.md` is the single global current personal profile across
+configuration Profiles and Projects. Per-profile
+`agent/profiles/<profile-name>/IDENTITY.md` and `STYLE.md` define explicit role and
+style defaults. Missing components use the existing built-in behavior. Neither
+file changes visible Agent presentation, model, tools or permissions. There is
+no learned-profile mirror and no mandatory preference Node.
+
+USER.md uses readable Markdown entries:
+
+```markdown
+# User
+
+## reports
+Scope: Research reports
+Lead with the conclusion, then explain evidence and uncertainty.
+```
+
+Stable lowercase/hyphenated keys identify entries; the Scope line keeps
+applicability attached to each statement. Files are limited to 32 KiB, with at
+most 64 entries, 240 characters per scope and 1,200 characters per statement.
+Duplicate keys, malformed sections, secret-like content and invalid component
+sizes fail file admission and remain available for explicit repair.
+
+`ProfileFileStore` owns expected-revision publication, immutable accepted
+snapshots, per-entry authorship and original Thread/Turn/Item source metadata.
+`ProfileMarkdown` owns the readable format; `ProfileContext` selects complete
+accepted entries at root Turn admission. The private `profile-control.sqlite`
+is metadata/recovery state, not another editable collection.
+
+The bounded Stage 1 output can contain `profile` changes alongside `dates`.
+Each upsert/forget names a stable key, scope, statement, exact source Items and
+future-use/novelty rationale. The same reader-text validation applies to direct
+Profile learning as personal Node proposals. External/Host/assistant evidence
+alone cannot establish a preference. Model judgment still determines meaning,
+quotation, applicability and whether a forget request is explicit; source labels
+alone cannot prove those semantics. Ordinary forgetting/correction in a user
+conversation uses the configuration Skill and managed file tools directly rather
+than waiting for passive extraction's idle schedule.
+
+Unchanged independently confirmed entries extend evidence without rewriting file
+bytes. New scoped exceptions use their own entries; ordinary inference never
+replaces a manual or foreground Agent edit. The foreground file-tool owner
+records Agent authorship and the owning reader Turn; it cannot declare itself a
+human edit. External file changes receive manual-file attribution without
+invented conversational sources. Deleting an entry creates a private tombstone
+for its known source support so delayed work cannot restore it. Fresh independent
+evidence can justify a later new entry. Arbitrary raw same-account writers are
+not a security isolation boundary or a lossless simultaneous-editing service.
+
+Profile and Node destinations share accepted source coverage. The extraction
+journal commits Profile output independently of optional Node publication, and
+coverage advances only after both settle. Each file publication journals its
+expected and proposed bytes before atomic replacement. A matching proposed file
+can finish metadata settlement after interruption without becoming a manual
+edit; a concurrent external file is preserved. Inspection cannot authorize an
+unfinished learned write: the batch owner resumes it only after fresh admission.
+Raw file success alone is not an accepted update. Public
+`agent/profile-status.json` reports observed/saved/accepted state and the latest
+root Turn that selected the revision, including activation errors.
+
+Original-source unavailability does not invalidate an accepted preference.
+Rollback suppresses affected learned entries at preparation, removes unsupported
+entries only after committed invalidation, and preserves independent reader
+support. An aborted invalidation releases suppression. User-authored entries
+retain their own authority. Global and per-Thread Memory rules control automatic
+learning and learned context; authored identity/style and personal context remain
+configuration. No disabled-period backfill is introduced.
+
+A root Turn fixes accepted file observations for its execution/retries; ordinary
+edits activate at the next root Turn. `MemoryExtension` receives the exact admitted
+Turn ID and input, including when that Turn is not yet in visible history. It
+contributes Profile identity, style, routing rules and individual user preferences
+as stable keyed `additionalContext.threadState` entries. Full snapshots are
+canonical context evidence; the shared projector emits only added/changed text or
+named revocations. Each replacement explicitly supersedes its earlier value.
+Metadata-only source confirmation and edits to unselected entries do not change
+provider-visible context. Revisions, hashes, raw source links and times remain in
+Host inspection/provenance rather than model text.
+
+Profile contents no longer modify the system prompt. L0/L1/L2 and frozen developer
+configuration retain their existing owner; dynamic Profile context follows prior
+history on the current input. Host-labelled Profile identity can override built-in
+persona defaults, while explicit developer configuration and applicable current
+user instructions govern. Scoped preferences refine style without changing model,
+tools or permissions. Earlier messages remain byte-for-byte intact, preserving
+eligible shared provider prefixes. Existing cache affinity/breakpoints remain with
+the cache owner; these structural checks do not measure actual provider hit rates.
+
+Compaction reuses the latest complete additional-context checkpoint at the covered
+cursor and then applies the preserved tail. Context clear starts a new baseline;
+compaction rebuilds the summarized prefix without changing cache affinity. Forks
+inherit exact canonical evidence and reconcile current Profile state on their next
+ordinary root admission. Rerun preserves its original file observation and input
+evidence. Before each provider context is projected, the existing request-preparation
+lifecycle publishes changed extension state once; this includes source invalidation,
+Reset or learned-context disablement during a Turn or before rerun. Profile file
+edits remain fixed to admission, so this refresh withdraws invalid captured entries
+without adding a newer preference mid-Turn. Removal ends current applicability; it
+does not erase prior conversation history.
+
+`AdditionalContextState` shares latest-baseline lookup and state equality between
+runtime publication, projection and compaction. Unchanged runtime state creates no
+new evidence Item. Missing checkpoint payloads use the existing degradation path;
+the next complete evaluation supplies a fresh baseline. Profile changes have no
+independent context payload kind, renderer reminder or cache journal. Delegated
+and internal Memory sessions receive no independent automatic Profile.
+
+The combined Profile ceiling is 2,000 estimated tokens, with at most 600 tokens of
+complete learned entries. Admission counts the same escaped context envelope used
+by canonical projection. Authored overflow produces an activation error and omits
+those components instead of truncating them; learned entries use stable order
+within the remaining budget. Optional file/context failure does not stop ordinary
+conversation. Detailed Node/history knowledge continues to use existing tools; a
+Profile preference needs no fabricated Node citation.
+
+Settings > Agents exposes the same three editable files, expected-digest saves,
+conflict-preserving drafts and exact source previews (bounded to 16,000
+characters, with explicit truncation/unavailability). Identity/style sources
+follow the selected named Profile; USER.md remains global. The configuration
+Skill describes ordinary file editing and public status rather than adding a
+Settings model tool.
+
+Memory Reset reviews the exact learned-profile revision/keys and counts alongside
+its existing canonical Node subtree target, including ordinary descendants.
+Authored Profile entries and identity/style files survive. Its durable journal
+settles both destinations, preserves known-source tombstones and advances the
+existing future-Turn reset epoch. A stale Profile revision prevents its deletion.
+If Profile removal settles but Node Reset does not, inspection and UI report the
+partial result explicitly. This feature does not narrow Node Reset ownership.
+
 ## Retrieval And Outline CLI
 
-An eligible Turn receives compact routing instructions, not Memory prose. The
+An eligible Turn receives compact Node routing instructions and bounded
+applicable personal context from accepted Profile files, not automatically
+retrieved Node prose. The
 instructions tell the model to use `outline find` only when prior preferences,
 decisions, commitments, unresolved questions, or recurring workflow facts could
 materially improve the answer, then inspect only the one or two most relevant
@@ -427,7 +562,8 @@ with its complete subtree.
 `<userData>/agent/memories.sqlite` stores modes, admissions, exclusions,
 source versions, origin claims, generated fingerprints, lineage,
 citation usage, leases/jobs, publication journals, reset epochs, visibility
-generations, and rollback invalidations. Published prose exists only in Nodes.
+generations, and rollback invalidations. Node prose lives in Nodes; current
+personal context lives in Profile files with private revision/provenance control.
 
 After Thread rollouts and rollback markers are replayed, but before initial idle
 extensions may admit a Goal or feature Turn, startup ensures the protected tags,
@@ -438,8 +574,12 @@ Turn-admission preparation is single-flight across Thread initialization and
 worker startup. Concurrent callers share one settlement; failure clears the
 preparation promise so an explicit Host startup retry can recover cleanly.
 A matching Runtime Operation found by idempotency key and source fingerprint
-finalizes SQLite without rerunning the model. A non-Reset preparation without a
-settled Operation is discarded and retried from a fresh snapshot. A Reset
+finalizes SQLite without rerunning the model. Node-only non-Reset preparations
+without settlement are discarded and retried from a fresh snapshot. Mixed Profile
+and Node extraction journals resume pending destinations under the same identity
+after fresh source/mode admission; an accepted Profile receipt prevents duplicate
+acceptance. Definitive source or target conflicts leave coverage pending for
+fresh extraction and preserve already accepted destination content. A Reset
 without settlement can reapply only its still-matching reviewed target before
 finalization. A changed target or definitive Runtime rejection marks the existing
 journal `conflicted` and retires its Reset job without advancing the epoch or
@@ -472,10 +612,13 @@ Settings and Thread Details use the internal Memory-owned Host facade. These
 operations are not model tools:
 
 - Inspection returns bounded status, an exact Thread mode/revision, or
-  settlement for one Reset operation identity. No prose, private paths, or Node
-  inventory is exposed. Stray counts use the incremental mutation index.
+  settlement for one Reset operation identity. Profile inspection additionally
+  returns public file content, accepted/saved/last-selected revisions, entry
+  authorship and exact available evidence previews. Private control paths and
+  Node inventory are not exposed. Stray counts use the incremental mutation index.
 - Management opens the ordinary saved Memory search, changes one Thread
-  mode using its observed revision, or requests native-confirmed Reset. The
+  mode using its observed revision, edits an explicitly selected public Profile
+  file using its observed digest, or requests native-confirmed Reset. The
   window names its exact Thread Details target. Missing, hidden, ephemeral, child,
   or non-user targets are unavailable, never synthesized as enabled.
 - Global enablement remains `agent.memory.enabled` in `config/settings.jsonc`.

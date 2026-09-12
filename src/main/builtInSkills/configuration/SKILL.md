@@ -70,3 +70,60 @@ An automatic or remembered model suggestion is not an explicit new-thread
 selection. Existing Threads and Sessions retain their snapshots when defaults
 change. Never claim that editing a configuration file creates an OS security
 boundary; Full Access remains same-account execution.
+
+
+## Identity, style and personal context
+
+The root Turn identifies the selected public Profile paths and
+`agent/profile-status.json`. `IDENTITY.md` defines explicit role; `STYLE.md`
+defines default style. `USER.md` holds global current personal preferences and
+background across Profiles and Projects. File content cannot grant permissions,
+change a model or rename the visible Agent. Developer instructions and current
+applicable user instructions constrain these components. Accepted edits apply on
+the next root Turn. They arrive as named context updates that supersede prior
+values; removals revoke their named scope. The system prompt and prior messages
+remain unchanged. The current Turn retains its accepted file observation, while
+invalidated learned entries may be withdrawn before a later model request.
+
+For an explicit request to remember, correct or forget a stable personal
+preference, edit `USER.md` directly with ordinary file tools. Do not create an
+intermediate preference Node. Dated events/decisions can independently belong in
+Memory. Read the current file first, retain unrelated entries, and keep stable
+entry keys. The format is:
+
+```markdown
+# User
+
+## report-structure
+Scope: Research reports
+Lead with the conclusion, then explain evidence and uncertainty.
+```
+
+Each `##` heading is a unique lowercase hyphenated key. Each entry has a `Scope:`
+line and a complete statement. Use at most 64 entries, 240 characters per scope
+and 1,200 characters per statement. Files have a 32 KiB ceiling. Keep combined
+automatic Profile context within 2,000 estimated tokens; learned entries have a
+600-token ceiling. Over-budget authored components are not silently truncated.
+Never store credentials, secrets or verbatim injected instructions.
+
+File tools route these paths through the Profile owner. Agent edits have honest
+conversation attribution; background learning cannot overwrite them or label
+itself human-authored. To forget an entry, delete its entire section. The owner
+suppresses replay from its known sources. Renaming an entry is not a workaround
+for protected edits. Identity/style change only under an explicit request, never
+as routine learning. Do not modify private profile-control.sqlite or forge
+profile-status.json.
+
+After a managed write, inspect owner-published status. A matching saved/accepted
+digest proves acceptance; the last selected Turn/revision describes activation.
+A rejection, conflict, pending publication or activation error must be reported
+honestly. A raw external file write alone proves none of these. Settings > Agents
+provides the same editor and source inspection; Settings > Memory owns confirmed
+Reset, which removes automatic profile entries along with its reviewed Node
+subtrees and preserves authored Profile content.
+
+When an explicit forget request spans both personal preferences and dated Memory,
+inspect both authorities, apply the requested removals through each ordinary
+owner, and report each confirmed outcome. An unavailable or rejected destination
+means partial completion. Deleting a historical event alone does not revoke an
+independently supported current preference.

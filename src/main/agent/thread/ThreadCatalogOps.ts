@@ -660,6 +660,9 @@ export class ThreadCatalogOps {
         for (const descendantId of [...subtree.threadIds].reverse()) {
           await this.records.delete(descendantId);
         }
+        for (const record of [...subtree.records].reverse()) {
+          await this.extensions.threadDeleted(record.thread);
+        }
         await this.records.forgetExclusions(subtree.records.map((record) => record.thread.sessionId));
       } finally {
         this.finishThreadSubtreeStop(subtree.threadIds);

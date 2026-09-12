@@ -1,3 +1,4 @@
+import { ProfileFilesEditor } from './ProfileFilesEditor';
 import { useEffect, useRef, useState } from 'react';
 import type { AgentProviderSettingsView, AgentDelegationSettingsInput } from '../../api/types';
 import type { DelegationSettingsView } from '../../../core/delegationSettings';
@@ -44,6 +45,7 @@ export function AgentsManager() {
   }
   return <>
     <AgentConfigurationEditor />
+      <ProfileFilesEditor />
     <DelegationPreferences readError={readError} modelError={modelError} settings={models} runtime={runtime} onChange={update} />
   </>;
 }

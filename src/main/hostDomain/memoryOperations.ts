@@ -35,6 +35,8 @@ export function createMemoryOperations(options: {
     async inspect(value: unknown, caller: MemoryOperationCaller): Promise<MemoryInspectResult> {
       const request = decode<MemoryInspectRequest>(value, MEMORY_INSPECT_SCHEMA);
       await authorize(caller, 'memory_inspect', request);
+      if (request.operation === 'profile') return { operation: 'profile', files: memory.inspectProfileFiles(request.profileName) };
+      if (request.operation === 'profile_source') return { operation: 'profile_source', source: memory.inspectProfileSource(request.key, request.originItemId) };
       return request.operation === 'status'
         ? { operation: 'status', ...memory.view(targetThread(request)) }
         : { operation: 'reset', reset: memory.inspectReset(request.operationId) };
@@ -44,6 +46,7 @@ export function createMemoryOperations(options: {
       const recheck = () => authorize(caller, 'memory_manage', request);
       await recheck();
       switch (request.operation) {
+        case 'edit_profile_file': return { operation: request.operation, file: await memory.editProfileFile(request, recheck) };
         case 'open': return options.open(recheck);
         case 'set_thread_mode': {
           const threadId = targetThread(request);

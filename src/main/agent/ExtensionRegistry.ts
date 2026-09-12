@@ -5,6 +5,7 @@ import type {
   ExtensionToolContribution,
   OrderedTurnItemContribution,
   ThreadContextContribution,
+  ThreadContextInput,
   ToolLifecycleContext,
   ToolLifecycleResult,
   ThreadHistoryRollbackContext,
@@ -68,6 +69,10 @@ export class ExtensionRegistry {
     await this.invoke((extension) => extension.onThreadStopped?.(thread));
   }
 
+  async threadDeleted(thread: Thread): Promise<void> {
+    await this.invoke((extension) => extension.onThreadDeleted?.(thread));
+  }
+
   historyRollbackExtensions(): readonly AgentCoreExtension[] {
     return this.all().filter((extension) => extension.prepareHistoryRollback);
   }
@@ -110,11 +115,11 @@ export class ExtensionRegistry {
     await this.invoke((extension) => extension.onTurnError?.(thread, turn, error));
   }
 
-  async threadContext(thread: Thread): Promise<readonly AdmittedThreadContextContribution[]> {
+  async threadContext(thread: Thread, input: ThreadContextInput): Promise<readonly AdmittedThreadContextContribution[]> {
     const contributions: AdmittedThreadContextContribution[] = [];
     for (const { extension, applicationInstructions } of this.registrations) {
       if (!extension.contributeThreadContext) continue;
-      const contribution = await extension.contributeThreadContext(thread);
+      const contribution = await extension.contributeThreadContext(thread, input);
       if (contribution && contribution.extensionId !== extension.id) {
         throw new Error(`Extension context contribution owner mismatch: ${extension.id}`);
       }

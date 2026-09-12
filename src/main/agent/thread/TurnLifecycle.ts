@@ -1,3 +1,4 @@
+import { planAdditionalContextState } from '../context/AdditionalContextState';
 import type { RequestUserInputResult, UserInputIdentity, UserInputSettlement, UserInputReadResponse, AgentCoreRecordedNotification } from '../../../core/agent/protocol';
 import { sameUserInput, userInputKey } from '../../../core/agent/userInput';
 import { KeyedMutex } from '../Mutex';
@@ -13,7 +14,7 @@ import type { DocumentProjection } from '../../../core/types';
 import { planContextCompaction } from '../context/ContextCompaction';
 import { assertContextPayloadDependencies, contextPayloadDependencies } from '../context/contextDependencies';
 import { cursorFor,selectEffectiveContext } from '../context/ContextEpoch';
-import { admitContextEvidence,contextEvidenceItem } from '../context/evidenceAdmission';
+import { admitContextEvidence,contextEvidenceItem,additionalContextPayload } from '../context/evidenceAdmission';
 import { observedSkillFilePaths,planSkillCatalogEvidence } from '../context/SkillContextReducer';
 import { assertCanonicalUserContent } from '../context/userContentIntegrity';
 import type { ExtensionRegistry } from '../ExtensionRegistry';
@@ -582,7 +583,7 @@ export class TurnLifecycle {
     try {
       const extensionContext = this.core.hiddenEphemeralThreads.has(request.threadId)
         ? []
-        : await this.extensions.threadContext(thread);
+        : await this.extensions.threadContext(thread, { turnId: active.turnId, content: admission.content });
       const canonicalTurns = this.core.allTurns(request.threadId);
       const skillAdmission = this.core.hiddenEphemeralThreads.has(request.threadId)
           ? { catalogSnapshot: null, preloadedInvocations: [], invocation: null }
@@ -956,6 +957,7 @@ export class TurnLifecycle {
           thread: record.thread,
           turnId,
           provenance: provisionalTurn.provenance,
+          ...(request.rerunReplacementTarget ? { replayedTurnId: request.rerunReplacementTarget.id } : {}),
           configuration: record.configuration,
           threadBarrier,
           hostBarrier,
@@ -964,7 +966,7 @@ export class TurnLifecycle {
       const reuseCanonicalEvidence = request.reuseStagedContextEvidenceOnly === true;
       const extensionContext = reuseCanonicalEvidence || this.core.hiddenEphemeralThreads.has(request.threadId)
         ? []
-        : await this.extensions.threadContext(record.thread);
+        : await this.extensions.threadContext(record.thread, { turnId, content: input });
       const priorTurns = this.core.allTurns(request.threadId);
       const canonicalTurns = [
         ...priorTurns,
@@ -1217,6 +1219,7 @@ export class TurnLifecycle {
             summary,
           ),
           publishPendingContextObservations: () => this.publishPendingContextObservations(active, thread),
+          refreshThreadContext: () => this.refreshThreadContext(active, thread),
           persistTurnDiagnostics: (payload) => this.core.payloads.writeTurnDiagnostics(active.threadId, payload),
           inspectTurnDiagnostics: (read) => {
             if (this.activeTurns.get(active.threadId) !== active) return () => undefined;
@@ -1446,6 +1449,20 @@ export class TurnLifecycle {
           console.warn('[agent] Optional context observation delivery deferred', error);
         }
       }
+    });
+  }
+
+  private async refreshThreadContext(active: ActiveTurn, thread: Thread): Promise<void> {
+    if (this.core.hiddenEphemeralThreads.has(active.threadId)) return;
+    await this.core.threadMutex.run(active.threadId, async () => {
+      if (this.activeTurns.get(active.threadId) !== active || active.finishing || active.controller.signal.aborted) return;
+      const content = [...active.initialTurn.items, ...active.recorder.orderedItems()]
+        .flatMap((item) => item.type === 'userMessage' ? item.content : []);
+      const contributions = await this.extensions.threadContext(thread, { turnId: active.turnId, content });
+      const snapshot = additionalContextPayload(undefined, contributions, true);
+      const changed = await planAdditionalContextState(this.core.allTurns(active.threadId), snapshot,
+        (ref) => this.core.payloads.readContext(active.threadId, ref));
+      if (changed) await this.persistExecutionContextEvidenceLocked(active, thread, changed, 'Updated Thread context');
     });
   }
 
