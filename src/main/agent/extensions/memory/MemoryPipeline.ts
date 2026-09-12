@@ -5,6 +5,7 @@ import { Phase2 } from './Phase2';
 import { TimelineMemoryStore } from './TimelineMemoryStore';
 import { payloadString, type MemoryDirtyJob } from './MemoryJobs';
 import { CONSOLIDATION_RETRY_MS } from './ConsolidationPlan';
+import { UNRESTRICTED_RESTORED_WORK, type RestoredWorkAdmission } from '../../restoredWork';
 
 const DEFAULT_MAX_THREAD_AGE_MS = 10 * 24 * 60 * 60 * 1_000;
 const DEFAULT_MIN_THREAD_IDLE_MS = 6 * 60 * 60 * 1_000;
@@ -22,6 +23,7 @@ export interface MemoryPipelineOptions {
   readonly minThreadIdleMs?: number;
   readonly maxStartupThreads?: number;
   readonly recoverResetPublication?: (record: MemoryPublicationRecord, receiptMatches: boolean) => Promise<void>;
+  readonly restoredWork?: RestoredWorkAdmission;
 }
 
 export class MemoryPipeline {
@@ -180,6 +182,7 @@ export class MemoryPipeline {
       }
       if (job.kind === 'reset') {
         const { publicationId } = job.payload;
+        if (!(this.options.restoredWork ?? UNRESTRICTED_RESTORED_WORK).allows('memory-publication', publicationId)) return 'completed';
         const publication = this.control.publication(publicationId);
         if (!publication || publication.status !== 'prepared') return 'completed';
         if (publication.kind !== 'reset') throw new Error(`Memory reset job targets ${publication.kind} publication`);
@@ -195,6 +198,7 @@ export class MemoryPipeline {
 
   private async recoverPublications(): Promise<void> {
     for (const record of this.control.preparedPublications()) {
+      if (!(this.options.restoredWork ?? UNRESTRICTED_RESTORED_WORK).allows('memory-publication', record.id)) continue;
       const matches = await this.timeline.hasPublication(record.id, record.digest);
       if (matches) {
         if (record.kind === 'stage1') await this.phase1.recoverPrepared(record, true);

@@ -32,6 +32,7 @@ import { resolveToolTaskSupervisorRuntime } from '../../src/main/agent/tasks/too
 import { DelegateRuntimeHost, schedulingPolicyDigest } from '../../src/main/agent/delegation';
 import { resolveDelegateCliRuntime } from '../../src/main/delegateRuntime';
 import { parseDelegateCommand, type DelegateStateCommand } from '../../src/delegate/contract';
+import { UNRESTRICTED_RESTORED_WORK } from '../../src/main/agent/restoredWork';
 
 const OWNER_ID = '00000000-0000-7000-8000-000000000001' as ThreadId;
 const SOURCE_TURN_ID = '00000000-0000-7000-8000-000000000002' as TurnId;
@@ -60,6 +61,26 @@ afterEach(async () => {
 });
 
 describe('ToolTaskStore', () => {
+  test('historical active and queued leases preserve history without consuming fresh task capacity', async () => {
+    const fixture = await createFixture();
+    const ids: string[] = [];
+    for (let index = 0; index < 5; index++) {
+      const task = await seedRunningTask(fixture, `historical-${index}`, index, { producer: 'bash' }); ids.push(task.taskId);
+      fixture.store.admitLease(task.taskId, { pool: 'ordinary', configurationRevision: 'test', maxConcurrentProducer: 4, maxConcurrentPool: 4 }, DELEGATION_SCHEDULER_LIMITS, index);
+    }
+    expect(fixture.store.activeLeases()).toHaveLength(4);
+    expect(fixture.store.queuedLeases()).toHaveLength(1);
+    const service = new ToolTaskService(fixture.store, fixture.detailRoot, undefined, undefined, undefined, undefined, {
+      ...UNRESTRICTED_RESTORED_WORK, generation: 'restored',
+      allows: (kind, id) => kind !== 'task' || !ids.includes(id), blockedIdentities: (kind) => kind === 'task' ? ids : [],
+    });
+    services.push(service); service.bindHost(passiveHost()); await service.initialize();
+    expect(fixture.store.activeLeases()).toEqual([]); expect(fixture.store.queuedLeases()).toEqual([]);
+    expect(fixture.store.readLease(ids[0]!)?.state).toBe('active');
+    expect(fixture.store.readLease(ids[4]!)?.state).toBe('queued');
+    const fresh = await service.start(startInput('exit 0'));
+    expect((await waitForTerminal(service, fresh.taskId)).state).toBe('succeeded');
+  });
   test('keeps terminal truth immutable and delivery prepare/rollback/link idempotent', async () => {
     const fixture = await createFixture();
     const first = await seedTerminalTask(fixture, 'task-first', 10, 'succeeded');

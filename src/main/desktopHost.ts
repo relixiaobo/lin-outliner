@@ -564,8 +564,11 @@ function requireAgentHost(): AgentHost {
 }
 const scheduledNoticesShown = new Set<string>();
 const activeScheduledNotices = new Set<Notification>();
-function constructAgentHost(): Promise<AgentHost> {
+async function constructAgentHost(): Promise<AgentHost> {
   dataLifecycle.assertDomain('agent');
+  // Every construction, including a scoped Retry, loads durable authority before
+  // any Store snapshots historical identities for producer admission.
+  await restoredExecution.load();
   if (!hasExplicitAgentRoot) ensureAgentDir(agentLocalFileRoot);
   ensureAgentDir(agentScratchRoot);
   return createAgentHost({
@@ -2848,7 +2851,6 @@ const lifecycle = new DesktopHostLifecycle({
       name: 'data-lifecycle', dependsOn: ['windows'], retryable: true,
       run: async () => {
         await dataLifecycle.prepare();
-        if (dataLifecycle.state().phase === 'ready') await restoredExecution.load();
       },
     },
     { name: 'data-outline', dependsOn: ['data-lifecycle'], retryable: true, run: () => dataLifecycle.assertDomain('outline') },

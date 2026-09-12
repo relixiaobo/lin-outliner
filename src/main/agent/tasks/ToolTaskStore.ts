@@ -290,14 +290,16 @@ export class ToolTaskStore {
 
   queuedLeases(): readonly ToolTaskLease[] {
     return (this.db.prepare(`
-      SELECT * FROM tool_task_leases WHERE state = 'queued' ORDER BY created_at, task_id
-    `).all() as ToolTaskLeaseRow[]).map(leaseFromRow);
+      SELECT * FROM tool_task_leases WHERE state = 'queued'
+        AND task_id NOT IN (SELECT value FROM json_each(?)) ORDER BY created_at, task_id
+    `).all(this.restoredTaskIds) as ToolTaskLeaseRow[]).map(leaseFromRow);
   }
 
   activeLeases(): readonly ToolTaskLease[] {
     return (this.db.prepare(`
-      SELECT * FROM tool_task_leases WHERE state = 'active' ORDER BY created_at, task_id
-    `).all() as ToolTaskLeaseRow[]).map(leaseFromRow);
+      SELECT * FROM tool_task_leases WHERE state = 'active'
+        AND task_id NOT IN (SELECT value FROM json_each(?)) ORDER BY created_at, task_id
+    `).all(this.restoredTaskIds) as ToolTaskLeaseRow[]).map(leaseFromRow);
   }
 
   releaseLease(taskId: string, now: number): ToolTaskLease | null {

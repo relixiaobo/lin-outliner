@@ -21,6 +21,13 @@ async function fixture() {
 }
 
 describe('verified derived history rebuild', () => {
+  test('refuses a rebuild when a sibling Store is missing and preserves the original projection', async () => {
+    const { root, registry } = await fixture();
+    const before = await fingerprint(join(root, 'agent/thread_history.sqlite'));
+    await rm(join(root, 'agent/goals.sqlite'));
+    await expect(new ThreadProjectionRebuilder(root, registry).preview()).rejects.toThrow('agent-goals');
+    expect(await fingerprint(join(root, 'agent/thread_history.sqlite'))).toEqual(before);
+  });
   test('repairs corrupt projected items from complete events and resumes a lost installation receipt', async () => {
     const { root, data, registry } = await fixture();
     const path = join(root, 'agent/thread_history.sqlite');

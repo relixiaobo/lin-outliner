@@ -166,6 +166,7 @@ export class OutlineClientSupervisor {
       if (await this.retireMismatchedRuntime(deadline, signal)) return;
       throw error;
     }
+    if (runtimeProcessHasExited(descriptor.pid)) return;
     await this.shutdown(signal);
   }
 

@@ -56,6 +56,7 @@ import { formatNodeReferenceMarker } from '../../src/core/referenceMarkup';
 import { createMemoryOperations, type MemoryOperationCaller } from '../../src/main/hostDomain/memoryOperations';
 import { captureMemoryResetTarget } from '../../src/main/agent/extensions/memory/MemoryResetTarget';
 import { AgentToolFailure } from '../../src/main/agent/AgentToolFailure';
+import { UNRESTRICTED_RESTORED_WORK } from '../../src/main/agent/restoredWork';
 
 const THREAD_ID = '018f0f24-7b2e-7a3f-8a4b-123456789abc';
 const TURN_ID = '018f0f24-7b2e-7a3f-8a4b-123456789abd';
@@ -2759,6 +2760,37 @@ describe('Codex Memory contracts', () => {
     expect(timelineState.projection().nodes.some((entry) => entry.id === 'stray:1')).toBe(true);
     expect(store.status().resetEpoch).toBe(1);
     expect(store.publication(resetPublication.id)?.status).toBe('finalized');
+  });
+
+  test('fresh jobs do not replay restored Reset or Stage1 publications after future execution resumes', async () => {
+    const store = memoryStore();
+    const timelineState = mutableTimelineHost(memoryProjection());
+    const timeline = new TimelineMemoryStore(timelineState.host);
+    const reset = publication('reset', { epoch: 1, excludedTurnIds: [TURN_ID], target: captureMemoryResetTarget(timelineState.projection(), 0) });
+    store.prepareReset(reset, 20);
+    store.preparePublication({ ...reset, id: 'historical-stage1', kind: 'stage1', payload: {} });
+    store.setRestoredJobIds([`reset:${reset.id}:20`]);
+    const memory = new MemoryExtension(store, timeline, { restoredGeneration: 'restored',
+      restoredWork: { ...UNRESTRICTED_RESTORED_WORK, generation: 'restored', allows: (kind, id) => kind !== 'memory-publication' || ![reset.id, 'historical-stage1'].includes(id) } });
+    memory.bindHost(memoryThreadHost(rootThread([])));
+    try {
+      await memory.startWorker();
+      // This fresh job reaches the ordinary per-job recovery entry point.
+      store.enqueueJob('fresh-after-restore', 'phase1', { threadId: THREAD_ID }, Date.now());
+      memory.wakeWorker();
+      await waitFor(() => store.nextJob(Date.now()) === null);
+      // A new queue entry cannot lend its authority to an old Reset publication.
+      store.enqueueJob('fresh-reset-reference', 'reset', { publicationId: reset.id }, Date.now());
+      memory.wakeWorker();
+      await waitFor(() => store.nextJob(Date.now()) === null);
+      expect(timelineState.deletedNodeIds).toEqual([]);
+      expect(store.publication(reset.id)?.status).toBe('prepared');
+      expect(store.publication('historical-stage1')?.status).toBe('prepared');
+      expect(store.status().lastError).toBeNull();
+      const fresh = await memory.reset(memory.reviewReset(), async () => undefined);
+      expect(fresh.state).toBe('finalized');
+      expect(fresh.operationId).not.toBe(reset.id);
+    } finally { await memory.stopWorker(); }
   });
 
   test('finalizes a prepared Reset with a matching receipt without deleting twice', async () => {

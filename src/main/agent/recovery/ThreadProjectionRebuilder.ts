@@ -21,14 +21,16 @@ export class ThreadProjectionRebuilder {
     try {
       const source = await this.readSources(history, checkpoint);
       verifyDatabase(database, true);
-      database.exec('PRAGMA user_version = 1; PRAGMA wal_checkpoint(TRUNCATE)');
+      // The staged projection moves as one file. Close WAL ownership at its
+      // staging path before renaming it to the live Store location.
+      database.exec('PRAGMA user_version = 1; PRAGMA wal_checkpoint(TRUNCATE); PRAGMA journal_mode = DELETE');
       return source;
     } finally { history.close(); }
   }
 
   private async readSources(history?: ThreadHistoryProjectionStore, checkpoint?: DataLifecycleCheckpoint): Promise<{ threads: number; sourceDigest: string }> {
     const inspections = await this.registry.inspect(this.userData, true);
-    const blocked = inspections.find((entry) => entry.store.id !== 'agent-history' && entry.issue);
+    const blocked = inspections.find((entry) => entry.store.id !== 'agent-history' && (entry.issue || !entry.exists));
     if (blocked) throw new Error(`Repair requires compatible ${blocked.store.id} data.`);
     const metadata = this.registry.openDatabase(await assertOwnedPath(this.userData, 'agent/state.sqlite'), true);
     let ids: string[];

@@ -18,6 +18,7 @@ const WORK_QUERIES: readonly { store: string; kind: RestoredWorkKind; sql: strin
   { store: 'agent-delegation', kind: 'session', sql: 'SELECT session_id AS id FROM delegation_sessions' },
   { store: 'profile-files', kind: 'profile', sql: 'SELECT id FROM profile_publications' },
   { store: 'agent-memory', kind: 'memory-job', sql: "SELECT key || ':' || updated_at AS id FROM dirty_jobs" },
+  { store: 'agent-memory', kind: 'memory-publication', sql: "SELECT id FROM publications WHERE status = 'prepared'" },
   { store: 'agent-state', kind: 'thread', sql: 'SELECT id FROM threads' },
 ];
 const WORK_KINDS = new Set(WORK_QUERIES.map((entry) => entry.kind));

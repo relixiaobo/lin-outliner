@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { readOutlineRuntimeDescriptor } from '../../src/outline/client/descriptor';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DataLifecycleCoordinator } from '../../src/main/dataLifecycle/DataLifecycleCoordinator';
@@ -28,10 +29,63 @@ function create(userData: string, checkpoint?: (name: string) => void | Promise<
     checkpoint,
     prepareRestoredExecution: (generation) => execution.retain(generation),
     resumeAutomaticExecution: (generation) => execution.resumeFutureWork(generation) });
-  return { coordinator, execution, registry, barrier };
+  return { coordinator, execution, registry, barrier, supervisor };
 }
 
 describe('data lifecycle startup integration', () => {
+  test('configuration-only initialization evidence cannot be selected for restoration', async () => {
+    const userData = await root();
+    await writeFile(join(userData, 'app-preferences.json'), '{}');
+    const { coordinator } = create(userData);
+    try {
+      await coordinator.prepare();
+      const checkpoint = (await coordinator.journal.read())!.backupId;
+      expect((await coordinator.backups.read(checkpoint))!.files.length).toBeGreaterThan(0);
+      expect((await coordinator.inspectBackups()).backups).toEqual([]);
+      await expect(coordinator.validateRestoreSource(checkpoint)).rejects.toThrow('complete canonical workspace');
+      await expect(coordinator.request({ action: 'restore', backupId: checkpoint, revision: coordinator.state().revision })).rejects.toThrow('complete canonical workspace');
+      expect(coordinator.state().phase).toBe('ready');
+    } finally { await coordinator.close(); }
+  }, 20_000);
+
+  test('a missing established Store blocks both history repair admission and interrupted repair completion', async () => {
+    const userData = await root(); let current = create(userData);
+    await current.coordinator.prepare();
+    const originalManifest = await readFile(join(userData, 'data-manifest.json'), 'utf8');
+    await current.coordinator.request({ action: 'repair-history', revision: current.coordinator.state().revision });
+    await current.coordinator.close();
+    current = create(userData, async (name) => {
+      if (name === 'history-projection-installed') {
+        await rename(join(userData, 'agent/goals.sqlite'), join(userData, 'retained-goals.sqlite'));
+        throw new Error('interrupted repair');
+      }
+    });
+    await current.coordinator.prepare(); await current.coordinator.close();
+    current = create(userData);
+    try {
+      await current.coordinator.prepare();
+      expect(current.coordinator.state().phase).toBe('recoveryRequired');
+      expect(current.coordinator.state().issues[0]?.message).toContain('agent-goals');
+      expect(await readFile(join(userData, 'data-manifest.json'), 'utf8')).toBe(originalManifest);
+      expect((await current.registry.inspect(userData)).find((entry) => entry.store.id === 'agent-goals')?.exists).toBe(false);
+    } finally { await current.coordinator.close(); }
+  }, 20_000);
+
+  test('maintenance reclaims a killed same-contract Runtime without starting a replacement writer', async () => {
+    const userData = await root(); const current = create(userData);
+    try {
+      await current.coordinator.prepare();
+      const client = await current.supervisor.connect(); client.close();
+      const descriptor = (await readOutlineRuntimeDescriptor(join(userData, 'outline-runtime')))!;
+      process.kill(descriptor.pid, 'SIGKILL');
+      for (let attempt = 0; attempt < 150; attempt++) {
+        try { process.kill(descriptor.pid, 0); } catch { break; }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      for (let attempt = 0; attempt < 2; attempt++) { await current.barrier.acquire(); await current.barrier.release(); }
+      expect((await readOutlineRuntimeDescriptor(join(userData, 'outline-runtime')))?.instanceId).toBe(descriptor.instanceId);
+    } finally { await current.coordinator.close(); }
+  }, 20_000);
   test('initializes an empty dataset through a fenced real Runtime before committing its baseline', async () => {
     const userData = await root();
     const { coordinator } = create(userData);

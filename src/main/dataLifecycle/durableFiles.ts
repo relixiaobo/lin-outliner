@@ -170,12 +170,13 @@ export async function fingerprint(path: string): Promise<FileFingerprint> {
   } finally { await file.close(); }
 }
 
-export async function copyDurably(source: string, target: string, checkpoint?: DataLifecycleCheckpoint): Promise<FileFingerprint> {
+export async function copyDurably(source: string, target: string, checkpoint?: DataLifecycleCheckpoint, mode = 0o600): Promise<FileFingerprint> {
+  if (mode !== 0o600 && mode !== 0o700) throw new Error('Unsupported private file permissions');
   const before = await fingerprint(source);
   await ensureDurableDirectory(dirname(target), checkpoint);
   await copyFile(source, target, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE);
   const file = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW);
-  try { await file.chmod(0o600); await checkpoint?.('before-file-sync'); await file.sync(); }
+  try { await file.chmod(mode); await checkpoint?.('before-file-sync'); await file.sync(); }
   finally { await file.close(); }
   const after = await fingerprint(source);
   const copied = await fingerprint(target);

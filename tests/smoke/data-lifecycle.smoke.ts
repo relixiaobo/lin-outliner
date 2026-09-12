@@ -1,7 +1,37 @@
 import { expect, test } from '@playwright/test';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { closeSmokeApp, launchSmokeApp, type SmokeApp } from './electronApp';
+
+test('scoped Agent Retry reloads durable restored execution authority before constructing producers', async () => {
+  const userDataDir = await mkdtemp('/tmp/tenon-fence-retry-');
+  let smoke: SmokeApp | undefined;
+  try {
+    smoke = await launchSmokeApp({ userDataDir }); await ready(smoke);
+    await closeSmokeApp(smoke, { keepUserData: true }); smoke = undefined;
+    const generation = randomUUID(); const taskId = `task_${randomUUID()}`;
+    await mkdir(join(userDataDir, 'data-lifecycle/restored-work'), { recursive: true });
+    await writeFile(join(userDataDir, 'data-lifecycle/execution-fence.json'), JSON.stringify({ version: 1, generation, paused: true }));
+    await writeFile(join(userDataDir, 'data-lifecycle/restored-work', `${generation}.json`), JSON.stringify({ version: 1, generation, entries: [{ kind: 'task', id: taskId }] }));
+    const store = join(userDataDir, 'agent/memories.sqlite'); const retained = join(userDataDir, 'retained-memory');
+    await rename(store, retained); await writeFile(store, 'Temporary damaged Memory Store');
+    smoke = await launchSmokeApp({ userDataDir });
+    await expect.poll(() => smoke!.window.evaluate(() => window.lin!.startup.get())).toMatchObject({ capabilities: { outline: 'ready', agent: 'unavailable' } });
+    await rm(store); await rename(retained, store);
+    await smoke.window.locator('.startup-failure').getByRole('button', { name: 'Retry', exact: true }).click();
+    await ready(smoke);
+    const result = await smoke.window.evaluate(async (taskId) => {
+      try { await window.lin!.agentCoreRequest('task/stop', { threadId: '018f0f24-7b2e-7a3f-8a4b-123456789abc', taskId }); return 'admitted'; }
+      catch (error) { return String(error); }
+    }, taskId);
+    expect(result).toContain('no current process-control authority');
+    expect(await smoke.window.evaluate(async () => (await window.lin!.dataLifecycle.request({ action: 'status' })).state.automaticExecutionPaused)).toBe(true);
+  } finally {
+    if (smoke) await closeSmokeApp(smoke, { keepUserData: true });
+    await rm(userDataDir, { recursive: true, force: true });
+  }
+});
 
 test('opens the isolated versioned baseline and exposes verified backup controls in both themes', async ({}, testInfo) => {
   const userDataDir = await mkdtemp('/tmp/tenon-data-smoke-');

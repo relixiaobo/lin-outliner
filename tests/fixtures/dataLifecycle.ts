@@ -1,4 +1,5 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import type { ToolTaskFinalReceipt } from '../../src/main/agent/tasks/toolTaskTypes';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Core } from '../../src/core/core';
@@ -104,9 +105,15 @@ export async function seedPopulatedDataFixture(root: string, options: { readonly
   const detailPath = join(paths.toolTasks, taskId);
   await mkdir(detailPath, { recursive: true });
   await writeFile(join(detailPath, 'stdout.log'), 'Retained task output\n');
-  tasks.create({ taskId, ownerThreadId: thread.id, sourceTurnId: started.turn.id, sourceItemId, producer: 'fixture',
-    description: 'A persisted request with no launched process', commandDigest: 'a'.repeat(64), cwd: executionContext.address.cwd, executionContext,
+  const task = tasks.create({ taskId, ownerThreadId: thread.id, sourceTurnId: started.turn.id, sourceItemId, producer: 'fixture',
+    description: 'A completed producer awaiting terminal ledger settlement', commandDigest: 'a'.repeat(64), cwd: executionContext.address.cwd, executionContext,
     operationKind: 'host', parentTaskId: null, nonce: randomUUID(), detailPath, backgroundEnabled: false, timeoutMs: null, startedAt: Date.now() });
+  // The uncommitted receipt proves quiescence independently of the Task ledger.
+  const receipt: Omit<ToolTaskFinalReceipt, 'receiptDigest'> = { version: 3, taskId, nonce: task.nonce,
+    isolation: { ...task.isolation, state: 'unsandboxed' }, state: 'succeeded', exitCode: 0, signal: null, reason: 'fixture_completed', error: null,
+    supervisorPid: null, childPid: null, startedAt: task.startedAt, quiescedAt: Date.now(), stdoutBytes: Buffer.byteLength('Retained task output\n'), stderrBytes: 0,
+    preparedResultDigest: null, preparedResultBytes: 0 };
+  await writeFile(join(detailPath, 'final-receipt.json'), JSON.stringify({ ...receipt, receiptDigest: createHash('sha256').update(JSON.stringify(receipt)).digest('hex') }));
   durableGoals.close();
 
   const schedules = new AutomationStore(join(root, 'agent/scheduled-tasks.sqlite'), database(join(root, 'agent/scheduled-tasks.sqlite')));

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { open, readdir, rm, statfs } from 'node:fs/promises';
+import { lstat, open, readdir, rm, statfs } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { DATA_OPERATION_ID, type DataBackupSummary } from '../../core/dataLifecycle';
 import { assertOwnedPath, ensureDurableDirectory, copyDurably, copyLinkDurably, fingerprint, fingerprintLink, missing, ownedPath, readPrivateJson, record,
@@ -8,7 +8,7 @@ import { DataStoreRegistry } from './storeRegistry';
 import { inspectManagedFiles, isManagedDataPath, isWorkingMaterialLink, MANAGED_DATA_ROOTS, MAX_BACKUP_FILES, type ManagedRoot } from './inventory';
 import { verifyDatabase } from './sqlite';
 
-export interface BackupFile extends FileFingerprint { readonly path: string; readonly kind: 'sqlite' | 'file' | 'link'; readonly linkTarget?: string }
+export interface BackupFile extends FileFingerprint { readonly path: string; readonly kind: 'sqlite' | 'file' | 'link'; readonly linkTarget?: string; readonly mode?: number }
 export interface DataBackupManifest {
   readonly version: 1;
   readonly id: string;
@@ -53,11 +53,17 @@ export class DataBackupStore {
     await rm(directory, { recursive: true, force: true });
     await ensureDurableDirectory(join(directory, 'files'));
     const inspection = purpose === 'backup' ? await this.registry.inspect(this.userData, true) : [];
+    const baseline = purpose === 'backup' ? await readPrivateJson(await assertOwnedPath(this.userData, 'data-manifest.json')) : null;
+    if (baseline !== null && (!record(baseline) || baseline.manifestVersion !== 1 || !record(baseline.storeVersions))) throw new Error('The dataset baseline cannot be verified');
+    const expected = record(baseline) ? baseline.storeVersions as Record<string, number> : {};
+    const absent = inspection.find((entry) => !entry.exists && entry.store.id in expected);
+    if (absent) throw new Error(`Cannot snapshot ${absent.store.id}: an established Store is missing`);
     const invalid = inspection.find((entry) => entry.issue);
     if (invalid) throw new Error(`Cannot snapshot ${invalid.store.id}: ${invalid.issue!.message}`);
     const files: BackupFile[] = [];
     for (const [index, source] of inventory.files.entries()) {
       const sourcePath = await assertOwnedPath(this.userData, source.path, source.kind === 'link');
+      const sourceMode = source.kind === 'file' && isWorkingMaterialLink(source.path) ? (await lstat(sourcePath)).mode & 0o100 : 0;
       const target = ownedPath(join(directory, 'files'), source.path);
       await ensureDurableDirectory(dirname(target));
       let retained: FileFingerprint & { readonly linkTarget?: string };
@@ -76,7 +82,8 @@ export class DataBackupStore {
         await syncDirectory(dirname(target), this.options.checkpoint);
         retained = await fingerprint(target);
       } else retained = await copyDurably(sourcePath, target, this.options.checkpoint);
-      files.push({ path: source.path, kind: source.kind, ...retained });
+      if (source.kind === 'file' && isWorkingMaterialLink(source.path) && ((await lstat(sourcePath)).mode & 0o100) !== sourceMode) throw new Error('Working-material permissions changed during retention');
+      files.push({ path: source.path, kind: source.kind, ...retained, ...(source.kind === 'file' && isWorkingMaterialLink(source.path) ? { mode: 0o600 | sourceMode } : {}) });
       this.options.progress?.(index + 1, inventory.files.length);
       await this.options.checkpoint?.(`backup-file:${index}`);
     }
@@ -115,15 +122,20 @@ export class DataBackupStore {
     }
   }
 
+  isUserRestorable(manifest: DataBackupManifest): boolean {
+    const required = new Set(['outline-runtime/workspace/outline.snapshot.json', 'outline-runtime/workspace/outline.transactions.jsonl']);
+    const paths = new Set(manifest.files.filter((file) => file.kind === 'file' && file.bytes > 0).map((file) => file.path));
+    return [...required].every((path) => paths.has(path));
+  }
+
   async list(pinned: ReadonlySet<string> = new Set()): Promise<readonly DataBackupSummary[]> {
     const names = await readdir(this.root).catch((error: unknown) => { if (missing(error)) return []; throw error; });
     const results: DataBackupSummary[] = [];
     for (const id of names.filter((name) => DATA_OPERATION_ID.test(name))) {
       const manifest = await this.read(id).catch(() => null);
       if (!manifest) continue;
-      // Empty pre-initialization checkpoints are internal recovery evidence,
-      // not a default user-facing action that clears a populated workspace.
-      if (manifest.files.length === 0) continue;
+      // Configuration-only initialization evidence is not a user restore choice.
+      if (manifest.purpose === 'backup' && !this.isUserRestorable(manifest)) continue;
       const verified = await this.verify(manifest).then(() => true, () => false);
       results.push({ id, createdAt: manifest.createdAt, applicationVersion: manifest.applicationVersion,
         bytes: manifest.files.reduce((total, file) => total + file.bytes, 0), fileCount: manifest.files.length,
@@ -162,7 +174,8 @@ export function decodeBackupManifest(value: unknown): DataBackupManifest {
   for (const file of value.files) {
     if (!record(file) || typeof file.path !== 'string' || !isManagedDataPath(file.path) || paths.has(file.path)
       || !['sqlite', 'file', 'link'].includes(String(file.kind)) || typeof file.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(file.sha256)
-      || !Number.isSafeInteger(file.bytes) || (file.bytes as number) < 0) throw new Error('Invalid backup file entry');
+      || !Number.isSafeInteger(file.bytes) || (file.bytes as number) < 0
+      || (file.mode !== undefined && (file.kind !== 'file' || !isWorkingMaterialLink(file.path) || file.mode !== 0o600 && file.mode !== 0o700))) throw new Error('Invalid backup file entry');
     ownedPath('/managed', file.path);
     if (file.kind === 'link' && (!isWorkingMaterialLink(file.path) || typeof file.linkTarget !== 'string'
       || file.linkTarget.length > 4096 || file.linkTarget.includes('\0')

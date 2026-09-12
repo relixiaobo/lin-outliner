@@ -7,6 +7,7 @@ import { DataBackupStore, decodeBackupManifest } from '../../src/main/dataLifecy
 import { DataStoreRegistry } from '../../src/main/dataLifecycle/storeRegistry';
 import { openLifecycleDatabase } from '../../src/main/dataLifecycle/sqlite';
 import { fingerprint } from '../../src/main/dataLifecycle/durableFiles';
+import { OutlineRuntimeWorkspace } from '../../src/outline/runtime';
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
@@ -14,6 +15,7 @@ async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'tenon-backup-')); roots.push(root);
   const registry = new DataStoreRegistry();
   await registry.establishVersions(root, await registry.inspect(root));
+  (await OutlineRuntimeWorkspace.open(join(root, 'outline-runtime/workspace'), { contentRoot: join(root, 'content') })).close();
   await mkdir(join(root, 'agent/user'), { recursive: true });
   await writeFile(join(root, 'agent/user/USER.md'), '# User\n\nRetain this exact text.\n');
   return { root, registry };

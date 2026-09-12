@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { promisify } from 'node:util';
+import { OutlineRuntimeWorkspace } from '../../src/outline/runtime';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -19,7 +21,11 @@ async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'tenon-restore-')); roots.push(root);
   const registry = new DataStoreRegistry();
   await registry.establishVersions(root, await registry.inspect(root));
+  (await OutlineRuntimeWorkspace.open(join(root, 'outline-runtime/workspace'), { contentRoot: join(root, 'content') })).close();
   await mkdir(join(root, 'agent/user'), { recursive: true });
+  await mkdir(join(root, 'agent/workspaces/project'), { recursive: true });
+  await writeFile(join(root, 'agent/workspaces/project/run.sh'), '#!/bin/sh\nprintf restored-executable');
+  await chmod(join(root, 'agent/workspaces/project/run.sh'), 0o755);
   await writeFile(join(root, 'agent/user/USER.md'), '# Original\n');
   const backups = new DataBackupStore(root, registry);
   const source = await backups.create('0.8.0');
@@ -33,6 +39,14 @@ async function fixture() {
 }
 
 describe('journaled dataset restoration', () => {
+  test('restores executable working material while backup bytes remain private', async () => {
+    const { root, backups, journal, operation } = await fixture();
+    const relative = 'agent/workspaces/project/run.sh';
+    expect((await stat(join(backups.path(operation.sourceBackupId!), 'files', relative))).mode & 0o777).toBe(0o600);
+    await new DataRestoreSession(root, backups, journal).run(operation, '0.8.0');
+    expect((await stat(join(root, relative))).mode & 0o777).toBe(0o700);
+    expect((await promisify(execFile)(join(root, relative))).stdout).toBe('restored-executable');
+  });
   test('recovers a real process kill after installation without releasing an unverified writer', async () => {
     const { root, backups, journal, operation } = await fixture();
     const failure = await new Promise<NodeJS.ErrnoException & { signal?: string }>((resolve, reject) => {

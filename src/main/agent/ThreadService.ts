@@ -962,9 +962,12 @@ export class ThreadService implements ThreadServiceExtensionHost {
     await this.beforeInitialTurnAdmission();
     this.initialized = true;
     for (const thread of resumableThreads) {
-      if (!this.restoredWork.allows('thread', thread.id)) continue;
       if (thread.status.type === 'idle') {
-        await this.extensions.threadIdle(this.core.requireThread(thread.id).thread);
+        const current = this.core.requireThread(thread.id).thread;
+        // Goals carry their own durable generation authority. A fresh Goal in a
+        // restored Thread must reach that check without waking old general hooks.
+        if (this.restoredWork.allows('thread', thread.id)) await this.extensions.threadIdle(current);
+        else await this.goals.onThreadIdle(current);
       }
     }
   }

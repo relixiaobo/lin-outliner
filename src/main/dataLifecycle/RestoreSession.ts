@@ -23,6 +23,7 @@ export class DataRestoreSession {
     let operation = initial;
     const backup = await this.backups.read(operation.sourceBackupId!);
     if (!backup) throw new Error('The selected backup is incomplete');
+    if (!this.backups.isUserRestorable(backup)) throw new Error('The selected backup does not contain a complete canonical workspace.');
     await this.backups.verify(backup);
     const operationRoot = await assertOwnedPath(this.userData, `data-lifecycle/operations/${operation.id}`);
     const staging = join(operationRoot, 'staging');
@@ -50,7 +51,10 @@ export class DataRestoreSession {
       for (const [index, file] of backup.files.entries()) {
         const source = await assertOwnedPath(join(this.backups.path(backup.id), 'files'), file.path, file.kind === 'link');
         if (file.kind === 'link') await copyLinkDurably(source, ownedPath(staging, file.path), this.options.checkpoint);
-        else await copyDurably(source, ownedPath(staging, file.path), this.options.checkpoint);
+        else {
+          const target = ownedPath(staging, file.path);
+          await copyDurably(source, target, this.options.checkpoint, file.mode);
+        }
         this.options.progress?.(index + 1, backup.files.length);
       }
       await this.verifyInstalled(staging, backup);
@@ -118,6 +122,7 @@ export class DataRestoreSession {
       const path = await assertOwnedPath(root, entry.path, entry.kind === 'link');
       const actual = entry.kind === 'link' ? await fingerprintLink(path) : await fingerprint(path);
       if (actual.bytes !== entry.bytes || actual.sha256 !== entry.sha256) throw new Error('Installed backup content failed verification');
+      if (entry.mode !== undefined && ((await lstat(path)).mode & 0o777) !== entry.mode) throw new Error('Installed working-material permissions failed verification');
     }
   }
 }

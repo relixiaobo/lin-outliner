@@ -45,6 +45,7 @@ import {
   type MemoryRollbackRecord,
 } from './MemoryControlStore';
 import { MemoryPipeline, type MemoryPipelineSourceHost, phase1Source } from './MemoryPipeline';
+import type { RestoredWorkAdmission } from '../../restoredWork';
 import {
   MemoryMutationIndex,
   type MemoryMutationIndexUpdate,
@@ -105,6 +106,7 @@ export interface MemoryExtensionOptions {
   readonly profiles?: ProfileFileStore;
   readonly canRun?: () => boolean;
   readonly restoredGeneration?: string | null;
+  readonly restoredWork?: RestoredWorkAdmission;
   readonly onError?: (error: unknown, operation: 'graph-digest' | 'graph-wake' | 'profile-context') => void;
 }
 
@@ -178,6 +180,7 @@ export class MemoryExtension implements AgentCoreExtension {
     };
     this.pipeline = new MemoryPipeline(this.control, this.timeline, phase1, phase2, sources, {
       canRun: this.options.canRun,
+      restoredWork: this.options.restoredWork,
       recoverResetPublication: (record, receiptMatches) => this.recoverPreparedReset(record, receiptMatches),
     });
   }
@@ -355,7 +358,7 @@ export class MemoryExtension implements AgentCoreExtension {
     const operationId = `memory:reset:${uuidV7()}`;
     return host.withHostRootTurnAdmissionBarrier(() => this.timeline.withWriteGate(async () => {
       await authorize();
-      if (this.control.preparedPublications().some((entry) => entry.kind === 'reset')) {
+      if (this.control.preparedPublications().some((entry) => entry.kind === 'reset' && this.options.restoredWork?.allows('memory-publication', entry.id) !== false)) {
         throw memoryFailure('memory_reset_pending', 'An earlier Memory Reset is still awaiting settlement.');
       }
       return this.commitReviewedReset(target, authorize, operationId);
@@ -803,6 +806,7 @@ export class MemoryExtension implements AgentCoreExtension {
   private async recoverPreparedReset(record: MemoryPublicationRecord, receiptMatches: boolean): Promise<void> {
     const payload = resetPublicationPayload(record.payload);
     await this.timeline.withWriteGate(async () => {
+      if (this.options.restoredWork?.allows('memory-publication', record.id) === false) return;
       if (this.control.publication(record.id)?.status !== 'prepared') return;
       if (!receiptMatches && !(await this.timeline.hasPublication(record.id, record.digest))) {
         try {

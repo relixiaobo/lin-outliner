@@ -299,6 +299,7 @@ async function composeAgentHost(options: AgentHostOptions, acquisition: Resource
     profiles,
     canRun: () => admissionOpen && restoredWork.automaticSchedulingAllowed(),
     restoredGeneration: restoredWork.generation,
+    restoredWork,
     onError: (error, operation) => options.reportError({
       domain: 'memory',
       severity: 'error',

@@ -425,6 +425,7 @@ export class ProfileFileStore {
   }
 
   private settle(publication: Publication): void {
+    if (!this.restoredWork.allows('profile', publication.id)) throw new ProfileConflictError('pending', 'Historical publication requires a new explicit edit');
     const { after, before } = publication;
     const requestDigest = publication.requestDigest ?? digest(JSON.stringify({
       key: publication.key, beforeRevision: before.revision, afterRevision: after.revision,

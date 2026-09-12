@@ -20,17 +20,20 @@ export async function assertTaskProducersQuiescent(
   for (const id of names) {
     if (!id.startsWith('task_') || !DATA_OPERATION_ID.test(id.slice(5)) || isHistorical(id) || candidates && !candidates.has(id)) continue;
     const config = await readPrivateJson(await assertOwnedPath(userData, `agent/tool-tasks/${id}/config.json`), 1024 * 1024);
-    if (config === null) continue;
-    if (!record(config) || config.taskId !== id || typeof config.nonce !== 'string') throw busy('Task startup ownership could not be verified.');
+    if (config !== null && (!record(config) || config.taskId !== id || typeof config.nonce !== 'string')) {
+      throw busy('Task startup ownership could not be verified.');
+    }
+    const identity = await readPrivateJson(await assertOwnedPath(userData, `agent/tool-tasks/${id}/identity.json`));
     const receipt = await readPrivateJson(await assertOwnedPath(userData, `agent/tool-tasks/${id}/final-receipt.json`), 1024 * 1024);
-    if (record(receipt) && receipt.version === 3 && receipt.taskId === id && receipt.nonce === config.nonce
+    const nonce = record(config) ? config.nonce : record(identity) ? identity.nonce : record(receipt) ? receipt.nonce : undefined;
+    if (record(receipt) && receipt.version === 3 && receipt.taskId === id && typeof nonce === 'string' && receipt.nonce === nonce
       && typeof receipt.quiescedAt === 'number' && Number.isFinite(receipt.quiescedAt)) {
       const { receiptDigest, ...unsigned } = receipt;
       if (createHash('sha256').update(JSON.stringify(unsigned)).digest('hex') === receiptDigest) continue;
     }
-    const identity = await readPrivateJson(await assertOwnedPath(userData, `agent/tool-tasks/${id}/identity.json`));
-    if (!record(identity) || identity.version !== 2 || identity.taskId !== id || identity.nonce !== config.nonce
-      || !Number.isSafeInteger(identity.supervisorPid) || !Number.isSafeInteger(identity.childPid)) {
+    if (!record(identity) || identity.version !== 2 || identity.taskId !== id || typeof nonce !== 'string' || identity.nonce !== nonce
+      || !Number.isSafeInteger(identity.supervisorPid) || (identity.supervisorPid as number) < 1
+      || !Number.isSafeInteger(identity.childPid) || (identity.childPid as number) < 1) {
       throw busy('An unfinished Task has no verifiable process identity or terminal receipt. Its work must be settled before data maintenance.');
     }
     if (processExists(identity.supervisorPid as number) || processExists(identity.childPid as number)

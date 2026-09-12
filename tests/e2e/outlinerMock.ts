@@ -53,6 +53,7 @@ export const ids = {
 } as const;
 
 interface MockFixtureOptions {
+  startupFailureDomain?: 'agent' | 'outline';
   /** Drop discussion delivery after committing mock Host state for reconciliation tests. */
   dropDiscussionNotifications?: boolean;
   initialLanguage?: 'en' | 'zh-Hans';
@@ -3702,6 +3703,24 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     (win as unknown as { e2eNodeInlineRef: typeof nodeInlineRef }).e2eNodeInlineRef = nodeInlineRef;
 
     win.lin = {
+      ...(options.startupFailureDomain ? { startup: {
+        get: async () => ({ status: 'failed' as const, revision: 1, step: `data-${options.startupFailureDomain}`, message: 'An established Store needs recovery.',
+          capabilities: { outline: options.startupFailureDomain === 'outline' ? 'unavailable' as const : 'ready' as const, agent: 'unavailable' as const },
+          issues: [{ id: 'fixture-data-failure', domain: options.startupFailureDomain, operation: `data-${options.startupFailureDomain}`,
+            category: 'invalid-data' as const, message: 'An established Store needs recovery.', details: 'Fixture recovery issue', actions: ['copy-details' as const] }], threads: [] }),
+        retry: async () => { throw new Error('Retry must use the native smoke harness'); },
+        quit: async () => undefined, issueAction: async () => undefined,
+        recovery: async () => { throw new Error('Recovery must use the native smoke harness'); },
+        onChanged: () => () => undefined,
+      } } : {}),
+      dataLifecycle: {
+        request: async (request) => {
+          if (request.action !== 'status' && request.action !== 'inspect') throw new Error('Data mutations require the native smoke harness');
+          return { state: { revision: 1, phase: 'ready', operationId: null, progress: null, issues: [], backups: [],
+            restoredGeneration: null, automaticExecutionPaused: false, canCancelOperation: false } };
+        },
+        onChanged: () => () => undefined,
+      },
       initialLanguage: options.initialLanguage ?? 'en',
       initialKeybindings: effectiveKeybindings(),
       keybindings: {

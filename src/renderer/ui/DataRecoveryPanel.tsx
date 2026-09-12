@@ -11,6 +11,7 @@ export function DataRecoveryPanel({ active = true, statusOnly = false }: { reado
   const [state, setState] = useState<DataLifecycleState | null>(null);
   const [selectedId, setSelectedId] = useState('');
   const [busy, setBusy] = useState(false);
+  const [inspecting, setInspecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const accept = useCallback((next: DataLifecycleState) => {
     setState((previous) => previous && previous.revision > next.revision ? previous : next);
@@ -21,28 +22,29 @@ export function DataRecoveryPanel({ active = true, statusOnly = false }: { reado
     const api = window.lin?.dataLifecycle;
     if (!api) { setError(t.unavailable); return; }
     let mounted = true;
+    setInspecting(true); setError(null);
     const off = api.onChanged((next) => { if (mounted) { accept(next); setError(null); } });
     void api.request({ action: statusOnly ? 'status' : 'inspect' }).then((response) => {
       if (mounted) accept(response.state);
-    }, (caught) => { if (mounted) setError(String(caught)); });
+    }, (caught) => { if (mounted) setError(String(caught)); }).finally(() => { if (mounted) setInspecting(false); });
     return () => { mounted = false; off(); };
   }, [active, accept, t.unavailable, statusOnly]);
 
   const run = async (request: DataLifecycleRequest) => {
-    if (busy || !window.lin?.dataLifecycle) return;
+    if (busy || inspecting || !window.lin?.dataLifecycle) return;
     setBusy(true); setError(null);
     try { accept((await window.lin.dataLifecycle.request(request)).state); }
     catch (caught) { setError(String(caught)); }
     finally { setBusy(false); }
   };
-  const running = busy || !state || !['ready', 'recoveryRequired'].includes(state.phase);
+  const running = busy || inspecting || !state || !['ready', 'recoveryRequired'].includes(state.phase);
   const selected = state?.backups.find((backup) => backup.id === selectedId) ?? state?.backups[0];
   const formatDate = (time: number) => new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(time);
 
   return <section className="data-recovery-panel" aria-labelledby={titleId}>
     <h2 id={titleId}>{t.title}</h2>
     <p>{t.description}</p>
-    <p role="status" aria-live="polite">{busy ? t.working : t.phase[state?.phase ?? 'inspecting']}
+    <p role="status" aria-live="polite">{busy ? t.working : state ? t.phase[state.phase] : inspecting ? t.phase.inspecting : t.unavailable}
       {state?.progress ? ` ${state.progress.completed} / ${state.progress.total}` : ''}
     </p>
     {state?.issues.length ? <ul>{state.issues.map((issue) => <li key={`${issue.domain}:${issue.storeId}`}>{issue.message}</li>)}</ul> : null}
@@ -63,9 +65,9 @@ export function DataRecoveryPanel({ active = true, statusOnly = false }: { reado
       <Button disabled={running || state?.phase !== 'ready' || !!state.operationId} onClick={() => void run({ action: 'backup' })}>{t.backup}</Button>
       <Button disabled={running || !selected?.verified || selected.purpose !== 'backup'} onClick={() => selected && state && void run({ action: 'restore', backupId: selected.id, revision: state.revision })}>{t.restore}</Button>
       {selected ? <Button disabled={busy} onClick={() => void run({ action: 'reveal', backupId: selected.id })}>{t.reveal}</Button> : null}
-      <Button disabled={running} onClick={() => void run({ action: 'inspect' })}>{t.refresh}</Button>
+      <Button disabled={busy || inspecting} onClick={() => void run({ action: 'inspect' })}>{t.refresh}</Button>
       {state?.phase === 'recoveryRequired' ? <Button disabled={running} onClick={() => void run({ action: 'retry' })}>{t.retry}</Button> : null}
-      {state && (state.phase === 'ready' || state.issues.some((issue) => issue.storeId === 'agent-history' && issue.reason !== 'future-version')) ? <Button disabled={running || !!state.operationId} onClick={() => void run({ action: 'repair-history', revision: state.revision })}>{t.repair}</Button> : null}
+      {state && (state.phase === 'ready' || state.issues.some((issue) => issue.storeId === 'agent-history' && issue.reason !== 'future-version')) ? <Button disabled={running || !!state.operationId || state.issues.some((issue) => issue.storeId !== 'agent-history')} onClick={() => void run({ action: 'repair-history', revision: state.revision })}>{t.repair}</Button> : null}
       {state?.canCancelOperation && state.operationId ? <Button disabled={busy} onClick={() => void run({ action: 'cancel', operationId: state.operationId!, revision: state.revision })}>{t.cancelOperation}</Button> : null}
       <Button disabled={busy} onClick={() => void run({ action: 'export-diagnostics' })}>{t.exportDiagnostics}</Button>
     </div> : null}

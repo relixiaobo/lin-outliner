@@ -1,3 +1,4 @@
+import { UNRESTRICTED_RESTORED_WORK } from '../../src/main/agent/restoredWork';
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
@@ -6840,6 +6841,43 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
     await fixture.service.close();
   });
 
+  test('resumes a newly authorized Goal in a restored Thread without waking historical extension hooks', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      configurationSource: { kind: 'user' },
+    })).thread;
+    await fixture.service.request('goal/create', {
+      threadId: thread.id,
+      objective: 'Continue after restart',
+    });
+    await fixture.service.close();
+
+    const executor = new ControlledExecutor();
+    let genericHooks = 0;
+    const extensions = new ExtensionRegistry();
+    extensions.register({ id: 'historical-hook-probe', onThreadIdle: () => { genericHooks++; } });
+    const reopened = await openFixture(fixture.root, executor, fixture.clock, extensions, {
+      restoredWork: { ...UNRESTRICTED_RESTORED_WORK, generation: 'restored', allows: (kind, id) => kind !== 'thread' || id !== thread.id },
+    });
+    await reopened.service.initialize();
+    await withTimeout(executor.waitUntilWaiting(), 2000);
+    expect(genericHooks).toBe(0);
+    expect(executor.contexts[0]?.turn.provenance.trigger).toMatchObject({
+      kind: 'feature',
+      feature: 'goal_continuation',
+    });
+    expect(turnUserText(executor.contexts[0]!.turn)).toContain('Goal state: continuation 1.');
+    expect(turnUserText(executor.contexts[0]!.turn)).not.toContain('tokens used');
+
+    await reopened.service.request('goal/update', { threadId: thread.id, status: 'complete' });
+    executor.finish();
+    await reopened.service.waitForIdle(thread.id);
+    await reopened.service.close();
+  });
+
   test('resumes an active Goal continuation after host restart', async () => {
     const fixture = await createFixture();
     const thread = (await fixture.service.startThread({
@@ -7673,6 +7711,7 @@ async function createFixture(
     | 'canStartTurn'
     | 'reportError'
     | 'delegationCoordinator'
+    | 'restoredWork'
   > = {},
   executor: ControlledExecutor = new ControlledExecutor(),
 ): Promise<Fixture> {
@@ -7711,6 +7750,7 @@ async function openFixture(
     | 'canStartTurn'
     | 'reportError'
     | 'delegationCoordinator'
+    | 'restoredWork'
   > = {},
 ): Promise<{ service: ThreadService; stores: ThreadServiceStores }> {
   const stores = createStores(root);

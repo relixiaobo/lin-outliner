@@ -84,7 +84,7 @@ export class DataLifecycleCoordinator {
       });
     }
     issues.push(...this.manifestIssues());
-    this.publish({ issues, phase: issues.length ? 'recoveryRequired' : 'ready' });
+    this.publish({ ...await this.executionState(), issues, phase: issues.length ? 'recoveryRequired' : 'ready' });
   }
 
   assertDomain(domain: DataLifecycleDomain): void {
@@ -108,13 +108,14 @@ export class DataLifecycleCoordinator {
   async validateRestoreSource(id: string): Promise<void> {
     const backup = await this.backups.read(id);
     if (!backup || backup.purpose !== 'backup') throw new Error('Choose a completed, verified backup for restoration.');
+    if (!this.backups.isUserRestorable(backup)) throw new Error('This checkpoint does not contain a complete canonical workspace.');
     await this.backups.verify(backup);
     const root = join(this.backups.path(id), 'files');
     const inspections = await this.registry.inspect(root, true);
-    const issue = inspections.find((entry) => entry.issue);
-    if (issue) throw new Error(`Backup ${issue.store.id}: ${issue.issue!.message}`);
+    const issue = inspections.find((entry) => entry.issue || !entry.exists && entry.store.id in backup.storeVersions);
+    if (issue) throw new Error(`Backup ${issue.store.id}: ${issue.issue?.message ?? 'An expected Store is missing'}`);
     const outline = await this.options.barrier.inspectOutline(root);
-    if (outline.error || outline.exists && !outline.hasTransactionLog) throw new Error(outline.error?.message ?? 'Backup workspace history is incomplete');
+    this.requireCanonicalWorkspace(outline);
   }
 
   /** Queue only; the desktop drains and restarts before this operation touches data. */
@@ -124,15 +125,13 @@ export class DataLifecycleCoordinator {
     if (this.stateValue.issues.some((issue) => issue.reason === 'future-version')) throw new Error('Use a compatible application before changing newer data.');
     if (request.action === 'restore') {
       if (request.revision !== this.stateValue.revision) throw new Error('Backup selection changed; inspect again');
-      const backup = await this.backups.read(request.backupId);
-      if (!backup) throw new Error('The selected backup is incomplete');
-      if (backup.purpose !== 'backup') throw new Error('These retained originals require inspection; choose a verified backup for automatic restoration.');
-      await this.backups.verify(backup);
+      await this.validateRestoreSource(request.backupId);
     }
     if (request.action === 'resume-execution' && (request.revision !== this.stateValue.revision
       || request.generation !== this.stateValue.restoredGeneration || this.stateValue.phase !== 'ready')) throw new Error('Restore generation changed; inspect again');
     if (request.action === 'repair-history' && (request.revision !== this.stateValue.revision
-      || (this.stateValue.phase !== 'ready' && !this.stateValue.issues.some((issue) => issue.storeId === 'agent-history' && issue.reason !== 'future-version')))) throw new Error('History repair scope changed; inspect again');
+      || (this.stateValue.phase !== 'ready' && !this.stateValue.issues.some((issue) => issue.storeId === 'agent-history' && issue.reason !== 'future-version'))
+      || this.stateValue.issues.some((issue) => issue.storeId !== 'agent-history'))) throw new Error('History repair scope changed; restore the missing or damaged Store first');
     const pending = await this.journal.read();
     if (pending && pending.phase !== 'complete' && pending.targetDigest !== this.registry.contractDigest()) throw new Error('The pending operation requires its compatible application version.');
     if (pending && pending.phase !== 'complete' && request.action !== 'restore') throw new Error('Resume the existing data operation before starting another');
@@ -191,20 +190,14 @@ export class DataLifecycleCoordinator {
         }
         const outlineIssue = await this.inspectOutline(!this.manifest);
         if (outlineIssue) issues.push(outlineIssue);
-        if (issues.length) { this.publish({ issues, phase: 'recoveryRequired' }); return; }
+        if (issues.length) { this.publish({ ...await this.executionState(), issues, phase: 'recoveryRequired' }); return; }
         if (!this.manifest || inspected.some((entry) => !entry.exists || entry.observedVersion !== entry.store.version)) {
           const operation = this.operation('initialize');
           await this.journal.write(operation);
           await this.runOperation(operation);
         }
       }
-      const fence = await readPrivateJson(join(this.options.userData, 'data-lifecycle/execution-fence.json'));
-      if (fence !== null && (!record(fence) || fence.version !== 1 || typeof fence.generation !== 'string' || typeof fence.paused !== 'boolean')) {
-        throw new Error('The restored execution fence is invalid');
-      }
-      this.publish({ phase: 'ready', operationId: null, progress: null,
-        restoredGeneration: record(fence) ? fence.generation as string : null,
-        automaticExecutionPaused: record(fence) && fence.paused === true, canCancelOperation: false });
+      this.publish({ ...await this.executionState(), phase: 'ready', operationId: null, progress: null, canCancelOperation: false });
     } catch (error) {
       const reason = record(error) && error.code === 'ENOSPC' ? 'storage-full'
         : record(error) && (error.code === 'SQLITE_BUSY' || error.code === 'SQLITE_LOCKED') ? 'locked'
@@ -231,20 +224,23 @@ export class DataLifecycleCoordinator {
         return;
       } else if (operation.kind === 'restore') {
         this.publish({ phase: 'restoring' });
+        await this.validateRestoreSource(operation.sourceBackupId!);
         if (operation.phase !== 'reconciling') {
           operation = await new DataRestoreSession(this.options.userData, this.backups, this.journal, {
             checkpoint: (name) => this.checkpoint(name),
             progress: (completed, total) => this.publish({ progress: { completed, total } }),
             canSnapshotCurrent: async () => {
               const stores = await this.registry.inspect(this.options.userData, true);
-              return !stores.some((store) => store.issue) && !(await this.options.barrier.inspectOutline()).error;
+              const outline = await this.options.barrier.inspectOutline();
+              return !stores.some((store) => store.issue || !store.exists && this.manifest && store.store.id in this.manifest.storeVersions)
+                && !outline.error && outline.exists && outline.hasTransactionLog;
             },
             validateStaged: async (root) => {
               const inspected = await this.registry.inspect(root, true);
               const rejected = inspected.find((entry) => entry.issue);
               if (rejected) throw new Error(`${rejected.store.id}: ${rejected.issue!.message}`);
               const outline = await this.options.barrier.inspectOutline(root);
-              if (outline.error) throw new Error(outline.error.message);
+              this.requireCanonicalWorkspace(outline);
             },
           }).run(operation, this.options.applicationVersion);
           operation = { ...operation, phase: 'reconciling' };
@@ -258,9 +254,7 @@ export class DataLifecycleCoordinator {
         if (rejected) throw new Error(`${rejected.store.id}: ${rejected.issue!.message}`);
         await this.registry.establishVersions(this.options.userData, inspected, (name) => this.checkpoint(name));
         const restoredOutline = await this.options.barrier.inspectOutline();
-        if (!restoredOutline.exists || !restoredOutline.hasTransactionLog) {
-          await this.options.barrier.initializeOutline(operation.id);
-        }
+        this.requireCanonicalWorkspace(restoredOutline);
       } else if (operation.kind === 'repair-history') {
         this.publish({ phase: 'rebuilding' });
         operation = await new HistoryRepairSession(this.options.userData, this.historyRepair, this.backups, this.journal,
@@ -291,8 +285,8 @@ export class DataLifecycleCoordinator {
         if (!outline.exists || !outline.hasTransactionLog) await this.options.barrier.initializeOutline(operation.id);
       }
       const validated = await this.registry.inspect(this.options.userData, true);
-      const invalid = validated.find((entry) => entry.issue);
-      if (invalid) throw new Error(`${invalid.store.id}: ${invalid.issue!.message}`);
+      const invalid = validated.find((entry) => entry.issue || !entry.exists);
+      if (invalid) throw new Error(`${invalid.store.id}: ${invalid.issue?.message ?? 'An expected Store is missing; restore its data before completing recovery.'}`);
       const outlineIssue = await this.inspectOutline(true);
       if (outlineIssue) throw new Error(outlineIssue.message);
       await this.writeManifest(validated);
@@ -316,6 +310,18 @@ export class DataLifecycleCoordinator {
     }
   }
 
+  private requireCanonicalWorkspace(outline: OutlineDataInspection): void {
+    if (outline.error || !outline.exists || !outline.hasTransactionLog || !outline.identity?.workspaceId || !outline.identity.documentId) {
+      throw new Error(outline.error?.message ?? 'Backup workspace history or identity is incomplete');
+    }
+  }
+
+  private async executionState(): Promise<Pick<DataLifecycleState, 'restoredGeneration' | 'automaticExecutionPaused'>> {
+    const fence = await readPrivateJson(await assertOwnedPath(this.options.userData, 'data-lifecycle/execution-fence.json'));
+    if (fence !== null && (!record(fence) || fence.version !== 1 || typeof fence.generation !== 'string' || typeof fence.paused !== 'boolean')) throw new Error('The restored execution fence is invalid');
+    return { restoredGeneration: record(fence) ? fence.generation as string : null, automaticExecutionPaused: record(fence) && fence.paused === true };
+  }
+
   private manifestIssues(): DataLifecycleIssue[] {
     if (!this.manifest) return [];
     return Object.entries(this.manifest.storeVersions).flatMap(([id, version]) => {
@@ -331,6 +337,7 @@ export class DataLifecycleCoordinator {
   private async writeManifest(inspections: readonly StoreInspection[]): Promise<void> {
     const shared = this.outlineInspection?.identity;
     if (!shared || !this.outlineInspection?.hasTransactionLog) throw new Error('Workspace initialization has not produced verified canonical files');
+    if (this.manifest && inspections.some((entry) => entry.store.id in this.manifest!.storeVersions && !entry.exists)) throw new Error('An established Store is still missing; restore it from a verified backup before completing recovery.');
     const manifest: DataManifest = { manifestVersion: 1, baselineRelease: this.manifest?.baselineRelease ?? this.options.applicationVersion,
       storeVersions: { ...Object.fromEntries(inspections.filter((entry) => entry.exists).map((entry) => [entry.store.id, entry.observedVersion])),
         'outline-workspace': OUTLINE_STORAGE_VERSION },

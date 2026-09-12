@@ -14,6 +14,6 @@ export async function assertTaskDataAdmission(configPath: string, taskId: string
   const work = await readPrivateJson(await assertOwnedPath(userData, `data-lifecycle/restored-work/${fence.generation}.json`), 64 * 1024 * 1024);
   if (!record(work) || work.version !== 1 || work.generation !== fence.generation || !Array.isArray(work.entries)
     || work.entries.length > 200_000 || work.entries.some((entry) => !record(entry) || typeof entry.id !== 'string'
-      || !['task', 'run', 'goal', 'session', 'profile', 'memory-job', 'thread'].includes(String(entry.kind)))) throw new Error('Restored work has not been classified');
+      || !['task', 'run', 'goal', 'session', 'profile', 'memory-job', 'memory-publication', 'thread'].includes(String(entry.kind)))) throw new Error('Restored work has not been classified');
   if (work.entries.some((entry) => record(entry) && entry.kind === 'task' && entry.id === taskId)) throw new Error('Historical Task configuration cannot relaunch a process');
 }

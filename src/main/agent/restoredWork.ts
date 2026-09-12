@@ -1,5 +1,5 @@
 /** Historical facts can be inspected, but their former execution claims are not renewed. */
-export type RestoredWorkKind = 'task' | 'run' | 'goal' | 'session' | 'profile' | 'memory-job' | 'thread';
+export type RestoredWorkKind = 'task' | 'run' | 'goal' | 'session' | 'profile' | 'memory-job' | 'memory-publication' | 'thread';
 
 export interface RestoredWorkAdmission {
   readonly generation: string | null;

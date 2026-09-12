@@ -41,6 +41,10 @@ not permission to initialize an empty replacement. Journal-proven partially
 created empty databases can finish their original initialization. A scoped
 retry can inspect repaired data without replacing an unrelated healthy Host.
 It does not run a format migration while normal writers are open.
+Every Agent construction loads the durable restoration authority, including
+construction after a scoped Retry. A completed inspection milestone never
+substitutes for that load. Backup and repair preserve established Store
+expectations; operation completion requires every registered Store to exist.
 
 Main does not import Core or Runtime storage implementation. Outline inspection
 runs in the Runtime executable's read-only `--inspect-data` mode and returns a
@@ -58,6 +62,10 @@ restoration admission before opening their output or launching a process.
 Known live or unverifiable producers block maintenance. If the Task database is
 damaged, independently retained configuration, identity, receipt, and process
 evidence can establish quiescence without opening normal Task writers.
+Startup configuration is ephemeral: retained process identities and terminal
+receipts remain authoritative when that configuration is gone. A proven-dead
+Runtime descriptor is reclaimed by the real writer lock without starting a
+replacement writer during maintenance.
 
 A private, operation-bound permit allows a temporary Runtime to finish an empty
 workspace's initialization. This Runtime admits only status and lifecycle
@@ -100,6 +108,9 @@ retained-file inspection, and bounded diagnostic export. Backup and restore use
 an explicit native confirmation followed by safe quit/restart. Maintenance then
 runs before ordinary producers. Cancellation of an ordinary queued operation
 is allowed only before installation starts.
+Inspection failures allow a read-only Refresh without remounting Settings.
+Recovery surfaces scroll and wrap their controls at enlarged text sizes in both
+the full window and the Agent rail.
 
 Backups cover the registered data roots: Outline workspace, ContentStore, Agent
 databases and payloads, Profile files, Memory control, tasks and working
@@ -112,6 +123,12 @@ copied and fingerprinted. Working-material symlinks are retained as references
 without traversing their targets; manifests reject entries beneath a file or
 link. Authoritative storage paths cannot be redirected through symlinks.
 Completion markers bind the manifest, lengths, checksums, and root types.
+Working-material files also retain their owner-executable bit. Backup copies
+stay private; restored files use private read/write permissions plus that bit,
+applied and synced before installation and checked after installation.
+Initialization checkpoints without a complete canonical workspace are internal
+evidence, even if they contain configuration files. Restore admission and staged
+validation require the canonical workspace, transaction log, and shared identity.
 
 At least three verified backups are retained, in addition to operation-pinned
 backups. Repeated failed attempts cannot evict their exact pre-operation backup.
@@ -140,6 +157,12 @@ automatic work retains the historical identity fence. A new explicit Goal
 command can authorize its generation; fresh tasks and newly enqueued work have
 their own admission. Startup does not reconstruct old Memory publications or
 scan old Threads into new work after restoration.
+Prepared Memory publication IDs remain fenced at every recovery entry point,
+including a fresh job's recovery pass. Profile publication settlement checks
+the same authority even when reusing an existing prepared record. Historical
+Task leases remain inspectable while being excluded from active capacity and
+queue activation. Newly authorized Goal generations can continue after restart
+inside restored Threads without waking historical general extension hooks.
 
 The startup surface makes the pause visible and remains dismissible when
 ordinary conversations and notes are available. A restore is not an undo on
