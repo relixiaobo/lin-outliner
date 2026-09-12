@@ -34,6 +34,23 @@ standalone migration scaffold or upgrade to an unspecified format.
 
 ## Design
 
+### Authority and policy transition
+
+For migration and legacy-reader design, this plan supersedes the exclusions in
+the archived [Sync Readiness Foundation](archive/sync-readiness-foundation.md#non-goals),
+including its instruction to reset isolated development userData after format
+changes. That archived instruction describes the earlier pre-release policy;
+it is not an alternative design for the supported baseline. Existing identity,
+replication, and ownership mechanisms remain governed by their current specs.
+
+Until the complete baseline implementation lands, the current pre-release rules
+in [AGENTS.md](../../AGENTS.md) and the
+[architecture specification](../spec/architecture.md) still describe the running
+system. Merging this design does not claim that migrations or retained readers
+already exist, or authorize a data reset. Feature 1 must replace those current
+no-migration/no-reader rules in the same coordinated implementation change that
+establishes the supported baseline, before any supported schema upgrade ships.
+
 ### Evidence and selected approach
 
 The [research reference](reference/data-compatibility-evidence.md) compares
@@ -484,8 +501,12 @@ includes its migration, retained reader or rewrite, and fixtures in its own PR.
 
 ### Local tests for future synchronization constraints
 
-Use the pinned Loro dependency and two isolated Core replicas, synthetic old/new
-capability views, and no production network service:
+Use the exact Loro version resolved by `bun.lock` and verify that the installed
+package matches it before running migration experiments or two-replica tests.
+Record the manifest range, lockfile revision, and resolved runtime version;
+label other package versions as separate compatibility probes. Use two isolated
+Core replicas, synthetic old/new capability views, and no production network
+service:
 
 - **AC-S1:** Physical migration preserves shared IDs, causal updates, and
   compatible unknown fields. A second replica has distinct local/session

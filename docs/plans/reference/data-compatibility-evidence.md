@@ -51,7 +51,7 @@ guarantees.
 | VS Code | 1.137.0, `645f29cc` | State-database backup and in-memory fallback | Workspace UI state has a different loss tolerance from canonical notes |
 | n8n | 2.38.7, `a2d0f763` | Migration transaction/lock strategy changes with deployment topology | Its single-instance SQLite assumption does not hold for Tenon's detached Runtime |
 | AFFiNE / BlockSuite | v0.27.4, `b4c8548c` | Local schema migrations, document updates, block schemas, blobs, and peer clocks are distinct | Separation is observable; universal mixed-version safety is not established by these files |
-| Loro | Official current docs; Tenon probe pinned to 1.10.6 | Causal update exchange, session peer identity, history-retention constraints | Current docs describe APIs newer than Tenon's declared dependency |
+| Loro | Official current docs; locked-version validation on 1.12.1; separate 1.10.6 compatibility probe | Causal update exchange, session peer identity, history-retention constraints | Current docs describe APIs newer than Tenon's locked build |
 | Automerge / Yjs | Official current docs | Concurrent migration hazards and session identity constraints | Their concrete encodings and migration examples are not interchangeable with Loro |
 
 Repository release records and source snapshots were inspected on 2026-09-12.
@@ -348,11 +348,20 @@ overhead advantage is claimed without measurement.
 
 The experiments below used disposable data only. SQLite was Python's linked
 SQLite 3.53.3; this verifies storage behavior, not Electron's bundled SQLite
-build or filesystem power-loss behavior. The CRDT probes were repeated against
-a separately downloaded `loro-crdt@1.10.6`, matching `package.json`. The existing
-`node_modules` copy was 1.12.1, so its initial results were not used as the sole
-evidence for the declared dependency. Both Loro versions produced the same
-observed outcomes.
+build or filesystem power-loss behavior.
+
+At the inspected repository revision, [package.json](../../../package.json)
+declares the range `loro-crdt@^1.10.6`, while [bun.lock](../../../bun.lock)
+resolves `loro-crdt@1.12.1`. The installed package was verified as 1.12.1 and
+provides the current locked-version validation. A separately downloaded 1.10.6
+was tested as an additional compatibility probe, not as the locked build.
+Both versions produced the same observed outcomes.
+
+Future migration experiments must use the exact version resolved by the
+lockfile and verify the installed package against it. Record the manifest range,
+lockfile revision, and resolved runtime version with the results. Tests against
+other releases are separate compatibility evidence and cannot replace validation
+of the locked build.
 
 | Probe | Construction | Observed result | Design consequence |
 | --- | --- | --- | --- |
@@ -361,7 +370,8 @@ observed outcomes.
 | Concurrent local migrations | Two replicas load one seed; each appends a record only while `schemaVersion=1`, then sets it to 2; merge updates | Both converged to two copies of the migration-created record, even though rerunning on one replica did nothing | Local idempotence is not concurrent migration safety |
 | Import historical snapshot | Add a later edit, then import the original snapshot into that same history | Later edit remained | Snapshot import is not a shared rollback |
 
-The minimal CRDT counterexample is reproducible with the declared Loro package:
+The minimal CRDT counterexample is reproducible with the locked Loro 1.12.1
+package and the separately tested 1.10.6 package:
 
 ```ts
 const seed = new LoroDoc();
@@ -459,7 +469,7 @@ Desktop v8.27.0 (2026-09-10), TriliumNext v0.105.0 (2026-08-19), VS Code 1.137.0
 
 [^20]: Loro. [PeerID Management](https://loro.dev/docs/concepts/peerid_management). Operation identity and peer reuse requirements.
 
-[^21]: Loro. [Sync](https://loro.dev/docs/tutorial/sync). Update exchange, convergence, and child-container identity limitations. Current API examples must be checked against Tenon's pinned dependency.
+[^21]: Loro. [Sync](https://loro.dev/docs/tutorial/sync). Update exchange, convergence, and child-container identity limitations. Current API examples must be checked against Tenon's exact lockfile-resolved dependency.
 
 [^22]: Loro. [Shallow Snapshots](https://loro.dev/docs/concepts/shallow_snapshots). Truncated history and synchronization limits.
 
