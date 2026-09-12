@@ -68,9 +68,11 @@ canonical rich-text slice codec. A selection that would split an inline
 reference boundary is rejected using the existing text-patch rules rather than
 silently flattening content.
 
-`outline-source-model` lands before Feature 2 because it changes `src/core/types.ts`,
-`src/core/commands.ts`, Node structural variants, and create/clone invariants on
-the exact shared protocol surface. Feature 1 has no such dependency.
+Feature 2 consumes the delivered [Source-backed Node model](../spec/architecture.md)
+and [public Runtime mutation contract](../spec/commands.md). Preserve their
+create/clone invariants and coordinate changes to `src/core/types.ts` and
+`src/core/commands.ts`. The earlier `outline-source-model` implementation is
+already available; Feature 1 requires no protocol change.
 
 ### Verification
 
@@ -91,8 +93,8 @@ picker in light/dark and narrow panes.
   concurrent conflict commits no partial mutation.
 - **AC-4:** One Undo restores the original source and removes the created Node;
   one Redo reproduces the same logical result through canonical command replay.
-- **AC-5:** Feature 2 begins only after `outline-source-model` and changes no special/legacy
-  Node or Source path.
+- **AC-5:** Feature 2 uses the current Source-backed Node and Runtime mutation
+  owners without restoring a special/legacy Node or Source path.
 
 ## Open questions
 
@@ -102,7 +104,7 @@ and per-tag destination is the ratified policy.
 ## Implementation checklist
 
 - [ ] Ship the renderer-only heading toggle independently.
-- [ ] Land `outline-source-model` before claiming the coordinated extraction protocol.
+- [ ] Verify the current Source/Runtime invariants before claiming the coordinated extraction protocol.
 - [ ] Add the per-tag destination field, configuration surface, and one atomic
       extraction command without renderer-side mutation sequencing.
 - [ ] Update current rich-text, command, and UI specs.

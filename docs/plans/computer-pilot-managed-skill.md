@@ -49,10 +49,9 @@ Skill never claims permission it cannot prove. Visual results reach the model
 through existing `file_read` image observation.
 
 **FR-3 — Durable visual results.** Completed declared outputs use the final
-canonical tool-Item resource contract from `agent-result-and-file-lifecycle`;
-execution paths remain temporary access
-handles. Fork, rollback, deletion, and cleanup follow that resource lifecycle,
-not a Computer-Pilot-specific registry.
+canonical [Agent resource contract](../spec/agent-core.md);
+execution paths remain temporary access handles. Fork, rollback, deletion, and
+cleanup follow that resource lifecycle, not a Computer-Pilot-specific registry.
 
 Image observations preserve the captured screenshot pixels after canonical
 resource adoption, including when the stored source uses a `.blob` filename.

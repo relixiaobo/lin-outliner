@@ -30,6 +30,12 @@ Agent Core. It is a contract checklist, not project status.
   `missing`/`accepted`/`rejected` status, content digest, and bounded parse or
   validation errors through the existing Agent editor view. This is inspection
   data, not a second configuration snapshot.
+- Consume the [Profile file owner](agent-memory.md#profile-files-and-direct-learning)
+  for explicit identity/style and global personal context. Settings and ordinary
+  file edits share its revision/publication boundary; direct learning preserves
+  source attribution and next-Turn activation. Profile data cannot broaden tool
+  capabilities or make scheduled, delegated or internal Memory work eligible for
+  implicit personal learning.
 - Under the workbench refactor, resolve root configuration from its explicitly
   selected source, not a task cwd or newly discovered repository. Project
   grouping alone cannot apply a configuration change; repository instructions and Skill

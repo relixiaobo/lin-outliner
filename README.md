@@ -21,12 +21,20 @@ directing local agents, and keeping work inspectable.
   edits separate.
 - **Local agent.** An in-app dock with a Tenon-native turn runtime backed by
   [pi-ai] for provider catalogs, authentication, and transport, plus
-  file/bash/web tools, skills, subagents, and event-sourced Threads and Turns.
+  file/bash/web tools, Skills, delegated Sessions, and event-sourced Threads and Turns.
   Available tools run under Full Access with explicit capability blocks; see
   [`docs/spec/agent-tool-permissions.md`](docs/spec/agent-tool-permissions.md).
   Runtime and presentation contracts live in
   [`docs/spec/agent-core.md`](docs/spec/agent-core.md) and
   [`docs/spec/agent-thread-rendering.md`](docs/spec/agent-thread-rendering.md).
+- **Scheduled tasks.** Save local work with timing, references and an optional Project,
+  inspect canonical run conversations, and stop a run independently of its
+  schedule. Agents use the authenticated `schedule` CLI and scheduling Skill;
+  see [`docs/spec/agent-automations.md`](docs/spec/agent-automations.md).
+- **Memory and editable Profile context.** Source-aware Memory records live under
+  Daily Notes. Profile files hold editable identity/style and personal context,
+  with direct learning, exact source attribution and Reset boundaries; see
+  [`docs/spec/agent-memory.md`](docs/spec/agent-memory.md).
 
 ## Repo Layout
 
@@ -35,6 +43,8 @@ src/
   core/      TypeScript outliner state machine, command list, search engine.
   content/   Shared exact-revision content admission, retention, and storage.
   outline/   Public contracts, standalone Runtime, CLI, clients, and imports.
+  delegate/  Shared delegation/Host CLI launcher, contracts, and client.
+  schedule/  Scheduled-task CLI command and input contracts.
   main/      Electron native hosts, Runtime adapter, agent runtime, and tools.
   preload/   Narrow Electron preload bridge exposed as `window.lin`.
   renderer/  React UI, outliner views, agent dock.
@@ -42,6 +52,7 @@ tests/
   core/      Pure TS tests against the core.
   renderer/  Renderer unit tests.
   e2e/       Playwright end-to-end tests.
+  smoke/     Real-Electron tests using disposable userData.
 docs/
   spec/      Current intended behavior. Read these to understand the code.
   plans/     Active designs; reference/ holds standing decisions and archive/

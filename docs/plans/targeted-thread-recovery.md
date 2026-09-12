@@ -36,11 +36,12 @@ recovered-history provenance, and publication invalidation mechanisms from
 [published conversation records](../spec/agent-core.md#published-conversation-records). These are required
 predecessor contracts, not implementation details to reconstruct from an archive.
 
-The selected order also consumes
-[profile files and direct learning](archive/memory-agent-profile.md#implementation-ownership-and-complete-delivery-units)
-before this feature. Bind closure inspection to its final accepted file revisions,
-admission, provenance, pending-work and retained-source contracts. A source Thread
-becoming unavailable does not itself forget an accepted user-wide preference;
+Consume the delivered
+[Profile files and direct learning](../spec/agent-memory.md#profile-files-and-direct-learning)
+contract through `ProfileFileStore` and its Memory integration. Bind closure
+inspection to accepted file revisions, admission, provenance, pending publication,
+invalidation and retention contracts. A source Thread becoming unavailable does
+not itself forget an accepted user-wide preference;
 explicit forgetting, correction and rollback retain their distinct invalidation
 semantics. Optional views, temporal enhancements and narrower Node Reset are
 outside this predecessor boundary.

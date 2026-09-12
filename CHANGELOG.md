@@ -772,6 +772,20 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Internal
 
+- **Workspace and document status refreshed after #682/#685/#686** - verified
+  zero open PRs, eight unclaimed draft designs, the `0.8.0` development train
+  and latest published `v0.7.0`. The task board now separates delivered contracts,
+  remaining work and completed integration records, removes stale Profile and
+  scheduling prerequisites, and retains the last completed main E2E failure
+  report separately from queued runs. README, spec ownership and downstream
+  recovery/toolbar/managed-Skill references describe the current owners.
+  Seven completed local review worktrees and three temporary branches were
+  removed after verified Git-bundle, staged/unstaged patch and evidence backups;
+  old build/test artifacts were moved into the local recovery archive.
+  Typecheck, `docs:check` and whitespace checks passed. Product behavior and
+  application userData are unchanged; no full-suite pass or packaged release is
+  claimed by this documentation audit.
+
 - **Image/evidence repair design integrated and archived (PR #675)** - two independently complete repairs shipped in #676/#677 with current Agent Core/tool/integration specs. Computer Pilot consumes the shared pixel boundary and retains its own packaged screenshot acceptance. The board removes completed design/ratification gates, keeps #679's independent claim visible, and retains the original Runtime-timeout investigation separately. The review lesson records causal-stage assertions for failure fixtures.
 
 - **Execution advice refreshed after Project/folder delivery** - the board

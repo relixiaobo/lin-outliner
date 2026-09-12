@@ -26,8 +26,8 @@ Read these in order when changing Agent Core:
 | `agent-core.md` | Thread, Turn, Item, Goal, lifecycle, provenance, storage, transport, extensions, and trusted document transactions. |
 | `agent-thread-rendering.md` | Canonical DTO rendering, dock state, pagination, interaction states, and visual behavior. |
 | `agent-delegation.md` | Root-owned Agent Sessions, CLI admission, Runner policy, hidden Threads, continuation, settlement, and legacy retirement. |
-| `agent-automations.md` | Scheduled agent work, durable claims, dispatch, worktrees, transport, and Automation UI. |
-| `agent-memory.md` | Daily Timeline Memory Nodes, admission, extraction, consolidation, retrieval, citations, rollback, Reset, and crash recovery. |
+| `agent-automations.md` | Scheduled-task windows, authenticated CLI/Skill access, local timing, durable claims, canonical results, cancellation, attention and worktrees. |
+| `agent-memory.md` | Daily Timeline Memory Nodes, editable Profile files, direct personal learning, source admission, extraction, consolidation, context activation, citations, Reset and recovery. |
 | `agent-model-runtime.md` | Provider execution, stream normalization, Item recording, steering, cancellation, and compaction. |
 | `agent-tool-design.md` | Canonical model-tool registry, catalog, schemas, results, execution, and audit. |
 | `agent-tool-permissions.md` | Full Access, explicit blocks, native failures, capability selection, and capability audit. |
