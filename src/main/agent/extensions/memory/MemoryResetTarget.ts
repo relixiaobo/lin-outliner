@@ -1,9 +1,11 @@
+import { decodeProfileResetTarget, type ProfileResetTarget } from '../../profile/ProfileFileStore';
 import type { MemoryResetReview } from '../../../../core/agent/memoryOperations';
 import type { DocumentProjection, NodeProjection } from '../../../../core/types';
 import { AgentToolFailure } from '../../AgentToolFailure';
 import { canonicalMemoryGraph, timelineDigest } from './TimelineMemoryStore';
 
 export interface MemoryResetTarget {
+  readonly profile?: ProfileResetTarget;
   readonly version: 1;
   readonly workspaceId: string;
   readonly rootId: string;
@@ -78,6 +80,7 @@ export function memoryResetReview(target: MemoryResetTarget): MemoryResetReview 
     containerCount: target.containerIds.length,
     nodeCount: target.nodeCount,
     ordinaryNodeCount: target.ordinaryNodeCount,
+    ...(target.profile ? { profileEntryCount: target.profile.keys.length } : {}),
   });
 }
 
@@ -88,7 +91,8 @@ export function requireMatchingMemoryResetTarget(
 ): void {
   const target = decodeMemoryResetTarget(expected);
   const current = captureMemoryResetTarget(projection, resetEpoch);
-  if (timelineDigest(current) !== timelineDigest(target)) {
+  const { profile: _profile, ...nodeTarget } = target;
+  if (timelineDigest(current) !== timelineDigest(nodeTarget)) {
     throw new AgentToolFailure('stale_memory_reset', 'Memory changed after the Reset review.', 'Review Memory again before requesting a new Reset.');
   }
 }
@@ -96,8 +100,8 @@ export function requireMatchingMemoryResetTarget(
 export function decodeMemoryResetTarget(value: unknown): MemoryResetTarget {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalidTarget();
   const record = value as Record<string, unknown>;
-  const keys = ['version', 'workspaceId', 'rootId', 'resetEpoch', 'containerIds', 'nodeCount', 'ordinaryNodeCount', 'fingerprint'];
-  if (Object.keys(record).length !== keys.length || keys.some((key) => !Object.hasOwn(record, key))
+  const keys = ['version', 'workspaceId', 'rootId', 'resetEpoch', 'containerIds', 'nodeCount', 'ordinaryNodeCount', 'fingerprint', 'profile'];
+  if (Object.keys(record).some((key) => !keys.includes(key)) || keys.filter((key) => key !== 'profile').some((key) => !Object.hasOwn(record, key))
     || record.version !== 1 || !isIdentity(record.workspaceId) || !isIdentity(record.rootId)
     || !isCount(record.resetEpoch) || !isCount(record.nodeCount) || !isCount(record.ordinaryNodeCount)
     || !Array.isArray(record.containerIds) || !record.containerIds.every(isIdentity)
@@ -107,6 +111,7 @@ export function decodeMemoryResetTarget(value: unknown): MemoryResetTarget {
     || typeof record.fingerprint !== 'string' || !/^[0-9a-f]{64}$/.test(record.fingerprint)) throw invalidTarget();
   return Object.freeze({
     version: 1,
+    ...(record.profile === undefined ? {} : { profile: decodeProfileResetTarget(record.profile) }),
     workspaceId: record.workspaceId,
     rootId: record.rootId,
     resetEpoch: record.resetEpoch,

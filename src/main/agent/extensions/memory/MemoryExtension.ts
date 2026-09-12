@@ -1,7 +1,12 @@
+import { profileFileDigest, type ProfileFileStore } from '../../profile/ProfileFileStore';
+import { isoLocalDate } from '../../../../core/localDate';
+import { captureProfileTurn, captureReplayedProfileTurn, profileStateForTurn } from '../../profile/ProfileContext';
+import type { ProfileFileKind, ProfileEvidence, ProfileSourceView } from '../../../../core/agent/profileFiles';
 import { renderedMarkdownNodeReferenceIds } from '../../../../core/markdownNodeReferences';
 import type {
   AgentCoreExtension,
   ThreadHistoryRollbackContext,
+  ThreadContextInput,
   ThreadServiceExtensionHost,
   ToolLifecycleResult,
   TurnAdmissionContext,
@@ -47,6 +52,7 @@ import {
 import {
   Phase1,
   collectMemoryEvidence,
+  memorySourcePendingDates,
   type MemoryModelRunner,
 } from './Phase1';
 import { Phase2 } from './Phase2';
@@ -96,8 +102,9 @@ export interface MemoryThreadHost extends ThreadServiceExtensionHost {
 }
 
 export interface MemoryExtensionOptions {
+  readonly profiles?: ProfileFileStore;
   readonly canRun?: () => boolean;
-  readonly onError?: (error: unknown, operation: 'graph-digest' | 'graph-wake') => void;
+  readonly onError?: (error: unknown, operation: 'graph-digest' | 'graph-wake' | 'profile-context') => void;
 }
 
 export class MemoryExtension implements AgentCoreExtension {
@@ -140,13 +147,22 @@ export class MemoryExtension implements AgentCoreExtension {
       const current = host.readThread({ threadId, includeTurns: true }).thread;
       if (current.status.type !== 'idle') return false;
       const evidence = collectMemoryEvidence(phase1Source(current, current.turns ?? []), this.control);
-      return !evidence.polluted && evidence.sourceVersion === sourceVersion;
-    });
+      return evidence.sourceVersion === sourceVersion;
+    }, this.options.profiles);
     const phase2 = new Phase2(
       this.control,
       this.timeline,
       model,
       () => this.consolidationSource(),
+      { sourceReadiness: () => {
+        if (host.hasHiddenRootThreads()) return { kind: 'unavailable' };
+        const pendingDates = new Set<string>();
+        for (const root of host.persistentRootThreads()) {
+          const thread = host.readThread({ threadId: root.id, includeTurns: true }).thread;
+          for (const date of memorySourcePendingDates(phase1Source(thread, thread.turns ?? []), this.control)) pendingDates.add(date);
+        }
+        return { kind: 'known', pendingDates };
+      } },
     );
     const sources: MemoryPipelineSourceHost = {
       persistentRootThreads: () => host.persistentRootThreads(),
@@ -195,6 +211,7 @@ export class MemoryExtension implements AgentCoreExtension {
     const host = this.requireHost();
     await this.timeline.ensureTagDefinitions();
     this.reconcileRollbackHooks(host);
+    try { this.options.profiles?.recover(); } catch (error) { this.options.onError?.(error, 'profile-context'); }
     // The orphan sweep deletes every admission row whose Turn it cannot see, so it
     // is only sound when every durable Turn is enumerable. A quarantined Thread is
     // excluded from `persistentRootThreads()`, which would make all of its Turns
@@ -203,9 +220,12 @@ export class MemoryExtension implements AgentCoreExtension {
     // state. Skip the sweep entirely for that session; the next launch that can
     // read the Thread runs it against the complete set.
     if (!host.hasHiddenRootThreads()) {
-      this.control.deleteOrphanAdmissions(new Set(host.persistentRootThreads().flatMap((thread) => (
+      const retainedTurnIds = new Set(host.persistentRootThreads().flatMap((thread) => (
         host.readThread({ threadId: thread.id, includeTurns: true }).thread.turns?.map((turn) => turn.id) ?? []
-      ))));
+      )));
+      this.control.deleteOrphanAdmissions(retainedTurnIds);
+      try { this.options.profiles?.pruneTurnSnapshots(retainedTurnIds); }
+      catch (error) { this.options.onError?.(error, 'profile-context'); }
     }
     this.lastGraphDigest = this.currentCanonicalGraphDigest();
     await this.requirePipeline().recover();
@@ -243,6 +263,7 @@ export class MemoryExtension implements AgentCoreExtension {
   closeStore(): void {
     if (this.storeClosed) return;
     if (!this.workerStopped) throw new Error('Memory worker must stop before its control store closes');
+    this.options.profiles?.close();
     this.control.close();
     this.storeClosed = true;
   }
@@ -312,13 +333,17 @@ export class MemoryExtension implements AgentCoreExtension {
   }
 
   reviewReset(): MemoryResetTarget {
-    return captureMemoryResetTarget(this.timeline.projection(), this.control.status().resetEpoch);
+    const target = captureMemoryResetTarget(this.timeline.projection(), this.control.status().resetEpoch);
+    return this.options.profiles ? { ...target, profile: this.options.profiles.resetTarget() } : target;
   }
 
   inspectReset(operationId: string): MemoryResetView {
     const record = this.control.publication(operationId);
     if (!record || record.kind !== 'reset') return { operationId, state: 'unknown', admittedAt: null, targetEpoch: null };
-    return { operationId, state: record.status, admittedAt: record.createdAt, targetEpoch: resetPublicationPayload(record.payload).epoch };
+    const payload = resetPublicationPayload(record.payload);
+    return { operationId, state: record.status, admittedAt: record.createdAt, targetEpoch: payload.epoch,
+      ...(payload.target.profile ? { profileState: this.options.profiles?.receipt(`${operationId}:profile`) ? 'removed' as const : 'pending' as const } : {}),
+    };
   }
 
   async reset(target: MemoryResetTarget, authorize: () => Promise<void>): Promise<MemoryResetView> {
@@ -331,6 +356,17 @@ export class MemoryExtension implements AgentCoreExtension {
       }
       return this.commitReviewedReset(target, authorize, operationId);
     }));
+  }
+
+  private validateProfileReset(target: MemoryResetTarget, operationId: string): void {
+    if (!target.profile) return;
+    const profiles = this.options.profiles;
+    if (!profiles) throw new Error('Profile Reset owner is unavailable');
+    if (profiles.receipt(`${operationId}:profile`)) return;
+    const current = profiles.resetTarget();
+    if (JSON.stringify(current) !== JSON.stringify(target.profile)) {
+      throw memoryFailure('stale_memory_reset', 'The user profile changed after Reset review. Review it again.');
+    }
   }
 
   private async commitReviewedReset(target: MemoryResetTarget, authorize: () => Promise<void>, operationId: string): Promise<MemoryResetView> {
@@ -348,6 +384,7 @@ export class MemoryExtension implements AgentCoreExtension {
       await this.timeline.resetWithinWriteGate(operationId, generation, digest, target.containerIds, async (projection) => {
         await authorize();
         requireMatchingMemoryResetTarget(projection, this.control.status().resetEpoch, target);
+        this.validateProfileReset(target, operationId);
         const prepared: MemoryPublicationRecord<ResetPublicationPayload> = {
           id: operationId, kind: 'reset', status: 'prepared', generation,
           featureGeneration: status.featureModeGeneration, resetEpoch: status.resetEpoch,
@@ -355,6 +392,10 @@ export class MemoryExtension implements AgentCoreExtension {
         };
         this.control.prepareReset(prepared);
         record = prepared;
+        if (payload.target.profile) {
+          if (!this.options.profiles) throw new Error('Profile Reset owner is unavailable');
+          this.options.profiles.reset(`${operationId}:profile`, payload.target.profile);
+        }
       });
       this.control.finalizeReset(operationId, payload.epoch, payload.excludedTurnIds);
     } catch (error) {
@@ -395,59 +436,98 @@ export class MemoryExtension implements AgentCoreExtension {
       memoryVisibilityGeneration: status.memoryVisibilityGeneration,
       admittedAt: Date.now(),
     });
+    if (this.options.profiles && !context.thread.ephemeral && context.thread.parentThreadId === null) {
+      try {
+        if (context.replayedTurnId) captureReplayedProfileTurn(this.options.profiles, context.turnId, context.replayedTurnId);
+        else captureProfileTurn(this.options.profiles, context.thread.id, context.turnId, context.configuration.profileName ?? 'default', eligible);
+      }
+      catch (error) { this.options.onError?.(error, 'profile-context'); }
+    }
     return { extensionId: this.id, snapshotId: `${status.featureModeGeneration}:${status.resetEpoch}:${status.memoryVisibilityGeneration}` };
   }
 
-  contributeThreadContext(thread: Thread) {
-    const activeTurn = this.currentTurn(thread.id);
-    if (!activeTurn) return null;
-    const admission = this.control.admission(activeTurn.id);
-    const explicitlyRequested = activeTurn.provenance.trigger.kind === 'user' && turnHasExplicitMemoryIntent(activeTurn);
-    if (!admission?.eligibleAtAdmission || this.control.isTurnExcluded(activeTurn.id)) {
-      this.turnMemoryUsage.delete(activeTurn.id);
-      return explicitlyRequested ? {
-        extensionId: this.id,
-        additionalContext: {
-          memory: {
-            kind: 'application' as const,
-            scope: 'Memory',
-            value: 'Memory is disabled for this Turn. Do not create, edit, tag, move, or delete Memory Nodes. Tell the user that Memory must be enabled before this request can be applied.',
-          },
-        },
-      } : null;
+  private profileContext(thread: Thread, turnId: string) {
+    if (!this.options.profiles || thread.ephemeral || thread.parentThreadId !== null) return {};
+    const admission = this.control.admission(turnId);
+    const learned = Boolean(admission?.eligibleAtAdmission) && this.control.featureMode() === 'enabled'
+      && admission?.featureModeGeneration === this.control.status().featureModeGeneration
+      && admission?.resetEpoch === this.control.status().resetEpoch && !this.control.isTurnExcluded(turnId);
+    try { return profileStateForTurn(this.options.profiles, turnId, learned); }
+    catch (error) { this.options.onError?.(error, 'profile-context'); return {}; }
+  }
+
+  inspectProfileFiles(profileName = 'default') {
+    if (!this.options.profiles) throw new Error('Profile files are unavailable');
+    return (['identity', 'style', 'user'] as const).map((kind) => this.options.profiles!.inspect(kind, profileName));
+  }
+
+  inspectProfileSource(key: string, originItemId: string): ProfileSourceView {
+    const entry = this.options.profiles?.inspect('user').entries.find((entry) => entry.key === key);
+    const source = entry?.sources.find((source) => source.originItemId === originItemId);
+    if (!source) throw new Error('Profile evidence changed; refresh before opening its source');
+    try {
+      const thread = this.requireHost().readThread({ threadId: source.threadId, includeTurns: true }).thread;
+      const item = thread.turns?.find((turn) => turn.id === source.turnId)?.items.find((item) => item.provenance.originItemId === source.originItemId);
+      if (item) {
+        const content = item.type === 'userMessage' ? item.content.map((part) => part.type === 'text' ? part.text : `[${part.type}]`).join('\n')
+          : item.type === 'agentMessage' ? item.text : JSON.stringify(item, null, 2);
+        return { state: 'available', source, content: content.slice(0, 16_000), truncated: content.length > 16_000 };
+      }
+    } catch { /* Source availability never changes accepted provenance. */ }
+    return { state: 'unavailable', source, content: '', truncated: false };
+  }
+
+  editProfileFile(input: { kind: ProfileFileKind; profileName: string; expectedDigest: string | null; content: string }, authorize: () => Promise<void>) {
+    return this.timeline.withWriteGate(async () => {
+      await authorize();
+      if (!this.options.profiles) throw new Error('Profile files are unavailable');
+      return this.options.profiles.edit({ ...input, author: 'manual' });
+    });
+  }
+
+  async writeProfileFile(input: { path: string; content: string; previousContent: string | null; operationId: string }, thread: Thread, turn: Turn): Promise<boolean> {
+    const profiles = this.options.profiles;
+    const target = profiles?.identifyPath(input.path);
+    if (!profiles || !target) return false;
+    if (thread.parentThreadId !== null || thread.ephemeral || thread.threadSource !== 'user' || turn.provenance.trigger.kind !== 'user') {
+      throw new Error('Profile editing requires a foreground reader Turn');
     }
-    if (
-      this.control.featureMode() !== 'enabled'
+    const sources: ProfileEvidence[] = turn.items.filter((item) => item.type === 'userMessage' && item.author.kind === 'reader'
+      && item.content.some((part) => part.type === 'text' && part.text.trim())).map((item) => ({
+      threadId: thread.id, turnId: turn.id, originItemId: item.provenance.originItemId, readerText: true,
+      sourceDate: isoLocalDate(new Date(turn.startedAt)), observedAt: Date.now(),
+    }));
+    if (!sources.length) throw new Error('Profile editing requires reader-authored text');
+    await this.timeline.withWriteGate(async () => {
+      profiles.edit({ ...target, content: input.content, expectedDigest: profileFileDigest(input.previousContent),
+        author: 'agent', sources, operationId: `profile:file:${input.operationId}` });
+    });
+    return true;
+  }
+
+  contributeThreadContext(thread: Thread, input: ThreadContextInput) {
+    const additionalContext = this.profileContext(thread, input.turnId);
+    const admission = this.control.admission(input.turnId);
+    const unavailable = !admission?.eligibleAtAdmission || this.control.isTurnExcluded(input.turnId)
+      || this.control.featureMode() !== 'enabled'
       || admission.featureModeGeneration !== this.control.status().featureModeGeneration
-    ) {
-      this.turnMemoryUsage.delete(activeTurn.id);
-      return explicitlyRequested ? {
-        extensionId: this.id,
-        additionalContext: {
-          memory: {
-            kind: 'application' as const,
-            scope: 'Memory',
-            value: 'Memory became unavailable for this Turn. Do not mutate Memory Nodes. Tell the user to retry after Memory is enabled.',
-          },
-        },
-      } : null;
+      || admission.resetEpoch !== this.control.status().resetEpoch;
+    if (unavailable) {
+      this.turnMemoryUsage.delete(input.turnId);
+      const explicitlyRequested = input.content.some((part) => part.type === 'text' && EXPLICIT_MEMORY_INTENT.test(part.text));
+      return { extensionId: this.id, additionalContext: {
+        ...additionalContext,
+        ...(explicitlyRequested ? { memory: {
+          kind: 'application' as const, scope: 'Memory',
+          value: 'Automatic Memory is unavailable for this Turn. Do not mutate Memory Nodes or create learned profile entries. Explicitly authored configuration can still be edited through its owner.',
+        } } : {}),
+      } };
     }
-    if (!this.turnMemoryUsage.has(activeTurn.id)) {
-      this.turnMemoryUsage.set(activeTurn.id, {
-        nodeIds: new Set(),
-        threadId: thread.id,
-      });
-    }
-    return {
-      extensionId: this.id,
-      additionalContext: {
-        memory: {
-          kind: 'application' as const,
-          scope: 'Memory',
-          value: MEMORY_OPERATION_CONTEXT,
-        },
-      },
-    };
+    if (!this.turnMemoryUsage.has(input.turnId)) this.turnMemoryUsage.set(input.turnId, { nodeIds: new Set(), threadId: thread.id });
+    return { extensionId: this.id, additionalContext: {
+      ...additionalContext,
+      memory: { kind: 'application' as const, scope: 'Memory', value: MEMORY_OPERATION_CONTEXT },
+    } };
   }
 
   onToolCompleted(context: ToolLifecycleResult): void {
@@ -466,6 +546,11 @@ export class MemoryExtension implements AgentCoreExtension {
       if (usage.nodeIds.has(nodeId) || !visible.has(nodeId)) continue;
       usage.nodeIds.add(nodeId);
     }
+  }
+
+  onThreadDeleted(thread: Thread): void {
+    try { this.options.profiles?.deleteThreadState(thread.id); }
+    catch (error) { this.options.onError?.(error, 'profile-context'); }
   }
 
   onNotification(notification: AgentCoreRecordedNotification): void {
@@ -515,14 +600,17 @@ export class MemoryExtension implements AgentCoreExtension {
         suppressedNodeIds: suppression.nodeIds,
         suppressAllGenerated: !suppression.complete,
       });
+      this.options.profiles?.prepareInvalidation(context.rollbackId, context.omittedTurnIds);
     });
   }
 
   abortHistoryRollback(context: ThreadHistoryRollbackContext): void {
+    this.options.profiles?.abortInvalidation(context.rollbackId);
     this.control.abortRollback(context.rollbackId);
   }
 
   commitHistoryRollback(context: ThreadHistoryRollbackContext): void {
+    this.options.profiles?.commitInvalidation(context.rollbackId, context.omittedTurnIds);
     this.control.commitRollback(context.rollbackId);
     if (this.initialized) {
       this.requirePipeline().wakeThread(this.requireHost().readThread({ threadId: context.threadId, includeTurns: true }).thread);
@@ -628,7 +716,7 @@ export class MemoryExtension implements AgentCoreExtension {
 
   private reportDeferredGraphError(
     error: unknown,
-    operation: 'graph-digest' | 'graph-wake',
+    operation: 'graph-digest' | 'graph-wake' | 'profile-context',
   ): void {
     try {
       this.options.onError?.(error, operation);
@@ -662,17 +750,17 @@ export class MemoryExtension implements AgentCoreExtension {
     };
   }
 
-  private currentTurn(threadId: ThreadId): Turn | null {
-    const turns = this.requireHost().readThread({ threadId, includeTurns: true }).thread.turns ?? [];
-    return [...turns].reverse().find((turn) => turn.status === 'inProgress') ?? null;
-  }
-
   private reconcileRollbackHooks(host: MemoryThreadHost): void {
     for (const rollback of this.control.activeRollbacks()) {
       if (rollback.status !== 'prepared') continue;
       const marker = host.historyRollbackMarker(rollback.rollbackId);
-      if (marker && rollbackMatchesMarker(rollback, marker)) this.control.commitRollback(rollback.rollbackId);
-      else this.control.abortRollback(rollback.rollbackId);
+      if (marker && rollbackMatchesMarker(rollback, marker)) {
+        this.options.profiles?.commitInvalidation(rollback.rollbackId, rollback.omittedTurnIds);
+        this.control.commitRollback(rollback.rollbackId);
+      } else {
+        this.options.profiles?.abortInvalidation(rollback.rollbackId);
+        this.control.abortRollback(rollback.rollbackId);
+      }
     }
   }
 
@@ -687,7 +775,14 @@ export class MemoryExtension implements AgentCoreExtension {
             record.generation,
             record.digest,
             payload.target.containerIds,
-            (projection) => requireMatchingMemoryResetTarget(projection, this.control.status().resetEpoch, payload.target),
+            (projection) => {
+              requireMatchingMemoryResetTarget(projection, this.control.status().resetEpoch, payload.target);
+              this.validateProfileReset(payload.target, record.id);
+              if (payload.target.profile) {
+                if (!this.options.profiles) throw new Error('Profile Reset owner is unavailable');
+                this.options.profiles.reset(`${record.id}:profile`, payload.target.profile);
+              }
+            },
           );
         } catch (error) {
           if (await this.timeline.hasPublication(record.id, record.digest)) {
@@ -699,6 +794,7 @@ export class MemoryExtension implements AgentCoreExtension {
           return;
         }
       }
+      if (payload.target.profile && !this.options.profiles?.receipt(`${record.id}:profile`)) throw new Error('Profile Reset has not settled');
       this.control.finalizeReset(record.id, payload.epoch, payload.excludedTurnIds);
     });
   }
@@ -716,12 +812,6 @@ export class MemoryExtension implements AgentCoreExtension {
     if (!this.pipeline) throw new Error('Memory extension is not bound to ThreadService');
     return this.pipeline;
   }
-}
-
-function turnHasExplicitMemoryIntent(turn: Turn): boolean {
-  return turn.items.some((item) => item.type === 'userMessage' && item.content.some((part) => (
-    part.type === 'text' && EXPLICIT_MEMORY_INTENT.test(part.text)
-  )));
 }
 
 function isMemoryPublication(operation: Operation | undefined): boolean {
@@ -798,10 +888,10 @@ function rollbackMatchesMarker(
 }
 
 const MEMORY_OPERATION_CONTEXT = `Durable Memory is stored as ordinary editable Nodes under source-date Daily Notes.
-The canonical hierarchy is one direct #d-memory container under a Daily Note, direct #d-episode children, and optional #d-belief, #d-question, or #d-guidance descendants.
+The canonical hierarchy is one direct #mem-day container under a source-date Daily Note. New containers start as Memory; after the source day ends and its evidence finishes processing, consolidation gives it a vivid, memorable title grounded in its actual contents. Independently useful #mem-episode context is optional; #mem-belief, #mem-question, and #mem-guidance records can be direct children of the container or descendants of an episode. Update generated day titles as their retained content changes, preserve titles edited by the user, and never create an empty container.
 When prior preferences, decisions, commitments, unresolved questions, or recurring workflow facts could materially improve the response, use outline find to locate relevant Memory and inspect only the one or two most relevant results with outline --json get before relying on them. Skip Memory lookup for self-contained requests such as the current date or time, simple formatting or transformation, and questions fully answerable from the current Turn.
 When a final answer relies on an ordinary Memory Node you read, cite it inline next to the relevant claim as [[node://UUID]], removing the internal node: prefix. Do not add a separate sources or used-memory section.
-Use the public outline workflow only when the user explicitly asks to remember, update, or forget durable information. Reuse a same-date canonical container when present, apply the fixed tag IDs tag:d-memory, tag:d-episode, tag:d-belief, tag:d-question, and tag:d-guidance, and keep the hierarchy valid.
+Stable personal preferences and background belong in USER.md through the configuration Skill and ordinary file tools. Use the public outline workflow for explicitly requested dated events, contextual knowledge and decisions; never duplicate a routine profile preference as a Node. Reuse a same-date canonical container when present, apply the fixed tag IDs tag:mem-day, tag:mem-episode, tag:mem-belief, tag:mem-question, and tag:mem-guidance, and keep the hierarchy valid.
 Do not create unsolicited Memory, do not treat routine transcript narration as Memory, and do not modify stray reserved-tag Nodes outside the canonical hierarchy.`;
 
 function isRecord(value: unknown): value is Record<string, unknown> {

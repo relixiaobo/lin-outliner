@@ -13,7 +13,7 @@ test('real Memory transport, file application, native review target, navigation 
   try {
     smoke = await launchSmokeApp({ userDataDir });
     const { app, window: main } = smoke;
-    await expect.poll(() => main.evaluate(() => window.lin!.startup.get())).toEqual({ status: 'ready' });
+    await expect.poll(() => main.evaluate(() => window.lin!.startup.get())).toMatchObject({ status: 'ready', capabilities: { outline: 'ready', agent: 'ready' } });
     await main.evaluate(() => {
       (window as any).memoryEvents = 0;
       window.lin!.onMemoryChanged(() => { (window as any).memoryEvents++; });
@@ -75,7 +75,7 @@ test('real Memory transport, file application, native review target, navigation 
       const value = (globalThis as any).memoryReviews.at(-1);
       return { type: value.type, detail: value.detail, defaultId: value.defaultId, cancelId: value.cancelId };
     });
-    expect(review).toEqual({ type: 'warning', detail: 'Memory sections: 1. Notes to delete: 2, including 1 ordinary notes.', defaultId: 1, cancelId: 1 });
+    expect(review).toEqual({ type: 'warning', detail: 'Memory sections: 1. Notes to delete: 2, including 1 ordinary notes. Learned profile entries: 0. Authored profile entries and identity/style files are preserved.', defaultId: 1, cancelId: 1 });
     await app.evaluate(() => { (globalThis as any).memoryReviewResponse = 0; });
     await settings.getByRole('button', { name: 'Reset Memory', exact: true }).click();
     await expect(settings.getByRole('status')).toContainText('Memory reset.');
@@ -84,8 +84,8 @@ test('real Memory transport, file application, native review target, navigation 
     expect(await main.evaluate(() => window.lin!.invoke('memory_inspect', { request: { operation: 'status' } }))).toMatchObject({ status: { resetEpoch: 1 } });
     expect(ids.container).toMatch(/^node:/);
   } finally {
-    if (smoke) await closeSmokeApp(smoke, { keepUserData: true });
-    await rm(userDataDir, { recursive: true, force: true });
+    if (smoke) await closeSmokeApp(smoke);
+    else await rm(userDataDir, { recursive: true, force: true });
   }
 });
 
@@ -104,7 +104,7 @@ async function seedMemory(page: Page) {
       protocolVersion: 1, kind: 'outline.changeset', idempotencyKey: `memory:${crypto.randomUUID()}`,
       operations: [{ op: 'create', placement: { kind: 'last', parent: { target: { selector: { by: 'alias', alias: 'today' }, cardinality: 'one' } } },
         nodes: [
-          { id: container, content: content('Memory canonical fixture'), tags: ['tag:d-memory'], children: [
+          { id: container, content: content('Memory canonical fixture'), tags: ['tag:mem-day'], children: [
             { id: child, content: content('Memory ordinary descendant'), children: [] },
           ] },
           { id: outside, content: content('Memory outside survivor'), children: [] },

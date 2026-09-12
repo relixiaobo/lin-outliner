@@ -13,6 +13,30 @@ UI-refactor round), **A11** (batch work resumable by construction), **A12**
 append-into-the-existing-category changelog rule (the 21-duplicate-section
 untangle of 2026-08-03).
 
+## Cross-owner admission rules must survive every write phase
+
+PR #685 expanded Memory from extraction-only source checks to consolidation and
+durable publication. A rule enforced only when a candidate is first created can be
+bypassed later by a model rewrite, cleanup, restart, or a different owner.
+
+**Persist the immutable source facts and semantic subject needed by every later
+write owner, then revalidate them at planning and document admission.** Keep the
+transmitted representation identical to the representation used for budgets and
+limits. Test the rule across extraction, consolidation, restart, rollback, and
+publication races rather than only at the first admission boundary.
+
+## Private recovery data needs an explicit retention owner
+
+PR #686 initially persisted complete Profile snapshots and publication bodies
+without a cleanup boundary. That made private recovery state grow with every
+Turn and retained superseded Profile text beyond the history that could replay
+it.
+
+**Every private snapshot or receipt must name the canonical history, recovery
+window, or bounded count that keeps it alive.** Delete state when its owning
+Thread or Turn is removed, compact settled payloads to the fields needed for
+idempotency, and document any age/count bound alongside the recovery contract.
+
 ## Human review is a presentation boundary, not a mutation credential
 
 PR #644 moved Skill acquisition and destructive operations behind a native

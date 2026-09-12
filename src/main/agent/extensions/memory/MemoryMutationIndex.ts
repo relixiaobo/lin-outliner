@@ -91,6 +91,10 @@ export class MemoryMutationIndex {
     const ordered: CanonicalMemoryNode[] = [];
     for (const container of containers) {
       ordered.push(container);
+      for (const childId of container.node.children) {
+        const child = this.canonicalById.get(childId);
+        if (child && child.category !== 'episode' && child.category !== 'memory' && child.episodeId === null) ordered.push(child);
+      }
       for (const episodeId of container.node.children) {
         const episode = this.canonicalById.get(episodeId);
         if (

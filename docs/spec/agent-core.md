@@ -142,7 +142,11 @@ Skill, inherited-context, tool-output, and compaction evidence at every provider
 boundary. The Skill reducer records one catalog baseline per context epoch, appends
 only changed entries, restore validated compaction checkpoints, and start a new baseline
 after `contextReset`. A newly discovered Skill can therefore join an existing
-Thread without rebuilding or rewriting its earlier provider prefix.
+Thread without rebuilding or rewriting its earlier provider prefix. Profile state
+uses the same append-only principle through complete additional-context snapshots.
+Unchanged keys are omitted during projection; updates supersede earlier values
+and removed scopes are revoked. Runtime refresh and compaction share baseline
+lookup, including exact inherited context and preserved tails.
 Path-triggered Skill observation reads the bounded path already carried by successful
 Core file Items; it never decodes historical argument payloads at Turn acceptance,
 resume, or runtime preparation.
@@ -282,6 +286,17 @@ protocol facade; it does not duplicate their state. There are no flat
 or compatibility readers.
 
 ## Configuration Profiles And Presentation
+
+Explicit identity/style components and global current personal context are
+file-backed under the [Profile contract](agent-memory.md#profile-files-and-direct-learning).
+Each root Turn captures accepted file observations separately from the Thread's
+frozen model/tool configuration. Profile contents use canonical keyed
+additional-context state, with deduplication, named revocations and compaction
+checkpoints shared with other extension state. They do not rewrite the stable
+system prompt. Ordinary edits apply to the next Turn; request-boundary refresh
+withdraws invalid captured context and preserves developer-instruction precedence. Missing or rejected optional Profile data cannot
+broaden capabilities or prevent ordinary admission.
+
 
 A named `ConfigurationProfile` supplies root Thread defaults. User definitions
 load from `<userData>/agent/config.json`; project definitions load from

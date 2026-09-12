@@ -81,13 +81,13 @@ describe('Codex Agent Core extension contract', () => {
     }, capabilities);
     capabilities.applicationInstructions = true;
 
-    expect(await registry.threadContext(thread())).toEqual([{
+    expect(await registry.threadContext(thread(), { turnId: TURN_ID, content: [] })).toEqual([{
       extensionId: 'context-owner',
       applicationInstructions: false,
       additionalContext: { policy: { kind: 'application', value: 'Current policy' } },
     }]);
     active = false;
-    expect(await registry.threadContext(thread())).toEqual([{
+    expect(await registry.threadContext(thread(), { turnId: TURN_ID, content: [] })).toEqual([{
       extensionId: 'context-owner',
       applicationInstructions: false,
       additionalContext: {},
@@ -100,7 +100,7 @@ describe('Codex Agent Core extension contract', () => {
       id: 'owner',
       contributeThreadContext: () => ({ extensionId: 'other', additionalContext: {} }),
     });
-    await expect(registry.threadContext(thread())).rejects.toThrow('owner mismatch');
+    await expect(registry.threadContext(thread(), { turnId: TURN_ID, content: [] })).rejects.toThrow('owner mismatch');
   });
 });
 

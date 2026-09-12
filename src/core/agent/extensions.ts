@@ -8,6 +8,7 @@ import type {
   ThreadId,
   ThreadItem,
   ThreadItemId,
+  ThreadUserContent,
   Turn,
   TurnId,
   TurnProvenance,
@@ -75,6 +76,8 @@ export function createThreadHistoryRollbackContext(
 }
 
 export interface TurnAdmissionContext {
+  /** Rerun reuses this Turn's canonical input instead of admitting current context. */
+  readonly replayedTurnId?: TurnId;
   readonly thread: Thread;
   readonly turnId: TurnId;
   readonly provenance: TurnProvenance;
@@ -86,6 +89,12 @@ export interface TurnAdmissionContext {
 export interface TurnAdmissionContribution {
   readonly extensionId: string;
   readonly snapshotId: string;
+}
+
+/** The exact input boundary, including a Turn not yet visible in history. */
+export interface ThreadContextInput {
+  readonly turnId: TurnId;
+  readonly content: readonly ThreadUserContent[];
 }
 
 export interface ThreadContextContribution {
@@ -123,6 +132,7 @@ export interface AgentCoreExtension {
   onThreadResumed?(thread: Thread): void | Promise<void>;
   onThreadIdle?(thread: Thread): void | Promise<void>;
   onThreadStopped?(thread: Thread): void | Promise<void>;
+  onThreadDeleted?(thread: Thread): void | Promise<void>;
   /** Durably prepares extension invalidation before the marker; idempotent by rollbackId. */
   prepareHistoryRollback?(context: ThreadHistoryRollbackContext): void | Promise<void>;
   /** Releases prepared state when no marker exists; Core retries until settled or shutdown. */
@@ -134,7 +144,7 @@ export interface AgentCoreExtension {
   onTurnStopped?(thread: Thread, turn: Turn): void | Promise<void>;
   onTurnAborted?(thread: Thread, turn: Turn): void | Promise<void>;
   onTurnError?(thread: Thread, turn: Turn, error: Error): void | Promise<void>;
-  contributeThreadContext?(thread: Thread): ThreadContextContribution | Promise<ThreadContextContribution | null> | null;
+  contributeThreadContext?(thread: Thread, input: ThreadContextInput): ThreadContextContribution | Promise<ThreadContextContribution | null> | null;
   contributeTools?(thread: Thread): ExtensionToolContribution | Promise<ExtensionToolContribution | null> | null;
   onToolStarted?(context: ToolLifecycleContext): void | Promise<void>;
   onToolCompleted?(context: ToolLifecycleResult): void | Promise<void>;

@@ -1,3 +1,4 @@
+import { contextEntriesEqual } from './AdditionalContextState';
 import type {
   Api,
   AssistantMessage,
@@ -36,7 +37,7 @@ import type {
 } from '../../../core/agent/protocol';
 import { modelCallArgumentSource } from '../../../core/agent/modelCallHistory';
 import { portableProviderToolCallId } from '../../../core/agent/providerToolCallIdentity';
-import { escapeXml } from '../../../core/reminderXml';
+import { escapeXml, renderContextReminder } from '../../../core/reminderXml';
 import {
   formatNamedFileReference,
   formatNamedNodeReference,
@@ -990,15 +991,7 @@ function uniqueResourceReferences(
 function contextBundle(blocks: readonly ProjectedContextBlock[]): TextContent {
   return {
     type: 'text',
-    text: [
-      '<system-reminder>',
-      ...blocks.flatMap((block) => [
-        `<context authority="${block.authority}" purpose="${block.purpose}">`,
-        escapeXml(block.body),
-        '</context>',
-      ]),
-      '</system-reminder>',
-    ].join('\n'),
+    text: renderContextReminder(blocks),
   };
 }
 
@@ -1009,15 +1002,6 @@ function systemContextProvenance(
     source: 'systemContext',
     entries: blocks.map(({ kind, authority, purpose }) => ({ kind, authority, purpose })),
   };
-}
-
-function contextEntriesEqual(left: ContextTextEntry, right: ContextTextEntry): boolean {
-  return left.key === right.key
-    && left.source === right.source
-    && left.authority === right.authority
-    && left.purpose === right.purpose
-    && left.text === right.text
-    && left.scope === right.scope;
 }
 
 function outputReferencesEqual(

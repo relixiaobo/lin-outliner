@@ -68,7 +68,10 @@ keyboard or pointer change should be checked against this matrix.
 
 ## Row State Model
 
-- `focusedId` means the row is in edit mode.
+- `focusedId` means the row is in edit mode. Clicking inside an editor that
+  already has DOM focus restores its row's UI ownership after another row's
+  disclosure was selected. Native caret placement stays intact, and the other
+  row continues receiving external content updates.
 - Programmatic focus for an editable outliner row goes through the
   `focusRequest` state rail. Callers never focus row DOM directly; the row-owned
   consumer performs the DOM focus only after the shared IME composition guard

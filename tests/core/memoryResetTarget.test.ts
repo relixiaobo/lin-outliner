@@ -86,7 +86,7 @@ describe('Memory Reset reviewed targets', () => {
     },
     'new canonical container': (projection) => {
       get(projection, 'day').children.push('another-memory');
-      projection.nodes.push(node('another-memory', 'day', [], ['tag:d-memory']));
+      projection.nodes.push(node('another-memory', 'day', [], ['tag:mem-day']));
     },
   })) {
     test(`rejects ${name} after review without mutating the projection`, () => {
@@ -171,13 +171,13 @@ function fixture(): DocumentProjection {
       node(WORKSPACE_ID, undefined, [DAILY_NOTES_ID, 'outside', TRASH_ID]),
       node(DAILY_NOTES_ID, WORKSPACE_ID, ['day']),
       node('day', DAILY_NOTES_ID, [MEMORY_ID], [TAG_DAY_ID], '2026-09-07'),
-      node(MEMORY_ID, 'day', ['episode', 'note'], ['tag:d-memory']),
-      node('episode', MEMORY_ID, ['belief'], ['tag:d-episode']),
-      node('belief', 'episode', [], ['tag:d-belief'], 'Secret memory prose'),
+      node(MEMORY_ID, 'day', ['episode', 'note'], ['tag:mem-day']),
+      node('episode', MEMORY_ID, ['belief'], ['tag:mem-episode']),
+      node('belief', 'episode', [], ['tag:mem-belief'], 'Secret memory prose'),
       node('note', MEMORY_ID, ['attachment']),
       { ...node('attachment', 'note'), type: 'reference', targetId: 'outside' },
       node('outside', WORKSPACE_ID, ['stray']),
-      node('stray', 'outside', [], ['tag:d-guidance']),
+      node('stray', 'outside', [], ['tag:mem-guidance']),
       node(TRASH_ID, WORKSPACE_ID),
     ],
   };

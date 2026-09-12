@@ -13,10 +13,10 @@ starting or integrating work; the audit below is a dated snapshot, not a lock.
 
 ## In Flight
 
-Status refresh: 2026-09-11. Task action admission, outcome-aware recovery and
+Status refresh: 2026-09-12. Task action admission, outcome-aware recovery and
 attributable observations are integrated through #681/#683/#684; their #680
-design is archived. Scheduling (#682, Draft) and Memory Node quality (#685,
-Draft) are the open claims at this refresh. Ten active designs remain.
+design is archived. Scheduling (#682, Draft) is the remaining open claim at
+this refresh; Memory Node quality (#685) is shipped. Nine active designs remain.
 
 #679 Project-owned defaults and #675/#676/#677 image/service-evidence contracts
 remain available. Admitted Task addresses and receipt identities stay immutable;
@@ -75,7 +75,7 @@ features.
 | [background-task-continuation-policy](plans/archive/background-task-continuation-policy.md) | Delivered after the audit; archived | #673 supplies service handoff, explicit watch, exact-event acknowledgement and Stop revocation through the existing Task and Turn owners. Consumers preserve these delivered contracts; exit facts still do not establish user intent. |
 | [conversation-work-folders](plans/archive/conversation-work-folders.md) | Delivered after the audit; archived | #674 introduced multi-folder Projects and scoped CLI/Skill access; #679 replaces independent conversation defaults with current Project primary resolution. Scheduling retains its own saved location and consumes that final owner. |
 | [scheduled-work-redesign](plans/scheduled-work-redesign.md) | Retain; complete replacement feature | Current Automation scheduling does not supply the planned task/results workspace and CLI lifecycle. Keep one complete feature, settle local catch-up/location questions and consume final record/question/Task owners; document length alone is not a reason to ship partial scaffolding. |
-| [memory-agent-profile](plans/memory-agent-profile.md) | Retain; two independent core units | Current Phase1 bounded rollouts and Phase2 publication do not implement the proposed retention quality or editable Profile/direct-learning loop. Keep Node quality and Profile learning distinct; optional views, temporal memory and narrower Reset are not prerequisites. |
+| [memory-agent-profile](plans/archive/memory-agent-profile.md) | Node retention quality shipped; Profile unit remains | PR #685 ships the complete Node retention quality unit. Keep Profile files/direct learning distinct; optional views, temporal memory and narrower Reset remain separate. |
 | [targeted-thread-recovery](plans/targeted-thread-recovery.md) | Retain; final-owner dependency is real | Readable session records are not a complete reconstructable Thread store. Exact owner closure and source-loss versus accepted-learning semantics remain necessary; consume final records/Profile owners and the lifecycle owners that actually ship. |
 | [semantic-working-state](plans/semantic-working-state.md) | Retain; small consumer feature | Settings provider/managed-Skill surfaces still have raw labels and spinner-only gaps. Keep WorkingText scoped to Settings operations over existing lifecycle truth, without introducing another state owner. |
 | [floating-toolbar-polish](plans/floating-toolbar-polish.md) | Retain; two complete features | `ToolbarMark` still excludes heading, and tagged extraction has no `defaultExtractParentId` route. The heading control and atomic tagged extraction remain independent; only the latter needs shared Core ownership. |
@@ -96,8 +96,8 @@ parallel; shared-owner mutations need an explicit integration order.
 The image and service-evidence repair units are available. Scheduling may consume
 the final Task/Thread evidence owner once its own product questions are settled;
 Computer Pilot's final screenshot acceptance consumes the shared pixel normalizer.
-Node retention quality remains eligible on Memory-local owners. Profile learning
-follows the selected Node-quality changes. Keep at most two significant changes
+Node retention quality is shipped on Memory-local owners. Profile learning
+follows the delivered Node evidence contract. Keep at most two significant changes
 awaiting PM review and refresh open claims before editing shared owners.
 
 ### Contract dependencies and selected order
@@ -155,8 +155,8 @@ extend these prerequisites.
 | Priority | Plan / PR claim | Status | Next action / eligibility |
 | --- | --- | --- | --- |
 | P2 | [scheduled-work-redesign](plans/scheduled-work-redesign.md), #682 | `in-progress` | Draft claim for the complete UI/CLI feature. Consume shipped record, input, Project and #681/#683/#684 Task contracts; product decisions and complete acceptance remain with #682. |
-| P2 | [memory-agent-profile: Node retention quality](plans/memory-agent-profile.md#implementation-ownership-and-complete-delivery-units), #685 | `in-progress` | Draft claim on Memory-local owners; preserve the delivered source interface and verify useful retention with fixed quality/coverage fixtures. |
-| P2 | [memory-agent-profile: Profile files and direct learning](plans/memory-agent-profile.md#implementation-ownership-and-complete-delivery-units) | `draft` | Record prerequisite is available; follow selected Node-quality changes. Demonstrate edit/source/activation contracts before consumers; parallel with the Agent lane only where shared context/configuration owners remain settled. |
+| P2 | [memory-agent-profile: Node retention quality](plans/archive/memory-agent-profile.md#implementation-ownership-and-complete-delivery-units), #685 | `done` | Bounded source-aware extraction, independent support, subject admission, consolidation cleanup, completed-day naming, and focus-preserving publication shipped; [plan archived](plans/archive/memory-agent-profile.md). |
+| P2 | [memory-agent-profile: Profile files and direct learning](plans/archive/memory-profile-direct-learning.md) | `done` | Editable Profile files, direct USER.md learning, source-aware activation, canonical context updates, Reset/rollback invalidation, retention cleanup, and Settings/file-tool ownership shipped in #686; [plan archived](plans/archive/memory-profile-direct-learning.md). |
 | P2 | [targeted-thread-recovery](plans/targeted-thread-recovery.md) | `draft` | Record, input and Task prerequisites are available; final profile owners remain required. Prefer after other selected lifecycle consumers; verify exact question, Task, Project and scheduled-run closure through their actual owners. |
 | P2 | [file-preview-office](plans/file-preview-office.md) | `draft` | Prove no-Python DOCX/XLSX extraction and archive policy first; cut over Agent and preview in the same feature. Preserve #669's delivered file-tool contract; take the first preview-shell claim and ship all three readers together. |
 | P2 | [url-static-reader](plans/url-static-reader.md) | `draft` | Network/image-policy and existing Agent-mode fixtures can start now. Prefer after Office on preview shell/extraction wiring; preserve each caller's acquisition authority without a renderer fetch path. |
@@ -381,7 +381,7 @@ One line per recent shipped integration. Older history and review detail live in
 - **startup-fault-isolation** (`done`, #664, 2026-09-09) - scoped startup recovery preserves healthy notes, chat drafts and notifications; owner retry and configuration recovery are specified, and the [plan is archived](plans/archive/startup-fault-isolation.md).
 - **default-model-selection** (`done`, #666, 2026-09-09) - queued saves retain each chosen text model, display the persisted result, and preserve the selection across Settings reopening and app restart.
 - **shortcut-initial-read** (`done`, #667, 2026-09-09) - live shortcut changes supersede late initial reads and errors, preserving the latest bindings and source digest for subsequent edits.
-- **memory-agent-profile design integration** (`done`, #665, 2026-09-09) - two complete core units and their activation/Reset boundaries are approved; profile learning precedes targeted recovery, and runtime remains pending.
+- **memory-agent-profile design integration** (`done`, #665, 2026-09-09) - two complete core units and their activation/Reset boundaries are approved; #685 subsequently shipped Node retention quality while Profile files/direct learning remains pending.
 - **development-process-lifecycle** (`done`, #663, 2026-09-09) - requested background servers retain ownership without a default deadline, running logs preserve multiline secret context, and nested desktops resolve their own Runtime launch; [plan archived](plans/archive/development-process-lifecycle.md).
 - **web-search-http** (`done`, #662, 2026-09-09) - bounded Parallel/Exa HTTP search replaces Google/DuckDuckGo browser search, preserving independent Bing Images and #661's web-fetch contract; [plan archived](plans/archive/web-search-http.md).
 - **tool-output-boundaries** (`done`, #661, 2026-09-09) - partial reads and oversized search, web, image, and task results now satisfy the shared output contract while preserving continuation, artifacts, and terminal state; current behavior is recorded in the tool specification.

@@ -3420,6 +3420,42 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
     await fixture.service.close();
   });
 
+  test('evaluates exact input boundaries and appends changed runtime state once', async () => {
+    const contexts: Array<{ turnId: string; content: unknown }> = [];
+    let value = 'ACTIVE PROFILE';
+    const registry = new ExtensionRegistry();
+    registry.register({
+      id: 'profile-state-probe',
+      contributeThreadContext: (_thread, input) => {
+        contexts.push(input);
+        return { extensionId: 'profile-state-probe', additionalContext: value ? {
+          preference: { kind: 'application', purpose: 'observation', scope: 'Profile preference reports', value },
+        } : {} };
+      },
+    }, { applicationInstructions: true });
+    const fixture = await createFixture(registry);
+    const thread = (await fixture.service.startThread({ source: 'app', threadSource: 'user', modelProvider: 'openai', configurationSource: { kind: 'user' } })).thread;
+    const request = [{ type: 'text' as const, text: 'Write a report.' }];
+    const accepted = await fixture.service.startRendererTurn({ threadId: thread.id, input: request });
+    await fixture.executor.waitUntilWaiting(0);
+    const context = fixture.executor.contexts[0]!;
+    expect(contexts[0]).toEqual({ turnId: accepted.turn.id, content: request });
+    const additional = () => fixture.service.readTurnForHost(thread.id, accepted.turn.id)!.items.filter((item) => item.type === 'contextEvidence' && item.kind === 'additionalContext');
+    expect(additional()).toHaveLength(1);
+    await context.refreshThreadContext!();
+    expect(additional()).toHaveLength(1);
+    value = '';
+    await context.refreshThreadContext!();
+    const updated = additional();
+    expect(updated).toHaveLength(2);
+    expect(await fixture.stores.payloads.readContext(thread.id, updated[1].payloadRef)).toMatchObject({ kind: 'additionalContext', threadState: [] });
+    await context.refreshThreadContext!();
+    expect(additional()).toHaveLength(2);
+    fixture.executor.finish(0, { status: 'failed', error: { message: 'Provider unavailable' } });
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.close();
+  });
+
   test('records an empty Thread-state snapshot when the last extension value is cleared', async () => {
     let active = true;
     const registry = new ExtensionRegistry();

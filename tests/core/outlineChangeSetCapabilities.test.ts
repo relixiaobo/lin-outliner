@@ -2,6 +2,8 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { TimelineMemoryStore } from '../../src/main/agent/extensions/memory/TimelineMemoryStore';
+import { freshNodeId } from '../../src/core/nodeId';
 import { MEMORY_TAG_DEFINITIONS } from '../../src/core/agent/memory';
 import { projectFieldConfig } from '../../src/core/configProjection';
 import type { Change, ChangeSet, NodeDraft, Operation, TargetRef } from '../../src/outline/contract';
@@ -62,6 +64,55 @@ describe('outline ChangeSet capability coverage', () => {
       origin: 'external-client',
     })).rejects.toMatchObject({ outlineError: { code: 'precondition_failed' } });
     expect(workspace.documentState().nodes[memoryTagId]).toBeDefined();
+  });
+
+  test('leaves ordinary Memory category tag names under user control', async () => {
+    const workspace = await makeWorkspace();
+    await settle(workspace, MEMORY_TAG_DEFINITIONS.map((definition): Change => ({
+      op: 'ensure', resource: 'definition', definitionType: 'tag', id: definition.tagId, name: definition.name, bind: definition.category,
+    })));
+    for (const name of ['memory', 'episode', 'belief', 'question', 'guidance']) {
+      const created = await settle(workspace, [{ op: 'ensure', resource: 'definition', definitionType: 'tag', name, bind: 'userTag' }]);
+      const tagId = created.diff.bindings.userTag![0]!;
+      expect(MEMORY_TAG_DEFINITIONS.some((definition) => definition.tagId === tagId)).toBe(false);
+      expect(workspace.documentState().nodes[tagId]?.locked).not.toBe(true);
+      await settle(workspace, [{ op: 'update', targets: oneId(tagId), changes: [
+        { kind: 'definition', definitionType: 'tag', patch: { showCheckbox: true } },
+      ] }]);
+    }
+  });
+
+  test('Memory cleanup reparents retained context before purging an unsupported episode in one transaction', async () => {
+    const workspace = await makeWorkspace();
+    await settle(workspace, MEMORY_TAG_DEFINITIONS.map((definition): Change => ({
+      op: 'ensure', resource: 'definition', definitionType: 'tag', id: definition.tagId, name: definition.name, bind: definition.category,
+    })));
+    const containerId = freshNodeId();
+    const episodeId = freshNodeId();
+    const childId = freshNodeId();
+    await settle(workspace, [{ op: 'create', placement: { kind: 'last', parent: oneAlias('today') }, nodes: [
+      draft('Memory', { id: containerId, tags: ['tag:mem-day'], children: [
+        draft('Unsupported personal episode', { id: episodeId, tags: ['tag:mem-episode'], children: [
+          draft('Retained external context', { id: childId, tags: ['tag:mem-belief'] }),
+        ] }),
+      ] }),
+    ] }]);
+    const timeline = new TimelineMemoryStore({
+      getProjection: () => workspace.projection(),
+      runChanges: (changes, options) => settle(workspace, changes, options?.acknowledgeDestructive),
+      runPlannedChanges: async (build, options) => {
+        const changes = await build(workspace.projection());
+        if (changes) await settle(workspace, changes, options?.acknowledgeDestructive);
+      },
+      log: async () => [],
+    });
+    await timeline.applyConsolidation('memory:cleanup:episode', 1, 'episode-context', [
+      { action: 'move', nodeId: childId, parentId: containerId },
+      { action: 'delete', nodeId: episodeId },
+    ]);
+    expect(workspace.documentState().nodes[episodeId]).toBeUndefined();
+    expect(workspace.documentState().nodes[childId]).toMatchObject({ parentId: containerId, content: { text: 'Retained external context' } });
+    expect(timeline.graph().nodes.find((node) => node.node.id === childId)).toMatchObject({ category: 'belief', episodeId: null });
   });
 
   test('keeps explicit definition IDs stable and rejects same-name ID conflicts without writing', async () => {

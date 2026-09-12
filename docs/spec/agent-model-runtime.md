@@ -73,7 +73,7 @@ built-in filesystem, Outliner, Memory, Skill, Goal, or Automation guidance.
 The stable modules retain the established operational contract: renderer-safe
 deliverables use canonical `[[file:///absolute/path]]` markers with a readable
 filename placed before the unchanged marker when useful; Memory lookup searches and
-reads the `#d-memory`/`#d-episode`/`#d-belief` family; a Skill's declared dependency
+reads the `#mem-day`/`#mem-episode`/`#mem-belief` family; a Skill's declared dependency
 is verified and installed or enabled before an approximation is considered; and Agents
 explicitly account for shared files, processes, ports, credentials, application state,
 and services. Tool-owned syntax such as generated-image placement remains on the owning

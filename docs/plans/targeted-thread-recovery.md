@@ -37,7 +37,7 @@ recovered-history provenance, and publication invalidation mechanisms from
 predecessor contracts, not implementation details to reconstruct from an archive.
 
 The selected order also consumes
-[profile files and direct learning](memory-agent-profile.md#implementation-ownership-and-complete-delivery-units)
+[profile files and direct learning](archive/memory-agent-profile.md#implementation-ownership-and-complete-delivery-units)
 before this feature. Bind closure inspection to its final accepted file revisions,
 admission, provenance, pending-work and retained-source contracts. A source Thread
 becoming unavailable does not itself forget an accepted user-wide preference;

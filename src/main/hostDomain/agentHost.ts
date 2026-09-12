@@ -1,5 +1,6 @@
 import { ScheduledRunOwnership } from '../agent/automations/ScheduledRunOwnership';
 import { ScheduleCliService, SCHEDULE_CLI_CONFIGURATION_REVISION, scheduleCliScheduling } from '../agent/automations/ScheduleCliService';
+import { ProfileFileStore } from '../agent/profile/ProfileFileStore';
 import { ProjectCliService, PROJECT_CLI_CONFIGURATION_REVISION, projectCliScheduling } from '../agent/projects/ProjectCliService';
 import { ResourceScope } from '../resourceScope';
 import { createHash } from 'node:crypto';
@@ -276,8 +277,18 @@ async function composeAgentHost(options: AgentHostOptions, acquisition: Resource
   const extensions = new ExtensionRegistry();
   const memoryControl = new MemoryControlStore(join(options.userDataDir, 'agent', 'memories.sqlite'));
   acquisition.defer('memory-control', () => memoryControl.close());
+  let profiles: ProfileFileStore | undefined;
+  try {
+    profiles = new ProfileFileStore(options.userDataDir);
+    const acquired = profiles;
+    acquisition.defer('profile-files', () => acquired.close());
+  } catch (error) {
+    options.reportError({ domain: 'memory', severity: 'warn', code: 'profile-files-unavailable',
+      message: 'Optional Profile context is unavailable; ordinary conversations remain available.', error });
+  }
   const memoryTimeline = new TimelineMemoryStore(options.timeline);
   const memory = new MemoryExtension(memoryControl, memoryTimeline, {
+    profiles,
     canRun: () => admissionOpen,
     onError: (error, operation) => options.reportError({
       domain: 'memory',
@@ -613,6 +624,7 @@ async function composeAgentHost(options: AgentHostOptions, acquisition: Resource
           : workspaceOptions.writeBoundary,
         context.thread.id,
       ),
+      writeManagedFile: (input: { path: string; content: string; previousContent: string | null; operationId: string }) => memory.writeProfileFile(input, context.thread, context.turn),
       ...(delegationSession ? {
         parentTaskId: threadService.toolTaskService().store.sessionExecution(delegationSession.sessionId)?.taskId,
       } : {}),

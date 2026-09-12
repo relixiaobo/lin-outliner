@@ -1,3 +1,4 @@
+import { latestAdditionalContextBaselineRef, readRestoredState } from './AdditionalContextState';
 import { checkpointExecutionContext } from './ExecutionContextPublication';
 import type {
   ActiveObservationCheckpointEntry,
@@ -460,89 +461,6 @@ async function latestUserViewBaselineRef(
     }
   }
   return baseline;
-}
-
-async function latestAdditionalContextBaselineRef(
-  turns: readonly Turn[],
-  readContext: (ref: ThreadContextPayloadReference) => Promise<ThreadContextPayload | null>,
-  degradations: ContextDegradationCheckpointEntry[],
-): Promise<ThreadContextPayloadReference | null> {
-  let baseline: ThreadContextPayloadReference | null = null;
-  for (const turn of turns) {
-    for (const item of turn.items) {
-      if (item.type === 'contextReset') {
-        baseline = null;
-        continue;
-      }
-      if (item.type === 'contextEvidence' && item.kind === 'inheritedContext') {
-        const inherited = await readInheritedContextPayload(item, readContext);
-        if (!inherited) {
-          baseline = null;
-          recordContextDegradation(
-            degradations,
-            contextDegradation('payloadUnavailable', 'inheritedContext', item.payloadRef.id),
-          );
-          continue;
-        }
-        baseline = await latestAdditionalContextBaselineRef(
-          selectEffectiveContext(inherited.turns).turns,
-          readContext,
-          degradations,
-        );
-        continue;
-      }
-      if (item.type === 'contextEvidence' && item.kind === 'additionalContext') {
-        const payload = await readContext(item.payloadRef).catch(() => null);
-        if (!payload || payload.kind !== 'additionalContext') {
-          baseline = null;
-          recordContextDegradation(
-            degradations,
-            contextDegradation(
-              payload ? 'payloadInvalid' : 'payloadUnavailable',
-              'additionalContext',
-              item.payloadRef.id,
-            ),
-          );
-          continue;
-        }
-        if (payload.threadState !== null) baseline = item.payloadRef;
-        continue;
-      }
-      if (item.type === 'contextCompaction') {
-        baseline = (await readRestoredState(item, readContext, degradations))?.additionalContextBaselineRef ?? null;
-      }
-    }
-  }
-  return baseline;
-}
-
-async function readRestoredState(
-  item: Extract<ThreadItem, { readonly type: 'contextCompaction' }>,
-  readContext: (ref: ThreadContextPayloadReference) => Promise<ThreadContextPayload | null>,
-  degradations: ContextDegradationCheckpointEntry[],
-): Promise<CompactionRestoredStateContextPayload | null> {
-  const restored = await readContext(item.restoredStateRef).catch(() => null);
-  if (!restored || restored.kind !== 'compactionRestoredState') {
-    recordContextDegradation(
-      degradations,
-      contextDegradation(
-        restored ? 'payloadInvalid' : 'payloadUnavailable',
-        'compactionRestoredState',
-        item.restoredStateRef.id,
-      ),
-    );
-    return null;
-  }
-  try {
-    assertContextPayloadDependencies(item, restored);
-  } catch {
-    recordContextDegradation(
-      degradations,
-      contextDegradation('payloadInvalid', 'compactionRestoredState', item.restoredStateRef.id),
-    );
-    return null;
-  }
-  return restored;
 }
 
 function setProjectionRef(

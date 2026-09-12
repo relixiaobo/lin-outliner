@@ -47,11 +47,13 @@ A clean-slate model still separates evidence, current personal context, and reta
 
 ### Preserve the established memory model
 
-The [Memory foundations](reference/agent-memory-foundations.md) remain conceptually useful. The [current Memory specification](../spec/agent-memory.md) describes current behavior until implementation changes it.
+The [Memory foundations](../reference/agent-memory-foundations.md) remain conceptually useful. The [current Memory specification](../../spec/agent-memory.md) describes current behavior until implementation changes it.
 
 Evidence is distinct from interpretation. Episodes preserve useful event context; beliefs express supported conclusions; questions preserve consequential uncertainty; guidance describes future handling. Encoding selects new signal, consolidation integrates related knowledge, and reconsolidation permits correction. Procedures remain Skills. Source links do not turn repeated Agent prose into new independent evidence.
 
-These categories do not require every useful fact to be a Node. A user preference is semantic knowledge whose current authority is now the profile file. Node beliefs and guidance still cover non-profile knowledge, such as why a work decision was made or a contextual lesson from an important event. A routine preference needs neither an episode nor a generated daily headline.
+These categories do not require every useful fact to be a Node. A user preference is semantic knowledge whose current authority is now the profile file. Node beliefs and guidance still cover non-profile knowledge, such as why a work decision was made or a contextual lesson from an important event. A routine preference needs no episode or additional daily narrative; when Nodes
+are retained, their daily container starts as Memory and receives a memorable title for
+navigation after the day and its eligible evidence are complete.
 
 ### Product model and routing
 
@@ -98,17 +100,17 @@ Validate file revisions before admitting them. Invalid or conflicting saves rema
 
 ### Retention quality and learning
 
-**FR-5:** Before either destination is written, require eligible identifiable support, a concrete future use, novelty or a necessary correction, appropriately narrow scope, and sufficient context to avoid a misleading conclusion. Use authorized history retrieval as the comparison: retaining a record should improve future behavior, avoid a specific error, preserve important understanding, or avoid substantial repeated synthesis.
+**FR-5:** Before either destination is written, require eligible identifiable support, a concrete future use, novelty (including new independent support for retained content) or a necessary correction, appropriately narrow scope, and sufficient context to avoid a misleading conclusion. Use authorized history retrieval as the comparison: retaining a record should improve future behavior, avoid a specific error, preserve important understanding, or avoid substantial repeated synthesis.
 
 A clear durable correction may qualify once. Repeated independent feedback may justify a narrow inferred habit. Temporary instructions, silence, task completion, repeated Agent output, generic advice, and copied search results do not establish stable user preferences. Ambiguous attribution produces no learned update. Existing documents, configuration, and Skills retain facts they already own.
 
-**FR-6:** A no-signal or duplicate result can produce zero changes in both files and Nodes. Model proposals carry a private admission rationale, but model self-rating is not proof of usefulness. The Host validates lineage, authority, expected revisions, and lifecycle conditions; quality is evaluated on a frozen corpus.
+**FR-6:** A no-signal result or repetition without independent support can produce zero changes in both files and Nodes. New evidence independently confirming an existing statement must be proposed with its current source references, even when the wording is unchanged; reuse the current content and extend provenance without creating a duplicate Node. Model proposals carry a private admission rationale, but model self-rating is not proof of usefulness. The Host validates lineage, authority, expected revisions, and lifecycle conditions; quality is evaluated on a frozen corpus.
 
 **FR-7:** Explicit remember/correct requests are routed to the appropriate owner in the foreground. A stable preference can be saved to `USER.md` without first creating a Node. Acknowledgment follows accepted publication. Routine learning processes new eligible completed-Turn evidence in bounded coalesced batches. Extraction coverage and replacement coverage must match; unprocessed older evidence cannot lose support because the model sees only a recent window. Reconcile related existing content and avoid whole-store rewrites.
 
 A 30-second quiet debounce and an available-batch start target of two minutes are proposed tuning defaults, not completion SLAs or measured savings. A busy or failing worker keeps a durable pending job and does not claim success. More frequent learning may increase background cost and must be measured.
 
-**FR-8:** Direct user corrections remain eligible even when the conversation includes web/MCP content. External instructions, quotations, and recalled profile/Memory prose cannot establish user preferences by themselves. Preserve immutable enabled/disabled admission, source provenance, and excluded Thread origins. This source-aware rule is an explicit change to today's whole-Thread external-context exclusion.
+**FR-8:** Mixed-source conversations remain eligible for learning; web/MCP activity never excludes the entire Thread or withdraws its earlier accepted support. The Host identifies reader, Host, assistant, tool, web and MCP sources and preserves message-part boundaries. The model judges meaning and future usefulness: reader corrections/preferences need the reader's own attributable statement, while researched contextual knowledge can be retained with its actual source, scope and uncertainty. External instructions, quotations and recalled prose cannot establish user preferences by themselves. Preserve immutable enabled/disabled admission, source provenance and excluded Thread origins. This evidence contract belongs to the Node-quality unit and is consumed by direct profile learning.
 
 ### Context and access
 
@@ -124,7 +126,7 @@ Before profile consumers are built, demonstrate how selected `IDENTITY.md` and `
 
 **FR-10 / FLOW-1: Inspect and correct.** Memory is accessed through existing Outline controls and CLI. A global Current/Timeline/topic view can reference the same dated Nodes; it does not own another copy. Direct Node edits remain authoritative. Source actions open exact available evidence or report that it is unavailable. The profile UI similarly opens `USER.md` entries with their direct sources; profile corrections do not require a Node editor.
 
-**FR-11 / FLOW-2: Encounter dated Memory.** Keep meaningful records under their source-date Daily Notes Memory container. Use a fixed structural label and optional episode context rather than compulsory generated headlines and wrappers. An initially collapsed container preserves normal Node editing and subsequent user fold state. No useful record means no empty heading or daily page. Background changes preserve editing focus, selection, and scroll anchor.
+**FR-11 / FLOW-2: Encounter dated Memory.** Keep meaningful records under their source-date Daily Notes Memory container. Initially label the container Memory, with optional episode context and no compulsory narrative wrappers. After the local source day ends and its eligible evidence finishes processing, give it a vivid, memorable title grounded in the retained content. System tags use the `mem-` prefix (`#mem-day`, `#mem-episode`, `#mem-belief`, `#mem-question`, `#mem-guidance`), leaving unprefixed names for user tags. Keep Memory while evidence is pending; preserve manually edited titles. An initially collapsed container preserves normal Node editing and subsequent user fold state. No useful record means no empty heading or daily page. Background changes preserve editing focus, selection, and scroll anchor.
 
 **FR-16:** Keep source/observation time, known event time, recorded time, and known validity separate. The daily parent is a temporal navigation anchor, not the only record of time. Delayed extraction of a direct statement uses its source day; maintenance does not fabricate a new event. A genuinely new offline synthesis with no single source conversation uses its formation day and identifies its contributing evidence. Unknown boundaries stay unknown.
 
@@ -189,11 +191,47 @@ Compare history-only, current Memory, and the proposed routing with equal tasks,
 
 | Unit | Complete result and acceptance scope | Dependency boundary |
 | --- | --- | --- |
-| Node retention quality | Select useful new signal, reject duplicates, preserve older unprocessed support, retain source dates, remove mandatory narrative wrappers, and preserve user edits. Covers the Node side of FR-5 through FR-7, FR-11, and FR-15; AC-4, AC-6, AC-13 through AC-15, AC-19, and AC-21. | Useful with the existing profile system. It does not depend on profile-file extraction. |
+| Node retention quality | Select useful new signal, reject duplicates, preserve older unprocessed support, retain source dates, remove mandatory narrative wrappers, and preserve user edits. Covers the Node side of FR-5 through FR-8, FR-11, and FR-15; AC-4, AC-6, source-aware admission in AC-7, AC-13 through AC-15, AC-19, and AC-21. | Useful with the existing profile system. It does not depend on profile-file extraction. |
 | Profile files and direct learning | Editable identity/style files, direct USER.md learning, destination routing, source-aware admission, protected edits, next-Turn context, profile forgetting/Reset/disable, and interruption recovery. Covers FR-1 through FR-9, profile inspection in FR-10, profile lifecycle in FR-12 through FR-15, and profile time semantics in FR-16/FR-17; AC-1, AC-3 through AC-12, profile portions of AC-16/AC-18/AC-19, AC-20, AC-23, and AC-24. | Complete without the Node-quality unit or additional views. Its routing must stop creating routine preference Nodes itself. It consumes existing admission, evidence, configuration, and Node mutation mechanisms. |
 | Additional views, temporal decisions, or narrower Node Reset | Each is a separate optional complete feature, with its own exact scope before implementation. Relevant criteria are AC-2, view behavior in AC-14, Node ownership in AC-16/AC-17, and AC-22. | No prerequisite for the two core units. Until selected, retain existing saved search and Node Reset ownership. |
 
 Reuse the Node command/publication owner, Memory pipeline/control store, canonical conversation evidence, configuration owners, stable-prompt composition, and existing Outline/file tools. Profile and Node learning consume one consistent evidence/admission contract rather than independently rediscovering and duplicating the same preference. One bounded extraction proposal may route to the appropriate owner; this is an implementation suggestion, not a new model-management API.
+
+For the Node-quality unit, process complete eligible Items in oldest-first bounded
+batches and journal the exact accepted origin coverage. Only accepted coverage
+advances; new or duplicate evidence never replaces lineage outside that batch.
+Compare proposals with a bounded canonical Memory view, retain per-statement
+subject and future-use/novelty rationales privately, and validate every cited
+origin before normalization. Preserve Host-assigned source kinds and message
+parts for model judgment; personal proposals must cite reader-authored text. Persist source kinds,
+reader-text presence and generated subjects so consolidation enforces the same
+rule on creates/updates, including after restart; a personal subject cannot be
+downgraded to evade admission. Count the actual transmitted part text against
+the evidence limit, including surrounding whitespace.
+External context is eligible knowledge with attribution and never a Thread veto. Publish a container initially called Memory, optional episodes,
+and complete category records. Accepted extraction journals a local day-close job
+in the existing worker; consolidation names the completed day only after its
+source evidence is processed, from a complete source-day record view, with
+full-subtree revision checks at preparation and document admission. A partial
+newest batch cannot replace the day's title, and user-authored titles remain
+authoritative. Reuse exact existing statements and add independent
+support without overwriting previous text or user edits; contextual reconciliation
+continues through the existing consolidation owner. No-signal batches advance
+coverage without creating a Daily Note or revoking unrelated support. A failed or
+oversized batch remains pending, and existing receipt recovery settles accepted
+coverage exactly once. New containers use ordinary initially collapsed Outline
+state and subsequent background publication does not change that state.
+
+Consolidation reads a detached graph/control snapshot before model selection, after
+the model returns under the write gate, and at document admission. Each boundary
+collects source readiness once for all dates. A pure planner applies proposals,
+then reconciles unsupported Nodes against the resulting structure. Selected
+retained children can move out of an unsupported personal episode in bounded
+batches; the parent remains until no retained descendants would be lost. The
+journal carries structural and evidence preconditions plus an explicit next-run
+time. Progress continues immediately, while a blocked batch waits without an
+empty publication. Typed worker requests and completed/deferred outcomes keep
+naming, consolidation and retry ownership in one place.
 
 Expected implementation files and owners:
 
@@ -202,9 +240,9 @@ Expected implementation files and owners:
 - `MemoryExtension`, `MemoryPipeline`, `MemoryControlStore`, and `TimelineMemoryStore`: destination routing, incremental source coverage, eligibility, Node publication, profile lifecycle coordination, and recovery.
 - `src/renderer/ui/configuration/AgentsManager.tsx`, `src/renderer/ui/agent/AgentConfigurationEditor.tsx`, and the existing Memory UI: explicit file/source inspection, correction, and truthful pending/rejected/effective states. Reuse existing entry points; no mandatory onboarding form or candidate-approval inbox.
 - Existing local file tools and `src/main/builtInSkills/configuration/SKILL.md`: preserve ordinary file editing while exposing accepted profile status through its owner; do not recreate retired Settings tools.
-- `tests/core/agentMemory.test.ts`, configuration loader/writer tests, relevant renderer/E2E cases, [Agent Core](../spec/agent-core.md), [Memory](../spec/agent-memory.md), [tool design](../spec/agent-tool-design.md), and [Memory foundations](reference/agent-memory-foundations.md): verify and document the final behavior in the implementing change. Update the standing vocabulary's storage mapping so file-backed personal context does not contradict it.
+- `tests/core/agentMemory.test.ts`, configuration loader/writer tests, relevant renderer/E2E cases, [Agent Core](../../spec/agent-core.md), [Memory](../../spec/agent-memory.md), [tool design](../../spec/agent-tool-design.md), and [Memory foundations](../reference/agent-memory-foundations.md): verify and document the final behavior in the implementing change. Update the standing vocabulary's storage mapping so file-backed personal context does not contradict it.
 
-Implementation shares owner surfaces with [startup fault isolation](../spec/architecture.md#desktop-host-lifecycle), [published conversation records](../spec/agent-core.md#published-conversation-records), and [targeted conversation recovery](targeted-thread-recovery.md): Memory control readiness, exact source/provenance, invalidation, publication recovery, and retained-source cleanup. Consume the current startup and record owners, refresh live claims, and settle shared file ownership before implementation. Do not write a second source resolver, startup coordinator, or recovery ledger around an interim contract. Unavailable admission authority remains a hard boundary; omitting optional learned context does not bypass it.
+Implementation shares owner surfaces with [startup fault isolation](../../spec/architecture.md#desktop-host-lifecycle), [published conversation records](../../spec/agent-core.md#published-conversation-records), and [targeted conversation recovery](../targeted-thread-recovery.md): Memory control readiness, exact source/provenance, invalidation, publication recovery, and retained-source cleanup. Consume the current startup and record owners, refresh live claims, and settle shared file ownership before implementation. Do not write a second source resolver, startup coordinator, or recovery ledger around an interim contract. Unavailable admission authority remains a hard boundary; omitting optional learned context does not bypass it.
 
 Consume these final mechanisms in order:
 
@@ -226,7 +264,7 @@ For implementation, run typecheck, relevant Core/renderer tests, user-path E2E c
 ### Evidence and assumptions
 
 - **EVD-1:** The selected product constraints are global dated Node Memory, file-based identity/style/user information, retention of the useful prior Memory concepts, and direct file ownership for user preferences.
-- **EVD-2:** Current behavior is grounded in the [Memory specification](../spec/agent-memory.md), `MemoryExtension`, `MemoryPipeline`, `MemoryControlStore`, `agentPersonaPrompt`, and the [configuration profile contract](../spec/agent-core.md#configuration-profiles-and-presentation). Global ownership, source dates, Outline CLI retrieval, provenance, user-edit authority, and zero-output extraction are existing foundations.
+- **EVD-2:** Current behavior is grounded in the [Memory specification](../../spec/agent-memory.md), `MemoryExtension`, `MemoryPipeline`, `MemoryControlStore`, `agentPersonaPrompt`, and the [configuration profile contract](../../spec/agent-core.md#configuration-profiles-and-presentation). Global ownership, source dates, Outline CLI retrieval, provenance, user-edit authority, and zero-output extraction are existing foundations.
 - **EVD-3:** File-oriented references distinguish authored instructions, small current context, and on-demand detail. [Claude Code memory](https://code.claude.com/docs/en/memory) and [output styles](https://code.claude.com/docs/en/output-styles), [OpenClaw workspace](https://docs.openclaw.ai/concepts/agent-workspace), and the [Claude API memory tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/memory-tool) inform those distinctions. Their file layouts do not establish Tenon's storage authority or prove a performance gain. The selected hybrid preserves Outline because temporal navigation and direct Node editing are product requirements.
 - **ASM-1:** Direct profile ownership removes unnecessary preference Nodes and makes stable context easier to use; verify record counts and prospective tasks.
 - **ASM-2:** Stricter retention criteria reduce low-value output without discarding useful event context; verify with human-labeled examples.
