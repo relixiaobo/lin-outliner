@@ -128,4 +128,34 @@ describe('data lifecycle startup integration', () => {
       expect((await next.registry.inspect(userData, true)).every((entry) => entry.exists && !entry.issue)).toBe(true);
     } finally { await next.coordinator.close(); }
   }, 30_000);
+
+  test('an explicit verified restore can replace a failed installation without discarding its journal', async () => {
+    const userData = await root(); let current = create(userData);
+    await current.coordinator.prepare();
+    await current.coordinator.request({ action: 'backup' }); await current.coordinator.close();
+    current = create(userData); await current.coordinator.prepare();
+    const state = await current.coordinator.inspectBackups();
+    const source = state.backups.find((entry) => entry.verified && entry.purpose === 'backup')!;
+    await current.coordinator.request({ action: 'restore', backupId: source.id, revision: state.revision });
+    await current.coordinator.close();
+    const failed = create(userData, (name) => { if (name === 'installed-root:agent') throw new Error('interrupted installation'); });
+    await failed.coordinator.prepare();
+    const previous = (await failed.coordinator.journal.read())!;
+    expect(failed.coordinator.state().phase).toBe('recoveryRequired');
+    await failed.coordinator.validateRestoreSource(source.id);
+    await failed.coordinator.request({ action: 'restore', backupId: source.id, revision: failed.coordinator.state().revision });
+    const replacement = (await failed.coordinator.journal.read())!;
+    expect(replacement.supersedes).toBe(previous.id);
+    expect(await failed.coordinator.journal.hasQuiescedPredecessor(replacement)).toBe(true);
+    await expect(failed.coordinator.cancelQueuedRequest(replacement.id)).rejects.toThrow('can no longer be cancelled');
+    await failed.coordinator.close();
+    const final = create(userData);
+    try {
+      await final.coordinator.prepare();
+      expect(final.coordinator.state()).toMatchObject({ phase: 'ready', automaticExecutionPaused: true });
+      const retained = JSON.parse(await readFile(join(userData, 'data-lifecycle/operations', previous.id, 'superseded.json'), 'utf8'));
+      expect(retained.operation.id).toBe(previous.id);
+      expect(retained.supersededBy).toBe(replacement.id);
+    } finally { await final.coordinator.close(); }
+  }, 40_000);
 });
