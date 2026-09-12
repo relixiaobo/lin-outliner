@@ -30,14 +30,14 @@ DEC-1: Offer recovery only when existing owners can prove the source or exact
 removal closure. An uncertain repair is an unavailable action, never permission
 to widen the reset. Preserve bytes before changing active records.
 
-CON-1: Consume the shipped [startup fault isolation](../spec/architecture.md#desktop-host-lifecycle)
+CON-1: Consume the shipped [startup fault isolation](../../spec/architecture.md#desktop-host-lifecycle)
 issue/action identity and capability readiness. Use the exact-source resolution,
 recovered-history provenance, and publication invalidation mechanisms from
-[published conversation records](../spec/agent-core.md#published-conversation-records). These are required
+[published conversation records](../../spec/agent-core.md#published-conversation-records). These are required
 predecessor contracts, not implementation details to reconstruct from an archive.
 
 Consume the delivered
-[Profile files and direct learning](../spec/agent-memory.md#profile-files-and-direct-learning)
+[Profile files and direct learning](../../spec/agent-memory.md#profile-files-and-direct-learning)
 contract through `ProfileFileStore` and its Memory integration. Bind closure
 inspection to accepted file revisions, admission, provenance, pending publication,
 invalidation and retention contracts. A source Thread becoming unavailable does
@@ -46,7 +46,7 @@ explicit forgetting, correction and rollback retain their distinct invalidation
 semantics. Optional views, temporal enhancements and narrower Node Reset are
 outside this predecessor boundary.
 
-Consume the delivered [scheduled-task lifecycle](../spec/agent-automations.md)
+Consume the delivered [scheduled-task lifecycle](../../spec/agent-automations.md)
 through the existing Automation, Turn and Tool Task owners. Closure inspection
 must cover `agent/scheduled-tasks.sqlite`, final assignment/run associations,
 durable operation receipts, exact issue acknowledgements, missed occurrences,
@@ -65,14 +65,14 @@ owners. Existing completion, cancellation, delivery, Project deletion, and
 resource retention truth remain authoritative. Unknown ownership blocks recovery.
 
 The same closure consumes the existing
-[question settlement](../spec/agent-core.md#structured-input-lifecycle): fence the
+[question settlement](../../spec/agent-core.md#structured-input-lifecycle): fence the
 exact pending request/deadline through its owner. The existing
-[Task responsibility contract](../spec/agent-tool-design.md) likewise owns
+[Task responsibility contract](../../spec/agent-tool-design.md) likewise owns
 operation receipts and event disposition; retain or invalidate those references
 through that owner.
 A late timer, answer or process event cannot revive removed execution. Renderer
 answer drafts follow their Thread-local lifetime; they are not a new durable
-recovery source. [Project defaults](../spec/agent-core.md#optional-project-catalog) retain
+recovery source. [Project defaults](../../spec/agent-core.md#optional-project-catalog) retain
 Project metadata and already admitted Task addresses; there is no independent
 conversation-folder preference to recover. The board
 selects integration order; whichever consumer lands later covers the earlier

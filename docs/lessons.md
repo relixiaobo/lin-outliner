@@ -37,6 +37,17 @@ window, or bounded count that keeps it alive.** Delete state when its owning
 Thread or Turn is removed, compact settled payloads to the fields needed for
 idempotency, and document any age/count bound alongside the recovery contract.
 
+## Recovery evidence has a completion boundary
+
+PR #687 exposed retained originals from the recovery panel while the owner
+operation was still applying, and a failed retention attempt could leave an
+unsealed evidence directory until the follow-up review fixed both boundaries.
+
+**Expose retained recovery evidence only after its operation is verified
+complete, and remove unsealed evidence when a retaining operation is replaced.**
+An interrupted mutation keeps its journal and evidence for resume; a cancelled
+pre-mutation retention attempt must not leave private orphan copies.
+
 ## Human review is a presentation boundary, not a mutation credential
 
 PR #644 moved Skill acquisition and destructive operations behind a native

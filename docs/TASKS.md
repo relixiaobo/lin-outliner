@@ -48,7 +48,7 @@ review. There is no active claim today; existing PM decisions persist.
 
 | Priority | Plan | Status | Next action / eligibility |
 | --- | --- | --- | --- |
-| P2 | [targeted-thread-recovery](plans/targeted-thread-recovery.md) | `draft` | Startup, records, questions, Task, Profile and scheduling owners are available. Verify exact removal/rebuild closure across them; retained record text alone is not a reconstructable Thread store. |
+| P2 | [targeted-thread-recovery](plans/archive/targeted-thread-recovery.md) | `done` | Targeted rebuild/removal now verifies source or exact closure, retains WAL-aware owner evidence, fences recovery across restart, and exposes recovery only after verified completion; [plan archived](plans/archive/targeted-thread-recovery.md). |
 | P2 | [file-preview-office](plans/file-preview-office.md) | `draft` | Prove TypeScript DOCX/XLSX extraction and archive limits with Python absent, then deliver shared Agent/preview reading in one feature; preserve the current PPTX owner. |
 | P2 | [url-static-reader](plans/url-static-reader.md) | `draft` | Share extraction while preserving Agent calls without UI selection, explicit acquisition and remote-image policy. Prefer after Office on shared preview/extraction files. |
 | P3 | [computer-pilot-managed-skill](plans/computer-pilot-managed-skill.md) | `draft` | Pin and verify Skill/CLI acquisition and per-execution outputs. Consume delivered Host, resource and image owners; final native/TCC/provider acceptance still needs evidence. |
