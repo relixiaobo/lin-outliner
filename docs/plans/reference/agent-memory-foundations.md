@@ -14,8 +14,9 @@ current protocol.
 ## Evidence Is Below Memory
 
 Canonical Thread, Turn, and Item history is the record of what happened. It is
-evidence, not memory. Memory is constructed from eligible evidence and published
-as ordinary editable Nodes on the Daily Notes timeline. The day container starts as Memory;
+evidence, not memory. Memory is constructed from eligible evidence: stable
+personal context is published directly to global USER.md entries, while useful
+dated experiences and contextual knowledge use ordinary Daily Notes Nodes. The day container starts as Memory;
 its eventual content-specific title is navigation, not another independent Memory
 statement. System-owned tags use the `mem-` prefix; unprefixed category names remain available
 for user-authored tags.
@@ -23,7 +24,7 @@ for user-authored tags.
 This separation is load-bearing:
 
 - raw Items remain canonical evidence;
-- generated Memory Nodes are a public, editable interpretation of that evidence;
+- generated Memory Nodes and learned USER.md entries are editable interpretations of that evidence;
 - exact `originItemId` lineage connects each generated statement to its support;
 - source-labelled reader speech, tool observations and external material can
   contribute different kinds of knowledge; external activity does not exclude
@@ -41,9 +42,9 @@ Hitch).
 
 | Store | Academic meaning | Tenon mapping |
 | --- | --- | --- |
-| **Working memory** | The small-capacity active workspace holding what is in use now; not a durable store. | One Turn's assembled model context. Memory contributes compact routing instructions and, only when the model deliberately retrieves them, bounded Outline CLI results. |
+| **Working memory** | The small-capacity active workspace holding what is in use now; not a durable store. | One Turn's assembled model context. Memory contributes bounded applicable USER.md context and Node routing instructions. Detailed dated knowledge is retrieved deliberately through bounded Outline CLI results. |
 | **Episodic memory** | Declarative memory for specific experienced events bound to context: what happened, when, and where. | Ordinary `#mem-episode` Nodes under a canonical daily `#mem-day` container, with exact statement-level lineage to source Items. |
-| **Semantic memory** | Declarative, context-reduced knowledge such as stable facts and preferences. | Ordinary `#mem-belief` Nodes supported directly by canonical evidence or distilled from independently useful episodes. An episode wrapper is optional. |
+| **Semantic memory** | Declarative, context-reduced knowledge such as stable facts and preferences. | Current stable personal preferences/background use global USER.md entries. Contextual conclusions use ordinary `#mem-belief` Nodes supported by canonical evidence or useful episodes; an episode wrapper is optional. |
 | **Procedural memory** | Nondeclarative knowledge expressed as skills and procedures. | Skills. Procedural memory is outside the Memory extension and follows `docs/spec/agent-skills.md`. |
 
 `#mem-question` and `#mem-guidance` are useful product categories under a Memory container or an optional episode;
@@ -54,10 +55,10 @@ uncertainty. Guidance records a supported instruction for future handling.
 
 | Process | Academic meaning | Tenon mapping |
 | --- | --- | --- |
-| **Encoding** | Forming a trace from experience; depth, novelty, and prediction error influence selection. | Phase 1 selects durable signal from eligible canonical Items and produces bounded, source-dated records with exact accepted Item coverage and optional episode context. |
+| **Encoding** | Forming a trace from experience; depth, novelty, and prediction error influence selection. | Phase 1 selects durable signal from eligible canonical Items and routes proposals to current USER.md entries or source-dated Nodes with exact accepted Item coverage and optional episode context. |
 | **Consolidation** | Offline replay and integration that stabilizes or generalizes memory. | Phase 2 reconciles the bounded Daily Timeline Memory graph, merges duplicate generated episodes, preserves exact support, and never overwrites user-authoritative Nodes. |
 | **Semanticization** | Repeated episodic content becoming context-reduced knowledge. | Supported episode statements may become or update `#mem-belief` Nodes while retaining lineage. |
-| **Retrieval** | Reactivating memory from a cue; cue quality depends on encoding context. | An eligible root Turn receives routing guidance and deliberately uses public `outline find` and `outline get`; no Memory-specific tool or passive prose injection exists. |
+| **Retrieval** | Reactivating memory from a cue; cue quality depends on encoding context. | An eligible root Turn receives bounded applicable accepted profile entries and Node routing guidance. Detailed records use public `outline find` and `outline get`; no new recall tool exists. |
 | **Reconsolidation** | An accessed trace becoming available for correction before restabilization. | Direct user edits are immediately authoritative; later model consolidation may modify only still-generated content from a newly validated snapshot. |
 | **Forgetting** | Reduced access or deliberate removal of retained information. | Users can edit, move, trash, or delete ordinary Memory Nodes. Consolidation may remove unsupported generated subtrees, and confirmed Reset deletes canonical generated Memory containers. |
 

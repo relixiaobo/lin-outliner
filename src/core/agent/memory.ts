@@ -1,3 +1,4 @@
+import { decodeProfileLearningChanges, type ProfileLearningChange } from './profileFiles';
 import type { ThreadId, ThreadItemId, TurnId } from './protocol';
 import {
   MEMORY_TAG_DEFINITIONS,
@@ -98,6 +99,7 @@ export interface MemoryStage1DateOutput extends MemoryStage1CategoryOutput {
 }
 
 export interface MemoryStage1Output {
+  readonly profile?: readonly ProfileLearningChange[];
   readonly dates: readonly MemoryStage1DateOutput[];
 }
 
@@ -176,7 +178,8 @@ export function decodeThreadMemoryMode(value: unknown): ThreadMemoryMode {
 }
 
 export function decodeMemoryStage1Output(value: unknown): MemoryStage1Output {
-  const record = exactRecord(value, ['dates'], 'Memory Stage 1 output');
+  const record = recordValue(value, 'Memory Stage 1 output');
+  assertKnownKeys(record, ['dates', 'profile'], 'Memory Stage 1 output');
   const dates = array(record.dates, 'Memory Stage 1 dates').map((entry, index) => {
     const item = recordValue(entry, `Memory Stage 1 dates[${index}]`);
     assertKnownKeys(item, ['sourceDate', 'episode', 'beliefs', 'questions', 'guidance'], `Memory Stage 1 dates[${index}]`);
@@ -194,7 +197,7 @@ export function decodeMemoryStage1Output(value: unknown): MemoryStage1Output {
   if (new Set(dates.map((entry) => entry.sourceDate)).size !== dates.length) {
     throw new Error('Memory Stage 1 output contains duplicate source dates');
   }
-  return Object.freeze({ dates: Object.freeze(dates) });
+  return Object.freeze({ dates: Object.freeze(dates), ...(record.profile === undefined ? {} : { profile: decodeProfileLearningChanges(record.profile) }) });
 }
 
 function stage1Statement(value: unknown, field: string, charLimit: number): MemoryStage1Statement {

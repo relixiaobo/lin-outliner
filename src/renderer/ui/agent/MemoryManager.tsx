@@ -63,10 +63,12 @@ export function MemoryManager() {
         : t.settings.general.memoryReady;
   const statusCopy = status && status.strayTaggedNodeCount > 0
     ? `${workerStatus} ${t.settings.general.memoryStrayTaggedNodes({ count: status.strayTaggedNodeCount })}` : workerStatus;
-  const resetCopy = reset ? {
+  const resetBase = reset ? {
     finalized: t.settings.general.memoryResetNotice, prepared: t.settings.general.memoryResetPending,
     conflicted: t.settings.general.memoryResetConflicted, unknown: t.settings.general.memoryResetUnknown,
   }[reset.state] : null;
+  const resetCopy = reset?.profileState === 'removed' && reset.state !== 'finalized'
+    ? `${resetBase} ${t.settings.general.memoryProfileResetPartial}` : resetBase;
   const preferenceCopy = desiredEnabled === null ? null : t.settings.general.memoryPreferenceSaved;
 
   return <>

@@ -283,6 +283,15 @@ or compatibility readers.
 
 ## Configuration Profiles And Presentation
 
+Explicit identity/style components and global current personal context are
+file-backed under the [Profile contract](agent-memory.md#profile-files-and-direct-learning).
+Each root Turn captures accepted file revisions separately from the Thread's
+frozen model/tool configuration. The stable prompt identifies those sources and
+preserves existing developer-instruction precedence; edits apply to the next
+Turn, not the active execution. Missing or rejected optional Profile data cannot
+broaden capabilities or prevent ordinary admission.
+
+
 A named `ConfigurationProfile` supplies root Thread defaults. User definitions
 load from `<userData>/agent/config.json`; project definitions load from
 `<configurationSource.root>/.tenon/agent.json` only for an explicitly selected

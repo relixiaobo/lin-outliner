@@ -255,3 +255,10 @@
   font-size: var(--font-meta);
   line-height: var(--line-meta);
 }
+
+.profile-source-preview {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: var(--font-ui-sm);
+  color: var(--text-soft);
+}

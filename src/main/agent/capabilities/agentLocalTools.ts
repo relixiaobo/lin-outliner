@@ -142,6 +142,8 @@ export type AgentShellProcessEnvironmentProvider = (context: AgentShellProcessEn
 );
 
 export interface AgentLocalWorkspaceContext {
+  /** Public Profile file paths share their owner's revision/publication boundary. */
+  writeManagedFile?: (input: { path: string; content: string; previousContent: string | null; operationId: string }) => Promise<boolean>;
   // The call working directory: cwd, default file-tool search root, and relative-path base.
   root: string;
   executionContext?: TaskExecutionContext;
@@ -1580,7 +1582,8 @@ function createFileEditTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
           previousContent: current.content,
           operation: 'file_edit',
         });
-        await writeTextFile(filePath, nextContent, current);
+        const managed = await workspace.writeManagedFile?.({ path: filePath, content: nextContent, previousContent: current.content, operationId: _toolCallId });
+        if (!managed) await writeTextFile(filePath, nextContent, current);
         const nextStat = await stat(filePath);
         workspace.readFileState.set(filePath, {
           content: nextContent,
@@ -1661,7 +1664,8 @@ function createFileWriteTool(workspace: WorkspaceContext): AgentTool<any, ToolEn
         });
         await mkdir(path.dirname(filePath), { recursive: true });
         const metadata = { encoding: original?.encoding ?? 'utf8' as const, lineEndings: 'LF' as const, hasBom: false };
-        await writeTextFile(filePath, params.content, metadata);
+        const managed = await workspace.writeManagedFile?.({ path: filePath, content: params.content, previousContent: originalContent, operationId: _toolCallId });
+        if (!managed) await writeTextFile(filePath, params.content, metadata);
         const nextStat = await stat(filePath);
         workspace.readFileState.set(filePath, {
           content: params.content,

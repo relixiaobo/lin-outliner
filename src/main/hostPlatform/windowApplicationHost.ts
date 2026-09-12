@@ -927,7 +927,7 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
         const result = await dialog.showMessageBox(parent, {
           type: 'warning', title: strings.settings.general.memoryResetConfirmTitle,
           message: strings.settings.general.memoryResetConfirmMessage,
-          detail: strings.settings.general.memoryResetTargetCounts({ containers: review.containerCount, nodes: review.nodeCount, ordinary: review.ordinaryNodeCount }),
+          detail: strings.settings.general.memoryResetTargetCounts({ containers: review.containerCount, nodes: review.nodeCount, ordinary: review.ordinaryNodeCount, profiles: review.profileEntryCount ?? 0 }),
           buttons: [strings.settings.general.memoryResetAction, strings.dialog.cancel],
           defaultId: 1, cancelId: 1, signal: controller.signal,
         });

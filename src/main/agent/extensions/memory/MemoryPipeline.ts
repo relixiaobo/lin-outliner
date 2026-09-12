@@ -202,6 +202,10 @@ export class MemoryPipeline {
         else await this.options.recoverResetPublication?.(record, true);
         continue;
       }
+      if (record.kind === 'stage1') {
+        await this.phase1.recoverPrepared(record, false);
+        if (this.control.publication(record.id)?.status === 'finalized') continue;
+      }
       if (record.kind === 'reset') {
         await this.options.recoverResetPublication?.(record, false);
         continue;
