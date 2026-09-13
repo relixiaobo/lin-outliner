@@ -54,6 +54,7 @@ import { readChangeSetUpload } from './changeSetSpool';
 import { commitOutlineChangeSetAccepted } from '../changeSet';
 import { normalizeNodeAccessStats, type NodeAccessStats } from '../../../core/nodeAccessRanking';
 import { BoundedResponseWriter, writeWithBackpressure } from './boundedResponseWriter';
+import { inspectRuntimeDataAdmission } from '../../dataLifecycleGate';
 
 const MAX_REQUEST_BYTES = 64 * 1024 * 1024;
 const MAX_WATCH_BUFFERED_RECORDS = 128;
@@ -66,6 +67,7 @@ export interface OutlineRuntimeServerOptions {
   readonly developmentSessionId?: string;
   readonly workspaceOptions?: OutlineRuntimeWorkspaceOptions;
   readonly onIdle?: () => void | Promise<void>;
+  readonly dataLifecycleToken?: string;
 }
 
 export class OutlineRuntimeServer {
@@ -87,6 +89,7 @@ export class OutlineRuntimeServer {
   private stopping = false;
   private stopPromise?: Promise<void>;
   private readonly agentAttestations = new AgentAttestationRegistry();
+  private maintenanceInitialization = false;
 
   private constructor(
     paths: OutlineRuntimePaths,
@@ -115,6 +118,7 @@ export class OutlineRuntimeServer {
   static async start(options: OutlineRuntimeServerOptions): Promise<OutlineRuntimeServer | null> {
     assertDevelopmentSessionId(options.developmentSessionId);
     const paths = resolveOutlineRuntimePaths(options.root);
+    await inspectRuntimeDataAdmission(paths.root, options.dataLifecycleToken);
     const instanceId = options.workspaceOptions?.instanceId ?? `runtime:${crypto.randomUUID()}`;
     const owner = { pid: process.pid, instanceId, createdAt: new Date().toISOString() };
     const lock = await OutlineRuntimeLock.acquire(paths, owner);
@@ -122,6 +126,7 @@ export class OutlineRuntimeServer {
     let workspace: OutlineRuntimeWorkspace | undefined;
     let runtime: OutlineRuntimeServer | undefined;
     try {
+      const admission = await inspectRuntimeDataAdmission(paths.root, options.dataLifecycleToken);
       await ensurePrivateDirectory(path.dirname(paths.socketPath));
       await removeStaleSocket(paths.socketPath);
       workspace = await OutlineRuntimeWorkspace.open(paths.workspacePath, {
@@ -144,6 +149,11 @@ export class OutlineRuntimeServer {
         createdAt: owner.createdAt,
       };
       runtime = new OutlineRuntimeServer(paths, lock, workspace, descriptor, options);
+      runtime.maintenanceInitialization = admission === 'initialize';
+      if (runtime.maintenanceInitialization) {
+        await workspace.completeMaintenanceInitialization();
+        await workspace.freezeMutationAdmission();
+      }
       await runtime.listen();
       return runtime;
     } catch (error) {
@@ -242,6 +252,9 @@ export class OutlineRuntimeServer {
         return;
       }
       const url = new URL(request.url ?? '/', 'http://outline.runtime');
+      if (this.maintenanceInitialization && url.pathname !== '/v1/request' && url.pathname !== '/v1/desktop/lifecycle') {
+        throw new OutlineContractError(outlineError('runtime_unavailable', 'protocol', 'Data initialization has not opened normal admission.'));
+      }
       if (request.method === 'POST' && url.pathname === '/v1/runtime/retire') {
         const body = await readJsonBody(request);
         if (!isRecord(body)
@@ -375,6 +388,9 @@ export class OutlineRuntimeServer {
         if (!isDesktopLifecycleRequest(body)) {
           throw new Error('Invalid desktop Runtime lifecycle request.');
         }
+        if (this.maintenanceInitialization && !['status', 'freeze', 'drain', 'shutdown'].includes(body.action)) {
+          throw new OutlineContractError(outlineError('runtime_unavailable', 'protocol', 'Maintenance initialization cannot open mutation admission.'));
+        }
         switch (body.action) {
           case 'freeze':
             await this.workspace.freezeMutationAdmission();
@@ -499,6 +515,9 @@ export class OutlineRuntimeServer {
       if (request.method === 'POST' && url.pathname === '/v1/request') {
         const body = await readJsonBody(request);
         const decoded = checkOutlineSchema(OutlineRequestSchema, body) ? body : null;
+        if (this.maintenanceInitialization && decoded?.command !== 'status') {
+          throw new OutlineContractError(outlineError('runtime_unavailable', 'protocol', 'Data initialization has not opened normal admission.'));
+        }
         const mutation = decoded ? requestCanMutate(decoded.command, decoded.input) : false;
         const authorization = this.authorizeRequestContext(request, mutation);
         try {
@@ -785,7 +804,7 @@ export class OutlineRuntimeServer {
   }
 
   private scheduleIdle(): void {
-    if (this.stopping || this.activeForegroundRequests > 0 || this.idleTimer || this.idleDrainActive) return;
+    if (this.maintenanceInitialization || this.stopping || this.activeForegroundRequests > 0 || this.idleTimer || this.idleDrainActive) return;
     const generation = this.idleGeneration;
     this.idleTimer = setTimeout(() => {
       this.idleTimer = undefined;

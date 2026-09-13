@@ -123,12 +123,12 @@ test('a backend profile activation failure produces unavailable evidence and nev
 }, 10_000);
 
 test.each(['task_id TEXT PRIMARY KEY', 'task_id TEXT PRIMARY KEY, isolation_json TEXT, inherited_claim_task_id TEXT'])(
-  'old Task storage fails explicitly without a legacy reader or automatic data deletion (%s)', (columns) => {
+  'unsupported pre-baseline Task storage preserves data and points to recovery (%s)', (columns) => {
   const db = new Database(':memory:');
   try {
     db.exec(`CREATE TABLE tool_tasks(${columns})`);
     db.exec("INSERT INTO tool_tasks(task_id) VALUES ('retained-old-data')");
-    expect(() => new ToolTaskStore(db as unknown as SqliteDatabase)).toThrow('fresh userData');
+    expect(() => new ToolTaskStore(db as unknown as SqliteDatabase)).toThrow('data recovery');
     expect(db.query('SELECT task_id FROM tool_tasks').get()).toEqual({ task_id: 'retained-old-data' });
   } finally { db.close(); }
 });

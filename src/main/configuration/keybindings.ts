@@ -42,7 +42,7 @@ export function keybindingsPath(userDataDir: string): string {
   return join(userDataDir, KEYBINDINGS_RELATIVE_PATH);
 }
 
-export function loadKeybindings(userDataDir: string): KeybindingsLoadResult {
+export function loadKeybindings(userDataDir: string, options: { readonly readOnly?: boolean } = {}): KeybindingsLoadResult {
   const path = keybindingsPath(userDataDir);
   let sourceBytes: string;
   try {
@@ -50,7 +50,7 @@ export function loadKeybindings(userDataDir: string): KeybindingsLoadResult {
   } catch (error) {
     if (isNotFoundError(error)) {
       try {
-        rmSync(join(userDataDir, RECOVERY_RELATIVE_PATH), { force: true });
+        if (!options.readOnly) rmSync(join(userDataDir, RECOVERY_RELATIVE_PATH), { force: true });
       } catch (cacheError) {
         console.warn('[keybindings] failed to clear obsolete recovery cache', cacheError);
       }
@@ -73,7 +73,7 @@ export function loadKeybindings(userDataDir: string): KeybindingsLoadResult {
   try {
     const overrides = decodeKeybindings(parseJsonc(sourceBytes));
     try {
-      writeRecovery(userDataDir, sourceBytes);
+      if (!options.readOnly) writeRecovery(userDataDir, sourceBytes);
     } catch {
       // Recovery is a cache. A cache-write failure cannot reject valid desired
       // state or stop the current Host from applying it.

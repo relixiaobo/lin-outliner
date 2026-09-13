@@ -1,4 +1,5 @@
 import type { AgentCoreExtension, ThreadServiceExtensionHost } from '../../../../core/agent/extensions';
+import { UNRESTRICTED_RESTORED_WORK } from '../../restoredWork';
 import type {
   CreateGoalInput,
   CreateGoalResponse,
@@ -51,6 +52,7 @@ export class GoalExtension implements AgentCoreExtension {
   constructor(
     private readonly store: GoalStore,
     private readonly publish: NotificationPublisher,
+    private readonly restoredWork: import('../../restoredWork').RestoredWorkAdmission = UNRESTRICTED_RESTORED_WORK,
   ) {}
 
   bindHost(host: ThreadServiceExtensionHost, readThread: ThreadReader, readTurn: TurnReader): void {
@@ -68,6 +70,7 @@ export class GoalExtension implements AgentCoreExtension {
     const record = thread.ephemeral
       ? this.createEphemeral(input.threadId, input.objective, input.tokenBudget ?? null)
       : this.store.create(input.threadId, input.objective, input.tokenBudget ?? null);
+    await this.restoredWork.authorizeGoal(`${input.threadId}:${record.generation}`);
     await this.publish({ type: 'goal/updated', threadId: input.threadId, turnId, goal: record.goal });
     return { goal: record.goal };
   }
@@ -77,6 +80,7 @@ export class GoalExtension implements AgentCoreExtension {
     const record = thread.ephemeral
       ? this.updateEphemeral(input.threadId, input.status)
       : this.store.updateFromAgent(input.threadId, input.status);
+    await this.restoredWork.authorizeGoal(`${input.threadId}:${record.generation}`);
     await this.publish({ type: 'goal/updated', threadId: input.threadId, turnId, goal: record.goal });
     return { goal: record.goal };
   }
@@ -139,6 +143,7 @@ export class GoalExtension implements AgentCoreExtension {
     let record = this.read(thread.id);
     if (
       !record
+      || !this.restoredWork.allows('goal', `${thread.id}:${record.generation}`)
       || (record.goal.status !== 'active' && record.goal.status !== 'budgetLimited')
       || !this.host
       || !this.readTurn

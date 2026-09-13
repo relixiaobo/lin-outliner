@@ -23,6 +23,23 @@ export const PRIVATE_JSON_FILE_OPTIONS: JsonFileStoreOptions =
 const fileWriteChains = new Map<string, Promise<unknown>>();
 const activeFileWriteLocks = new AsyncLocalStorage<Set<string>>();
 const atomicWriteCommitBarrier = new AsyncLocalStorage<(temporaryPath: string) => Promise<void>>();
+const managedWriteAdmission = new Map<string, (filePath: string) => void>();
+
+/** Desktop startup registers its data boundary before presentation loads any preferences. */
+export function registerJsonWriteAdmission(root: string, authorize: (filePath: string) => void): () => void {
+  const key = path.resolve(root);
+  if (managedWriteAdmission.has(key)) throw new Error('JSON write admission is already registered');
+  managedWriteAdmission.set(key, authorize);
+  return () => { if (managedWriteAdmission.get(key) === authorize) managedWriteAdmission.delete(key); };
+}
+
+function assertJsonWriteAdmission(filePath: string): void {
+  const target = path.resolve(filePath);
+  for (const [root, authorize] of managedWriteAdmission) {
+    const relative = path.relative(root, target);
+    if (relative && !path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`)) authorize(target);
+  }
+}
 
 export function getJsonFileWriteLockCountForTests(): number {
   return fileWriteChains.size;
@@ -67,6 +84,7 @@ async function atomicWriteFileUnlocked(
   options: AtomicWriteFileOptions,
 ): Promise<void> {
   options.signal?.throwIfAborted();
+  assertJsonWriteAdmission(filePath);
   await prepareParentDirectory(filePath, options);
   const tmpPath = temporaryFilePath(filePath);
   try {
@@ -93,6 +111,7 @@ export function atomicWriteFileSync(
   options: AtomicWriteFileOptions = {},
 ): void {
   options.signal?.throwIfAborted();
+  assertJsonWriteAdmission(filePath);
   prepareParentDirectorySync(filePath, options);
   const tmpPath = temporaryFilePath(filePath);
   try {

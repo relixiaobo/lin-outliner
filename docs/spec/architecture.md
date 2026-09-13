@@ -93,11 +93,12 @@ ContentStore persists `state.sqlite`, `blobs/`, `staging/`, and `quarantine/`.
 Runtime and ContentStore roots are derived independently from the same explicit
 userData authority; neither root is inferred from `cwd` or from the other root.
 Both Host processes use the same WAL/busy-retry and per-digest publication
-protocol. There is no workspace asset blob directory, sidecar reader, migration,
+protocol. There is no workspace asset blob directory, obsolete sidecar reader,
 dual write, or automatic startup deletion path. The Outline Runtime workspace is
 storage version 3, where every persisted Operation carries its immutable submitted
 intent identity; the independent ContentStore remains schema version 2. Earlier
-formats fail closed until the documented manual userData reset is completed.
+formats are inspected under the [data lifecycle contract](data-lifecycle.md);
+unsupported data remains available for recovery rather than being reset.
 
 Asset admission publishes or verifies bytes under an admission lease. Runtime
 then holds its Outline namespace mutation/reconciliation barrier from before
@@ -302,6 +303,12 @@ from the standalone Runtime.
 
 ### Desktop Host lifecycle
 
+The [data lifecycle](data-lifecycle.md) supplies compatibility admission after
+the minimal window/transport are visible and before document, Agent, or
+configuration writers start. It uses the shared Runtime writer lock and a
+bounded read-only Runtime inspection process. Scoped failures preserve healthy
+Hosts; format-changing maintenance and verified restore use safe quit/restart.
+
 Targeted conversation recovery runs inside the Agent Host lifecycle after the
 existing startup issue has identified an unreadable Thread. Its operation journal
 is stored beneath resolved Agent userData. Startup resumes pending operations
@@ -369,8 +376,11 @@ drain until its owner is ready. Recovery of accepted Task/Automation facts remai
 allowed. The validated Memory opt-out is applied before admission opens. Retry
 initializes Memory against the current live Outline projection.
 
-The parent observes Runtime startup failures through a bounded private pipe;
-it propagates a confirmed snapshot storage-version mismatch with found/expected
+The Electron/Node parent observes Runtime startup failures through a bounded
+private pipe. Bun callers use an owner-created private temporary report file
+because an ended extra-stdio stream can close a descriptor reused by SQLite;
+both paths use the same bounded startup-failure decoder. The observation
+propagates a confirmed snapshot storage-version mismatch with found/expected
 versions, and malformed snapshot evidence separately. This pipe grants no process
 ownership or shutdown authority. Startup never resets authoritative data.
 
@@ -615,7 +625,8 @@ process-local state and reports uncertain durability. A stale log from an older
 snapshot is discarded only when every complete record can be proven no newer
 than the verified snapshot.
 Snapshot compaction never removes retained recovery or asset reachability
-information. Pre-release formats have no compatibility reader. Core forks are
+information. Supported format changes retain their reader or ship a verified
+migration under the [data lifecycle contract](data-lifecycle.md). Core forks are
 reserved for preview, reviewed-Diff planning, revert validation, and other
 deterministic inspection; ordinary direct commits never fork, serialize, or
 re-import the complete workspace.

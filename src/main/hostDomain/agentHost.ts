@@ -1,4 +1,5 @@
 import { ScheduledRunOwnership } from '../agent/automations/ScheduledRunOwnership';
+import { UNRESTRICTED_RESTORED_WORK, type RestoredWorkAdmission } from '../agent/restoredWork';
 import { ScheduleCliService, SCHEDULE_CLI_CONFIGURATION_REVISION, scheduleCliScheduling } from '../agent/automations/ScheduleCliService';
 import { ProfileFileStore } from '../agent/profile/ProfileFileStore';
 import { ProjectCliService, PROJECT_CLI_CONFIGURATION_REVISION, projectCliScheduling } from '../agent/projects/ProjectCliService';
@@ -87,6 +88,7 @@ export interface AgentHostComposition {
 }
 
 export interface AgentHostOptions {
+  readonly restoredWork?: RestoredWorkAdmission;
   readonly onScheduledAttention?: (notice: import('../agent/automations/AutomationService').ScheduledAttentionNotice) => void;
   readonly readMemoryEnabled?: () => boolean;
   readonly reviewMemoryReset: ReviewMemoryReset;
@@ -164,6 +166,7 @@ export interface AgentHost {
   readonly delegationRunners: () => Promise<readonly DelegationRunnerReadiness[]>;
   projectionChanged(update: ProjectionUpdate, operation?: Operation): void;
   initialize(projection: DocumentProjection, assertActive?: () => void): Promise<void>;
+  initializeRecoveryOnly(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -267,6 +270,8 @@ export async function createAgentHost(options: AgentHostOptions): Promise<AgentH
 
 async function composeAgentHost(options: AgentHostOptions, acquisition: ResourceScope): Promise<AgentHost> {
   let admissionOpen = false;
+  let recoveryOnly = false;
+  const restoredWork = options.restoredWork ?? UNRESTRICTED_RESTORED_WORK;
   const managedSkills = createManagedSkillsHost({
     userDataDir: options.userDataDir,
     localRoot: options.defaultCwd,
@@ -278,10 +283,11 @@ async function composeAgentHost(options: AgentHostOptions, acquisition: Resource
   });
   const extensions = new ExtensionRegistry();
   const memoryControl = new MemoryControlStore(join(options.userDataDir, 'agent', 'memories.sqlite'));
+  memoryControl.setRestoredJobIds(restoredWork.blockedIdentities('memory-job'));
   acquisition.defer('memory-control', () => memoryControl.close());
   let profiles: ProfileFileStore | undefined;
   try {
-    profiles = new ProfileFileStore(options.userDataDir);
+    profiles = new ProfileFileStore(options.userDataDir, undefined, Date.now, restoredWork);
     const acquired = profiles;
     acquisition.defer('profile-files', () => acquired.close());
   } catch (error) {
@@ -291,7 +297,9 @@ async function composeAgentHost(options: AgentHostOptions, acquisition: Resource
   const memoryTimeline = new TimelineMemoryStore(options.timeline);
   const memory = new MemoryExtension(memoryControl, memoryTimeline, {
     profiles,
-    canRun: () => admissionOpen,
+    canRun: () => admissionOpen && restoredWork.automaticSchedulingAllowed(),
+    restoredGeneration: restoredWork.generation,
+    restoredWork,
     onError: (error, operation) => options.reportError({
       domain: 'memory',
       severity: 'error',
@@ -346,6 +354,7 @@ async function composeAgentHost(options: AgentHostOptions, acquisition: Resource
   });
   const threadService = await ThreadService.open(options.userDataDir, turnExecutor, {
     ...options.createThreadOptions(composition),
+    restoredWork,
     attachmentScratchRoot: options.scratchRoot,
     nameGenerator: turnExecutor,
     resolveUserContent: (content, context) => attachmentResolver.resolve(content, context),
@@ -375,6 +384,7 @@ async function composeAgentHost(options: AgentHostOptions, acquisition: Resource
     runnerRegistry,
   );
   const delegationCoordinator = new DelegationCoordinator({
+    canRecoverSession: (id) => restoredWork.allows('session', id),
     store: delegationStore,
     runtime: delegationRuntime,
     preparedResults: {
@@ -547,6 +557,7 @@ async function composeAgentHost(options: AgentHostOptions, acquisition: Resource
   extensions.register(memory, { applicationInstructions: true });
 
   const automationStore = new AutomationStore(join(options.userDataDir, 'agent', 'scheduled-tasks.sqlite'));
+  automationStore.setRestoredRunIds(restoredWork.blockedIdentities('run'));
   acquisition.defer('automations', () => automationStore.close());
   automationStore.bindProjectResolver((id) => threadService.projects.store.require(id));
   const automationWorktree = new AutomationWorktree(options.userDataDir);
@@ -558,7 +569,8 @@ async function composeAgentHost(options: AgentHostOptions, acquisition: Resource
       return (!!active && scheduledOwnership.forTurn(run.threadId!, active)?.id === run.id)
         || scheduledOwnership.processes(run).some((task) => task.state === 'settling' && (task.error !== null || task.stopRequestedAt !== null));
     },
-    canDispatch: () => admissionOpen,
+    canDispatch: () => admissionOpen && restoredWork.automaticSchedulingAllowed(),
+    canRecoverRun: (id) => restoredWork.allows('run', id),
     store: automationStore,
     threads: threadService,
     worktrees: automationWorktree,
@@ -568,6 +580,7 @@ async function composeAgentHost(options: AgentHostOptions, acquisition: Resource
     onRunChanged: (run) => automationReference.get().runChanged(run),
   });
   const automationScheduler = new AutomationScheduler({
+    canSchedule: () => restoredWork.automaticSchedulingAllowed(),
     store: automationStore,
     dispatcher: automationDispatcher,
     onAutomationChanged: (automation) => automationReference.get().automationChanged(automation),
@@ -703,7 +716,10 @@ async function composeAgentHost(options: AgentHostOptions, acquisition: Resource
   }));
   const lifecycle = createAgentHostLifecycle({
     memory,
-    threads: threadService,
+    threads: {
+      initialize: () => threadService.initialize(),
+      close: () => threadService.close(undefined, recoveryOnly ? 'inspection' : 'normal'),
+    },
     automations: automationService,
     delegation: {
       start: () => delegationHost.start(),
@@ -773,6 +789,11 @@ async function composeAgentHost(options: AgentHostOptions, acquisition: Resource
       automationService.wake();
       const tasks = threadService.toolTaskService();
       for (const owner of tasks.store.ownersWithPendingDelivery()) tasks.wakeDelivery(owner);
+    },
+    initializeRecoveryOnly: async () => {
+      recoveryOnly = true;
+      admissionOpen = false;
+      await threadService.initializeRecoveryOnly();
     },
     close: () => {
       admissionOpen = false;

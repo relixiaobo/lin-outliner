@@ -5,6 +5,7 @@ import type { ThreadRecoveryPreview } from '../../../core/threadRecovery';
 import { RolloutStore, type RolloutEntry } from '../persistence/RolloutStore';
 import { ThreadHistoryProjectionStore } from '../persistence/ThreadHistoryProjectionStore';
 import type { ThreadCore } from '../thread/ThreadCore';
+import type { SqliteDatabase } from '../persistence/sqlite';
 import { missing, recoveryDigest, type RecoveryEvidence } from './RecoveryEvidence';
 
 export async function inspectRecoverySource(core: ThreadCore, thread: Thread): Promise<{
@@ -29,8 +30,8 @@ export async function inspectRecoverySource(core: ThreadCore, thread: Thread): P
   }
 }
 
-export function verifyRecoveryHistory(threadId: string, entries: readonly RolloutEntry[]): void {
-  const staged = new ThreadHistoryProjectionStore(':memory:');
+export function verifyRecoveryHistory(threadId: string, entries: readonly RolloutEntry[], database?: SqliteDatabase): void {
+  const staged = new ThreadHistoryProjectionStore(':memory:', database);
   try {
     if (entries.some((entry, ordinal) => entry.ordinal !== ordinal || entry.event.threadId !== threadId)) {
       throw new Error('Recovery source ordering or owner is invalid');

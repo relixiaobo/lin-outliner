@@ -473,6 +473,11 @@ build-order *within* that single PR (cf. A7 foundation-before-consumers), not
 separate releases and never a standalone partial MVP; or **(b) a SET of
 independent complete features**, each its own PR, ordered only by genuine
 dependency or priority, each shippable alone. When you write a plan, say which
-shape it is. Pre-release we carry **no migration / back-compat / legacy
-readers**: on a format change, wipe `~/.lin-outliner-*` dev userData and delete
-the old reader rather than ship a migration.
+shape it is. The first release containing the complete data lifecycle foundation
+establishes the supported baseline. **Never wipe supported userData to handle a
+format change.** Ship the migration or retained reader with populated upgrade and
+restore evidence in the same feature. Pre-baseline formats require exact
+inspection; unsupported data is preserved for recovery. Follow
+[`docs/spec/data-lifecycle.md`](docs/spec/data-lifecycle.md) for admission,
+backup, recovery, and fixture verification. Archived pre-release wipe/no-reader
+instructions are historical and do not override this contract.

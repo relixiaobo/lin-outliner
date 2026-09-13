@@ -11,6 +11,7 @@ import {
 import type { RuntimeDescriptor, RuntimeStatus } from '../contract/schemas';
 import { acquireOutlineRuntimeRetirementClaim } from './retirement';
 import { readOutlineStartupFailure } from '../contract/startupFailure';
+import { createStartupFileObservation } from './startupObservation';
 
 export interface OutlineRuntimeLaunch {
   readonly command: string;
@@ -39,7 +40,7 @@ export class OutlineClientSupervisor {
     }
   }
 
-  async connect(signal?: AbortSignal): Promise<OutlineClient> {
+  async connect(signal?: AbortSignal, dataLifecycleToken?: string): Promise<OutlineClient> {
     outlineCapabilityContractDigest();
     const timeoutMs = Math.max(1, this.options.startupTimeoutMs ?? OUTLINE_DEFAULT_STARTUP_TIMEOUT_MS);
     const deadline = Date.now() + timeoutMs;
@@ -54,7 +55,7 @@ export class OutlineClientSupervisor {
     }
     if (existing) return existing;
     if (this.options.noStart) throw runtimeUnavailable('Outline Runtime is not running and automatic start is disabled.');
-    const launch = this.launchRuntime();
+    const launch = this.launchRuntime(dataLifecycleToken);
     try {
       let lastError: unknown;
       while (Date.now() < deadline) {
@@ -152,6 +153,21 @@ export class OutlineClientSupervisor {
       probe.cleanup();
       client.close();
     }
+  }
+
+  /** Explicit desktop maintenance operation; unlike connect, it never starts a writer. */
+  async quiesceForMaintenance(signal?: AbortSignal): Promise<void> {
+    const descriptor = await readOutlineRuntimeDescriptor(this.options.root);
+    if (!descriptor) return;
+    try { this.assertCompatibleDescriptor(descriptor); }
+    catch (error) {
+      if (!isProtocolIncompatible(error)) throw error;
+      const deadline = Date.now() + (this.options.startupTimeoutMs ?? OUTLINE_DEFAULT_STARTUP_TIMEOUT_MS);
+      if (await this.retireMismatchedRuntime(deadline, signal)) return;
+      throw error;
+    }
+    if (runtimeProcessHasExited(descriptor.pid)) return;
+    await this.shutdown(signal);
   }
 
   private async tryConnectBefore(deadline: number, signal?: AbortSignal): Promise<OutlineClient | null> {
@@ -315,20 +331,23 @@ export class OutlineClientSupervisor {
       && await descriptorHasMatchingRuntimeOwner(this.options.root, descriptor);
   }
 
-  private launchRuntime(): { failure(): Error | null; close(): void } {
+  private launchRuntime(dataLifecycleToken?: string): { failure(): Error | null; close(): void } {
     if (!this.options.contentRoot) {
       throw runtimeUnavailable('Automatic Runtime start requires an explicit ContentStore root.');
     }
     const launch = this.options.launch ?? defaultLaunch(this.options.root, this.options.contentRoot);
+    const fileObservation = process.versions.bun ? createStartupFileObservation() : null;
     const child = spawn(launch.command, [...launch.args], {
       detached: launch.detached ?? true,
-      stdio: ['ignore', 'ignore', 'ignore', 'pipe'],
+      stdio: fileObservation ? ['ignore', 'ignore', 'ignore'] : ['ignore', 'ignore', 'ignore', 'pipe'],
       env: {
         ...process.env,
         ELECTRON_RUN_AS_NODE: '1',
         TENON_CONTENT_ROOT: this.options.contentRoot,
         ...launch.env,
-        TENON_OUTLINE_STARTUP_REPORT_FD: '3',
+        TENON_OUTLINE_STARTUP_REPORT_FD: fileObservation ? '' : '3',
+        TENON_OUTLINE_STARTUP_REPORT_PATH: fileObservation?.path ?? '',
+        TENON_DATA_LIFECYCLE_TOKEN: dataLifecycleToken ?? '',
         ...(this.options.expectedDevelopmentSessionId ? {
           TENON_OUTLINE_RUNTIME_DEVELOPMENT_SESSION_ID: this.options.expectedDevelopmentSessionId,
         } : {}),
@@ -355,7 +374,10 @@ export class OutlineClientSupervisor {
       if (code !== 0) failure ??= new Error(`Outline Runtime exited during startup (${signal ?? code ?? 'unknown'}).`);
     });
     child.unref();
-    return { failure: () => failure, close: () => observation?.destroy() };
+    return { failure: () => fileObservation?.read() ?? failure, close: () => {
+      if (observation && !observation.destroyed) observation.destroy();
+      fileObservation?.close();
+    } };
   }
 }
 

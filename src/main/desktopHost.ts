@@ -10,7 +10,7 @@ import { SKILL_LIBRARY_CHANGED_CHANNEL, SKILL_REVIEW_DECIDE_CHANNEL, SKILL_REVIE
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, watch } from 'node:fs';
 import { mkdir, open, readFile, stat, writeFile } from 'node:fs/promises';
-import { basename, extname, join, resolve } from 'node:path';
+import { basename, extname, join, relative, resolve } from 'node:path';
 import { registerDesktopOutlineIpc } from './outlineClient';
 import {
   STARTUP_GET_CHANNEL,
@@ -207,6 +207,13 @@ import {
 import type { ThemeMode } from '../core/theme';
 import { getMessages } from '../core/i18n';
 import { THREAD_RECOVERY_CHANNEL, decodeThreadRecoveryRequest } from '../core/threadRecovery';
+import { DATA_LIFECYCLE_CHANNEL, DATA_LIFECYCLE_CHANGED_CHANNEL, decodeDataLifecycleRequest,
+  type DataLifecycleResponse } from '../core/dataLifecycle';
+import { DataLifecycleCoordinator } from './dataLifecycle/DataLifecycleCoordinator';
+import { DataStoreRegistry } from './dataLifecycle/storeRegistry';
+import { DataWriterBarrier } from './dataLifecycle/WriterBarrier';
+import { RestoredExecutionFence } from './dataLifecycle/ExecutionFence';
+import { registerJsonWriteAdmission } from './jsonFileStore';
 import { APP_NAME } from '../core/brand';
 import {
   ATTACHMENT_UPLOAD_CHUNK_BYTES,
@@ -250,7 +257,7 @@ import {
   type OwnedIpcMain,
   type TransportOwner,
 } from './hostTransport/ownership';
-import { createOutlineDesktopHost } from './hostDomain/outlineDesktopHost';
+import { createOutlineDesktopHost, desktopOutlineRuntimeLaunch } from './hostDomain/outlineDesktopHost';
 import { createAgentHost, type AgentHost } from './hostDomain/agentHost';
 import { createResourcePreviewHost } from './hostPlatform/resourcePreviewHost';
 import type { LocalFileOperationInput } from './hostPlatform/nativeLocalFileHost';
@@ -286,8 +293,51 @@ const devEffects = resources.child('dev-effects');
 const transportEffects = resources.child('transport');
 const windowEffects = resources.child('window-application');
 const backgroundEffects = resources.child('background-effects');
+const dataRegistry = new DataStoreRegistry();
+const restoredExecution = new RestoredExecutionFence(resolvedUserDataDir, dataRegistry);
+const dataBarrier: DataWriterBarrier = new DataWriterBarrier(resolvedUserDataDir, {
+  runtime: {
+    quiesce: () => outlineHost.maintenance.quiesce(),
+    initialize: (token) => outlineHost.maintenance.initialize(token),
+  },
+  launch: desktopOutlineRuntimeLaunch({
+    userDataDir: resolvedUserDataDir, moduleDir: environment.moduleDir, isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath, execPath: process.execPath, reportError,
+    ready: (service): Promise<void> => lifecycle.ready(service),
+  }, join(resolvedUserDataDir, 'outline-runtime'), join(resolvedUserDataDir, 'content')),
+  assertNoLiveProducers: async () => {
+    const operation = await dataLifecycle.journal.read();
+    // Installation began only after every producer was quiescent. Restored PID
+    // fields cannot acquire new authority while the pending-operation gate holds.
+    if (operation?.kind === 'restore' && ['installing', 'verifying', 'reconciling'].includes(operation.phase)) return;
+    if (operation && await dataLifecycle.journal.hasQuiescedPredecessor(operation)) return;
+    await restoredExecution.load();
+    await restoredExecution.assertNoLiveProducers();
+  },
+});
+const dataLifecycle: DataLifecycleCoordinator = new DataLifecycleCoordinator({
+  userData: resolvedUserDataDir, applicationVersion: app.getVersion(), registry: dataRegistry, barrier: dataBarrier,
+  prepareRestoredExecution: (generation) => restoredExecution.retain(generation),
+  resumeAutomaticExecution: (generation) => restoredExecution.resumeFutureWork(generation),
+  changed: (state) => {
+    for (const window of [windowApplicationHost.windows.main(), windowApplicationHost.windows.settings()]) {
+      if (window && !window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send(DATA_LIFECYCLE_CHANGED_CHANNEL, state);
+    }
+  },
+});
+bootstrapEffects.defer('data-json-admission', registerJsonWriteAdmission(resolvedUserDataDir, (path) => {
+  const name = relative(resolvedUserDataDir, path);
+  if (name === 'app-update-state.json' || name.startsWith('diagnostics/')) return;
+  const configuration = name === 'agent/config.json' || name === 'agent/config.schema.json';
+  dataLifecycle.assertDomain(name.startsWith('agent/') && !configuration ? 'agent' : 'configuration');
+}));
+let restartForDataMaintenance = false;
+const exitApplication = (code: number) => {
+  if (restartForDataMaintenance && code === 0) app.relaunch();
+  app.exit(code);
+};
 let applyFilePreferencesNow: (() => Promise<void>) | null = null;
-const initialKeybindings = loadKeybindings(resolvedUserDataDir);
+const initialKeybindings = loadKeybindings(resolvedUserDataDir, { readOnly: true });
 const lastAppliedKeybindings = readLastAppliedKeybindings(resolvedUserDataDir);
 const initialLauncherBindings = (lastAppliedKeybindings ?? initialKeybindings.effective)['global.launcher'];
 let effectiveKeybindings: EffectiveShortcutBindings = lastAppliedKeybindings ?? initialKeybindings.effective;
@@ -332,10 +382,6 @@ function ensureAgentDir(dir: string): void {
     console.error(`[agent] failed to create directory ${dir} at startup`, error);
   }
 }
-if (!hasExplicitAgentRoot) {
-  ensureAgentDir(agentLocalFileRoot);
-}
-ensureAgentDir(agentScratchRoot);
 const resourcePreviewHost = createResourcePreviewHost({
   operationWindow: (caller) => BrowserWindow.fromId(caller.origin.windowId),
   locale: () => windowApplicationHost.effectiveLocale(),
@@ -499,6 +545,9 @@ async function startConfigurationWatcher(): Promise<void> {
   // Agent may already be healthy when this independent milestone is retried.
   // Join the application (including queued edits) before reporting recovery.
   if (agentHost) await apply();
+  // An already-open Settings window may have observed a failed admission in
+  // the previous attempt. Refresh it as soon as its own configuration recovers.
+  windowApplicationHost.notifyConfigurationChanged('preferences');
   resources.defer('configuration-observation', () => attempt.dispose());
   } catch (error) {
     applyFilePreferencesNow = null;
@@ -507,6 +556,7 @@ async function startConfigurationWatcher(): Promise<void> {
 }
 
 let agentHost: AgentHost | null = null;
+let recoveryAgentHost: AgentHost | null = null;
 let initializingAgentHost: AgentHost | null = null;
 let agentAttemptCleanup: Promise<void> | null = null;
 function requireAgentHost(): AgentHost {
@@ -517,8 +567,15 @@ function requireAgentHost(): AgentHost {
 }
 const scheduledNoticesShown = new Set<string>();
 const activeScheduledNotices = new Set<Notification>();
-function constructAgentHost(): Promise<AgentHost> {
+async function constructAgentHost(): Promise<AgentHost> {
+  dataLifecycle.assertDomain('agent');
+  // Every construction, including a scoped Retry, loads durable authority before
+  // any Store snapshots historical identities for producer admission.
+  await restoredExecution.load();
+  if (!hasExplicitAgentRoot) ensureAgentDir(agentLocalFileRoot);
+  ensureAgentDir(agentScratchRoot);
   return createAgentHost({
+  restoredWork: restoredExecution,
   onScheduledAttention: (notice) => {
     if (!Notification.isSupported() || scheduledNoticesShown.has(notice.key)) return;
     scheduledNoticesShown.add(notice.key);
@@ -803,6 +860,11 @@ const wakeAutomationsOnResume = () => {
 async function initializeAgentHost(assertActive: () => void): Promise<void> {
   // A failed attempt must finish releasing its resources before a replacement opens.
   await agentAttemptCleanup;
+  if (recoveryAgentHost) {
+    const retained = recoveryAgentHost;
+    recoveryAgentHost = null;
+    await retained.close();
+  }
   assertActive();
   const candidate = await constructAgentHost();
   initializingAgentHost = candidate;
@@ -844,6 +906,19 @@ async function initializeAgentHost(assertActive: () => void): Promise<void> {
       agentAttemptCleanup = null;
     } catch (cleanupError) {
       throw new AggregateError([error, cleanupError], 'Agent startup and cleanup failed.', { cause: error });
+    }
+    if (lifecycle.phase() === 'starting') {
+      let retained: AgentHost | null = null;
+      try {
+        retained = await constructAgentHost();
+        await retained.initializeRecoveryOnly();
+        recoveryAgentHost = retained;
+        lifecycle.setThreadIssues(retained.threads.startupIssues(), retained.threads.startupThreadAvailability());
+      } catch (recoveryError) {
+        await retained?.close().catch(() => undefined);
+        reportError({ domain: 'lifecycle', severity: 'warn', code: 'recovery-owner-unavailable',
+          message: 'Compatible conversation recovery could not be constructed.', error: recoveryError });
+      }
     }
     throw error;
   }
@@ -1001,11 +1076,68 @@ function registerMainTransport(previewSession: Electron.Session): HostTransportC
 }
 
 function registerStartupTransport(ipcMain: OwnedIpcMain): void {
+  ipcMain.handle(DATA_LIFECYCLE_CHANNEL, async (event, input: unknown): Promise<DataLifecycleResponse> => {
+    if (event.sender === windowApplicationHost.windows.main()?.webContents) assertMainRenderer(event, 'Data recovery');
+    else windowApplicationHost.assertConfigurationSender(event, ['settings'], 'Data recovery');
+    const request = decodeDataLifecycleRequest(input);
+    if (request.action === 'status') return { state: dataLifecycle.state() };
+    if (request.action === 'inspect') return { state: await dataLifecycle.inspectBackups() };
+    if (request.action === 'reveal') {
+      const backup = await dataLifecycle.backups.read(request.backupId);
+      if (!backup) throw new Error('Retained data is unavailable');
+      shell.showItemInFolder(dataLifecycle.backups.path(backup.id));
+      return { state: dataLifecycle.state() };
+    }
+    if (request.action === 'cancel') {
+      await dataLifecycle.cancelQueuedRequest(request.operationId, request.revision);
+      await dataLifecycle.prepare();
+      await lifecycle.start().catch(() => undefined);
+      return { state: dataLifecycle.state(), cancelled: true };
+    }
+    if (request.action === 'export-diagnostics') {
+      const selection = await dialog.showSaveDialog({ defaultPath: 'tenon-data-recovery.json', filters: [{ name: 'JSON', extensions: ['json'] }] });
+      if (selection.canceled || !selection.filePath) return { state: dataLifecycle.state(), cancelled: true };
+      const state = dataLifecycle.state();
+      await writeFile(selection.filePath, `${JSON.stringify({ applicationVersion: app.getVersion(), phase: state.phase,
+        issues: state.issues.map(({ storeId, domain, reason, foundVersion, expectedVersion }) => ({ storeId, domain, reason, foundVersion, expectedVersion })),
+        backupCount: state.backups.length, automaticExecutionPaused: state.automaticExecutionPaused }, null, 2)}\n`, { mode: 0o600 });
+      return { state };
+    }
+    const text = getMessages(windowApplicationHost.effectiveLocale()).startup.dataRecovery;
+    if (request.action === 'restore') await dataLifecycle.validateRestoreSource(request.backupId);
+    const historyPreview = request.action === 'repair-history' ? await dataLifecycle.historyRepair.preview() : undefined;
+    const confirmation = await dialog.showMessageBox({ type: request.action === 'restore' ? 'warning' : 'question',
+      title: text.title, message: request.action === 'restore' ? text.restartRestore
+        : request.action === 'repair-history' ? text.restartRepair
+          : request.action === 'backup' ? text.restartBackup : request.action === 'resume-execution' ? text.restartResume : text.restartRetry,
+      detail: historyPreview ? text.repairDetail({ threads: historyPreview.threads })
+        : request.action === 'restore' ? `${text.restoreDetail}${dataLifecycle.state().operationId ? `\n\n${text.supersedeDetail}` : ''}`
+          : request.action === 'resume-execution' ? text.pausedDetail : text.backupDetail,
+      buttons: [text.cancel, text.restart], defaultId: 0, cancelId: 0, noLink: true });
+    if (confirmation.response !== 1) return { state: dataLifecycle.state(), cancelled: true };
+    const operationId = request.action === 'retry' ? null : await dataLifecycle.request(request, historyPreview);
+    restartForDataMaintenance = true;
+    try { await lifecycle.requestQuit(); }
+    catch (error) {
+      restartForDataMaintenance = false;
+      if (operationId) await dataLifecycle.cancelQueuedRequest(operationId);
+      throw error;
+    }
+    if (lifecycle.phase() !== 'disposed') {
+      restartForDataMaintenance = false;
+      if (operationId) await dataLifecycle.cancelQueuedRequest(operationId);
+      return { state: dataLifecycle.state(), cancelled: true };
+    }
+    return { state: dataLifecycle.state(), restartRequired: true };
+  });
   ipcMain.handle(THREAD_RECOVERY_CHANNEL, async (event, input: unknown) => {
     assertMainRenderer(event, 'Conversation recovery');
     const request = decodeThreadRecoveryRequest(input);
-    await lifecycle.ready('agent');
-    const owner = requireAgentHost().threads.conversationRecovery();
+    await lifecycle.ready('agent').catch(() => undefined);
+    if (lifecycle.phase() === 'quitting' || lifecycle.phase() === 'disposed') throw new Error('Conversation recovery is closing');
+    const recoveryOwner = agentHost ?? recoveryAgentHost;
+    if (!recoveryOwner) throw new Error('Compatible conversation recovery is unavailable');
+    const owner = recoveryOwner.threads.conversationRecovery();
     const threadId = request.recoveryId.slice('thread:'.length);
     if (request.action === 'inspect') return { preview: await owner.inspect(threadId) };
     if (request.action === 'resume') return { preview: await owner.resume(threadId, request.operationId) };
@@ -1049,17 +1181,25 @@ function registerStartupTransport(ipcMain: OwnedIpcMain): void {
   });
   ipcMain.handle(STARTUP_GET_CHANNEL, (event) => {
     assertMainRenderer(event, 'Startup status');
-    return lifecycle.state();
+    return withRestorationIssue(lifecycle.state());
   });
   ipcMain.handle(STARTUP_RETRY_CHANNEL, async (event) => {
     assertMainRenderer(event, 'Startup retry');
+    await dataLifecycle.retryInspection();
     await lifecycle.start().catch(() => undefined);
-    return lifecycle.state();
+    return withRestorationIssue(lifecycle.state());
   });
   ipcMain.handle(STARTUP_QUIT_CHANNEL, (event) => {
     assertMainRenderer(event, 'Startup quit');
     return lifecycle.requestQuit();
   });
+}
+
+function withRestorationIssue(state: import('../core/startup').StartupState): import('../core/startup').StartupState {
+  if (!dataLifecycle.state().automaticExecutionPaused) return state;
+  const text = getMessages(windowApplicationHost.effectiveLocale()).startup.dataRecovery;
+  return { ...state, issues: [...state.issues, { id: 'data-restoration', operation: 'data-restoration', domain: 'agent',
+    category: 'dependency', message: text.pausedDetail, details: text.pausedDetail, actions: [], retryable: false }] };
 }
 
 function registerOutlineTransport(ipcMain: OwnedIpcMain): void {
@@ -1081,9 +1221,10 @@ function registerUpdateTransport(ipcMain: OwnedIpcMain): void {
     return windowApplicationHost.updates.checkExplicitly();
   });
 
-  ipcMain.handle(LIN_APP_UPDATE_SET_AUTOMATIC_CHANNEL, (event, enabled: unknown): Promise<AppUpdateView> => {
+  ipcMain.handle(LIN_APP_UPDATE_SET_AUTOMATIC_CHANNEL, async (event, enabled: unknown): Promise<AppUpdateView> => {
     windowApplicationHost.assertConfigurationSender(event, ['about'], 'Automatic app update checks');
     if (typeof enabled !== 'boolean') throw new Error('Automatic update-check preference must be a boolean.');
+    await lifecycle.ready('data-configuration');
     return windowApplicationHost.updates.setAutomaticChecksEnabled(enabled);
   });
 
@@ -1456,25 +1597,34 @@ function registerWindowSettingsTransport(ipcMain: OwnedIpcMain): void {
       'global.launcher': Object.freeze([...windowApplicationHost.launcherHotkeys()]),
     });
   });
-  ipcMain.handle(KEYBINDINGS_GET_CHANNEL, (event): KeybindingsView => {
+  ipcMain.handle(KEYBINDINGS_GET_CHANNEL, async (event): Promise<KeybindingsView> => {
     windowApplicationHost.assertConfigurationSender(event, ['settings'], 'Keyboard Shortcuts');
+    await lifecycle.ready('data-configuration');
     return currentKeybindingsView;
   });
-  ipcMain.handle(KEYBINDINGS_UPDATE_CHANNEL, (event, raw: unknown): KeybindingsView => {
+  ipcMain.handle(KEYBINDINGS_UPDATE_CHANNEL, async (event, raw: unknown): Promise<KeybindingsView> => {
     windowApplicationHost.assertConfigurationSender(event, ['settings'], 'Keyboard Shortcuts');
+    await lifecycle.ready('data-configuration');
     const loaded = updateKeybindings(resolvedUserDataDir, decodeKeybindingsUpdateInput(raw));
     return applyKeybindings(loaded);
   });
   ipcMain.handle(KEYBINDINGS_OPEN_FILE_CHANNEL, async (event): Promise<void> => {
     windowApplicationHost.assertConfigurationSender(event, ['settings'], 'Keyboard Shortcuts');
+    await lifecycle.ready('data-configuration');
     const error = await shell.openPath(ensureKeybindingsFile(resolvedUserDataDir));
     if (error) throw new Error(error);
   });
-  ipcMain.handle('lin:set-theme', (_event, mode: unknown) => windowApplicationHost.setTheme(mode));
+  ipcMain.handle('lin:set-theme', async (_event, mode: unknown) => {
+    await lifecycle.ready('data-configuration');
+    windowApplicationHost.setTheme(mode);
+  });
   ipcMain.on('lin:get-language-sync', (event) => {
     event.returnValue = windowApplicationHost.effectiveLocale();
   });
-  ipcMain.handle('lin:set-language', (_event, raw: unknown) => windowApplicationHost.setLocale(raw));
+  ipcMain.handle('lin:set-language', async (_event, raw: unknown) => {
+    await lifecycle.ready('data-configuration');
+    windowApplicationHost.setLocale(raw);
+  });
   ipcMain.handle(SKILL_REVIEW_GET_CHANNEL, (event) => windowApplicationHost.readSkillReview(event));
   ipcMain.handle(SKILL_REVIEW_DECIDE_CHANNEL, (event, approved: unknown) => windowApplicationHost.decideSkillReview(event, approved));
   ipcMain.handle('lin:open-provider-config', (event, args?: { providerId?: unknown; mode?: unknown }) => {
@@ -1497,23 +1647,27 @@ function registerWindowSettingsTransport(ipcMain: OwnedIpcMain): void {
     if (args?.mode === 'reveal') return getStoredProviderApiKey(providerId);
     throw new Error('A provider key read mode is required.');
   });
-  ipcMain.handle('lin:preferences/get', (event): PreferencesView => {
+  ipcMain.handle('lin:preferences/get', async (event): Promise<PreferencesView> => {
     windowApplicationHost.assertConfigurationSender(event, ['settings'], 'Preference discovery');
+    await lifecycle.ready('data-configuration');
     return readPreferencesView(resolvedUserDataDir, hostSessionId, agentLocalFileRoot);
   });
   ipcMain.handle('lin:preferences/edit', async (event, input: PreferenceEdit): Promise<PreferencesView> => {
     windowApplicationHost.assertConfigurationSender(event, ['settings'], 'Preference editing');
+    await lifecycle.ready('data-configuration');
     editPreference(resolvedUserDataDir, input);
     applyFilePreferencesNow?.();
     return readPreferencesView(resolvedUserDataDir, hostSessionId, agentLocalFileRoot);
   });
   ipcMain.handle('lin:preferences/open-file', async (event) => {
     windowApplicationHost.assertConfigurationSender(event, ['settings'], 'Preference source');
+    await lifecycle.ready('data-configuration');
     const error = await shell.openPath(ensurePreferencesFile(resolvedUserDataDir));
     if (error) throw new Error(error);
   });
   ipcMain.handle('lin:configuration/open-source', async (event, sourceId: unknown) => {
     windowApplicationHost.assertConfigurationSender(event, ['settings'], 'Public configuration source');
+    await lifecycle.ready('data-configuration');
     const error = await shell.openPath(ensureConfigurationSource(resolvedUserDataDir, agentLocalFileRoot, sourceId));
     if (error) throw new Error(error);
   });
@@ -2630,9 +2784,10 @@ const closeDesktopResources = (
       serviceSettlements = await settleWithin(
         Promise.allSettled([
           ...(milestones.has('personal-ranking') ? [outlineHost.flushDerivedState()] : []),
-          agentHost?.close() ?? agentAttemptCleanup ?? Promise.resolve(),
+          agentHost?.close() ?? recoveryAgentHost?.close() ?? agentAttemptCleanup ?? Promise.resolve(),
           diagnosticLog.flushNow({ reason: reason === 'ordinary-quit' ? 'before-quit' : 'fatal' }),
           resourcePreviewHost.close(),
+          dataLifecycle.close(),
         ]),
         2_500,
         `Desktop Host ${reason} service settlement timed out.`,
@@ -2682,7 +2837,7 @@ quitCoordinator = new AppQuitCoordinator({
   },
   teardown: teardownForQuit,
   shutdownRuntime: (signal) => outlineHost.quit.shutdownRuntime(signal),
-  exit: () => app.exit(0),
+  exit: () => exitApplication(0),
 });
 
 const lifecycle = new DesktopHostLifecycle({
@@ -2710,28 +2865,44 @@ const lifecycle = new DesktopHostLifecycle({
     },
     { name: 'windows', run: () => windowApplicationHost.initialize() },
     {
-      name: 'configuration-observation', dependsOn: ['windows'], retryable: true, source: 'preferences',
+      name: 'data-lifecycle', dependsOn: ['windows'], retryable: true,
+      run: async () => {
+        await dataLifecycle.prepare();
+      },
+    },
+    { name: 'data-outline', dependsOn: ['data-lifecycle'], retryable: true, run: () => dataLifecycle.assertDomain('outline') },
+    { name: 'data-agent', dependsOn: ['data-lifecycle'], retryable: true, run: () => dataLifecycle.assertDomain('agent') },
+    { name: 'data-configuration', dependsOn: ['data-lifecycle'], retryable: true, run: () => dataLifecycle.assertDomain('configuration') },
+    {
+      name: 'configuration-observation', dependsOn: ['data-configuration'], retryable: true, source: 'preferences',
       run: () => startConfigurationWatcher(),
     },
     {
       name: 'provider-configuration',
-      dependsOn: ['windows'],
+      dependsOn: ['data-configuration'],
       retryable: true,
       source: 'preferences',
       run: async () => {
         const providerReconcile = await reconcileProviderConfig();
         if (providerReconcile?.activeProviderChanged) clearLastAgentThreadConfiguration();
+        // ModelsManager may already be mounted while data admission recovers.
+        // Reconciliation is its readiness boundary, even when preferences did
+        // not change and there is no separate models preference notification.
+        windowApplicationHost.notifyConfigurationChanged('models');
       },
     },
     {
       name: 'outline-documents',
-      dependsOn: ['windows'],
+      dependsOn: ['data-outline'],
       retryable: true,
-      run: () => outlineHost.initializeDocuments().then(() => undefined),
+      run: () => {
+        dataLifecycle.admitNormalWriters();
+        return outlineHost.initializeDocuments().then(() => undefined);
+      },
     },
     {
       name: 'node-access',
-      dependsOn: ['windows'],
+      dependsOn: ['data-configuration'],
       run: () => outlineHost.loadPersonalAccessRanking(),
     },
     {
@@ -2742,7 +2913,7 @@ const lifecycle = new DesktopHostLifecycle({
     },
     {
       name: 'agent',
-      dependsOn: ['provider-configuration', 'outline-documents'],
+      dependsOn: ['data-agent', 'provider-configuration', 'outline-documents'],
       retryable: true,
       run: async ({ assertActive }) => {
         await initializeAgentHost(assertActive);
@@ -2757,7 +2928,7 @@ const lifecycle = new DesktopHostLifecycle({
       },
     },
   ],
-  closeAdmission: () => outlineHost.quit.freezeAdmission(),
+  closeAdmission: () => { outlineHost.quit.freezeAdmission(); dataLifecycle.interrupt(); },
   ordinaryQuit: async () => {
     try {
       await quitCoordinator.requestQuit();
@@ -2772,14 +2943,15 @@ const lifecycle = new DesktopHostLifecycle({
         error,
       });
     }
-    return quitCoordinator.phase() === 'idle' ? 'cancelled' : 'disposed';
+    if (quitCoordinator.phase() === 'idle') { dataLifecycle.resumeAfterCancelledQuit(); return 'cancelled'; }
+    return 'disposed';
   },
   rollback: (milestones, cause) => closeDesktopResources(milestones, cause),
-  exitAfterStartupFailure: () => app.exit(1),
-  exitAfterEarlyQuit: () => app.exit(0),
+  exitAfterStartupFailure: () => exitApplication(1),
+  exitAfterEarlyQuit: () => exitApplication(0),
   onStartupState: (state) => {
     const window = windowApplicationHost.windows.main();
-    if (window && !window.isDestroyed()) window.webContents.send(STARTUP_STATE_CHANNEL, state);
+    if (window && !window.isDestroyed()) window.webContents.send(STARTUP_STATE_CHANNEL, withRestorationIssue(state));
     if (state.status === 'failed') reportError({
       domain: 'lifecycle',
       severity: 'error',

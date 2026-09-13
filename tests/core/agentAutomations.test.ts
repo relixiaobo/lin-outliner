@@ -1772,6 +1772,7 @@ interface TurnCall {
 }
 
 interface ThreadHostProbe {
+  isConversationRecoveryPending(threadId: string): boolean;
   busy: boolean;
   readonly ensureCalls: unknown[];
   readonly turnCalls: TurnCall[];
@@ -1811,6 +1812,7 @@ function threadHost(
   const transcriptPaths = new Map<string, string>();
   const featureContexts = new Map<string, ThreadContextPayload>();
   return {
+    isConversationRecoveryPending: () => false,
     busy: false,
     ensureCalls,
     turnCalls,

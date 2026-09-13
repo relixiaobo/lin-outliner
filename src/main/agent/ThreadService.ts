@@ -1,4 +1,5 @@
 import { AgentToolFailure } from './AgentToolFailure';
+import { UNRESTRICTED_RESTORED_WORK, type RestoredWorkAdmission } from './restoredWork';
 import { threadFeatureSource } from '../../core/agent/protocol';
 import type { Stats } from 'node:fs';
 import { readdir,rm } from 'node:fs/promises';
@@ -188,6 +189,7 @@ export interface ThreadServiceStores {
 }
 
 export interface ThreadServiceOptions {
+  readonly restoredWork?: RestoredWorkAdmission;
   readonly recoveryCheckpoint?: ThreadRecoveryOptions['checkpoint'];
   readonly stores: ThreadServiceStores;
   readonly executor: TurnExecutor;
@@ -313,6 +315,7 @@ export interface PersistentThreadExecutionContext {
 }
 
 export class ThreadService implements ThreadServiceExtensionHost {
+  private readonly restoredWork: RestoredWorkAdmission;
   private scheduledCompletionAdmission: (threadId: string, admission: import('../../core/agent/protocol').ToolTaskTurnAdmission,
     operation: () => Promise<boolean>) => Promise<boolean> = (_threadId, _admission, operation) => operation();
   bindScheduledCompletionAdmission(admit: typeof this.scheduledCompletionAdmission): void {
@@ -464,6 +467,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private get activeTurns() { return this.turnLifecycle.activeTurnsForInspection(); }
   private get pendingUserInputs() { return this.turnLifecycle.pendingUserInputsForInspection(); }
   constructor(options: ThreadServiceOptions) {
+    this.restoredWork = options.restoredWork ?? UNRESTRICTED_RESTORED_WORK;
     this.executor = options.executor;
     this.extensions = options.extensions;
     this.core = new ThreadCore(
@@ -510,6 +514,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
       options.toolTaskDetailRoot ?? join(options.recordRoot, '..', 'tool-tasks'),
       options.toolTaskSupervisorRuntime,
       this.now,
+      undefined,
+      undefined,
+      this.restoredWork,
     );
     this.resourceOps = new ThreadResourceOps(
       this.core,
@@ -594,7 +601,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       (threadId) => this.goals.clear(threadId),
       (message) => new ThreadBusyError(message),
     );
-    this.goals = new GoalExtension(this.goalStore, (notification) => this.core.recordNotification(notification));
+    this.goals = new GoalExtension(this.goalStore, (notification) => this.core.recordNotification(notification), this.restoredWork);
     this.goals.bindHost(
       this,
       (threadId) => this.core.requireThread(threadId).thread,
@@ -956,8 +963,28 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.initialized = true;
     for (const thread of resumableThreads) {
       if (thread.status.type === 'idle') {
-        await this.extensions.threadIdle(this.core.requireThread(thread.id).thread);
+        const current = this.core.requireThread(thread.id).thread;
+        // Goals carry their own durable generation authority. A fresh Goal in a
+        // restored Thread must reach that check without waking old general hooks.
+        if (this.restoredWork.allows('thread', thread.id)) await this.extensions.threadIdle(current);
+        else await this.goals.onThreadIdle(current);
       }
+    }
+  }
+
+  /** Compatibility has been checked; this opens no producer or automatic continuation. */
+  async initializeRecoveryOnly(): Promise<void> {
+    await this.transcriptExclusions.load();
+    await this.recoveryRuntime.service.resumePending();
+    for (const archived of [false, true]) {
+      let cursor: string | null = null;
+      do {
+        const page = this.core.metadata.list({ archived, cursor, limit: 100 });
+        for (const thread of page.data) {
+          if (!this.recoveryRuntime.service.isFenced(thread.id)) await this.quarantineThreadIfUnreadable(thread.id);
+        }
+        cursor = page.nextCursor;
+      } while (cursor);
     }
   }
 
@@ -1045,16 +1072,17 @@ export class ThreadService implements ThreadServiceExtensionHost {
       throw new ThreadBusyError(`Thread is quarantined because its history is unreadable: ${threadId}`);
     }
   }
-  async close(drainTimeoutMs = THREAD_SERVICE_CLOSE_DRAIN_TIMEOUT_MS): Promise<void> {
+  async close(drainTimeoutMs = THREAD_SERVICE_CLOSE_DRAIN_TIMEOUT_MS, mode: 'normal' | 'inspection' = 'normal'): Promise<void> {
     this.closing = true;
     const failures: unknown[] = [];
     await this.recoveryRuntime.service.drain();
+    const drainDeadline = Date.now() + Math.max(0, drainTimeoutMs);
+    if (mode === 'normal') {
     try {
       await this.toolTasks.close(drainTimeoutMs);
     } catch (error) {
       failures.push(error);
     }
-    const drainDeadline = Date.now() + Math.max(0, drainTimeoutMs);
     const pendingNames = this.catalogOps.pendingNameShutdownHandles();
     for (const pending of pendingNames) pending.abort();
     for (const pending of this.pendingUserInputs.values()) pending.abort();
@@ -1082,6 +1110,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     if (this.activeTurns.size > 0) {
       for (const turn of this.activeTurns.values()) turn.controller.abort();
       console.warn(`[agent] Thread shutdown timed out with ${this.activeTurns.size} active Turn(s)`);
+    }
     }
     try {
       if (!await this.records.flushAll(drainDeadline)) {
@@ -1691,6 +1720,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
   async resumeThread(threadId: ThreadId): Promise<{ thread: Thread }> {
     this.assertStartupThreadAvailable(threadId);
+    if (!this.restoredWork.allows('thread', threadId)) return { thread: this.core.requireThread(threadId).thread };
     return this.catalogOps.resumeThread(threadId);
   }
   async forkThread(request: ThreadForkRequest): Promise<{ thread: Thread }> {

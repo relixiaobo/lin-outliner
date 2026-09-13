@@ -5,6 +5,7 @@ import { Button } from './primitives/Button';
 import { useId, useState } from 'react';
 import type { StartupIssue, StartupIssueAction } from '../../core/startup';
 import { ThreadRecoveryPanel } from './ThreadRecoveryPanel';
+import { DataRecoveryPanel } from './DataRecoveryPanel';
 
 export function StartupFailure(props: {
   readonly failure: { readonly step: string; readonly message: string };
@@ -35,9 +36,9 @@ export function StartupFailure(props: {
       setFeedback(String(error));
     }
   };
-  const title = issue?.threadId ? t.threadFailed : failure.step === 'outline-documents' ? t.documentFailed
-    : failure.step === 'agent' ? t.agentFailed
-      : failure.step === 'provider-configuration' || failure.step === 'configuration-observation' ? t.providersFailed
+  const title = failure.step === 'data-restoration' ? t.dataRecovery.paused : issue?.threadId ? t.threadFailed : failure.step === 'outline-documents' || failure.step === 'data-outline' ? t.documentFailed
+    : failure.step === 'agent' || failure.step === 'data-agent' ? t.agentFailed
+      : failure.step === 'provider-configuration' || failure.step === 'configuration-observation' || failure.step === 'data-configuration' ? t.providersFailed
         : failure.step === 'personal-ranking' ? t.rankingFailed : t.failed;
   return (
     <section className="startup-failure" role="alert" aria-labelledby={titleId}>
@@ -54,6 +55,7 @@ export function StartupFailure(props: {
       </> : null}
       {props.onContinue ? <p>{t.notesAvailable}</p> : null}
       {issue?.recovery ? <ThreadRecoveryPanel key={issue.id} recoveryId={issue.id} /> : null}
+      {failure.step.startsWith('data-') ? <DataRecoveryPanel /> : null}
       <div className="startup-failure-actions">
         {props.onContinue ? <Button onClick={props.onContinue}>{t.continue}</Button> : null}
         {issue?.retryable !== false ? <Button onClick={props.onRetry} disabled={props.retrying}>

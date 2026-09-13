@@ -49,7 +49,7 @@ export function filePreferencesPath(userDataDir: string): string {
   return join(userDataDir, FILE_PREFERENCES_RELATIVE_PATH);
 }
 
-export function loadFilePreferences(userDataDir: string): FilePreferencesLoadResult {
+export function loadFilePreferences(userDataDir: string, options: { readonly readOnly?: boolean } = {}): FilePreferencesLoadResult {
   const path = filePreferencesPath(userDataDir);
   let sourceBytes: string;
   try {
@@ -70,7 +70,7 @@ export function loadFilePreferences(userDataDir: string): FilePreferencesLoadRes
     const preferences = decodeFilePreferences(parsed);
     let recoveryError: string | null = null;
     try {
-      writeRecovery(userDataDir, sourceBytes, preferences);
+      if (!options.readOnly) writeRecovery(userDataDir, sourceBytes, preferences);
     } catch (error) {
       recoveryError = errorMessage(error);
     }

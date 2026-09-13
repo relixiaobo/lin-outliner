@@ -1,3 +1,5 @@
+import { profileFileStoreSchema } from './ProfileFileStore.schema';
+import { UNRESTRICTED_RESTORED_WORK, type RestoredWorkAdmission } from '../restoredWork';
 import { createHash, randomUUID } from 'node:crypto';
 import { lstatSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -48,19 +50,16 @@ export class ProfileConflictError extends Error {
 export class ProfileFileStore {
   private readonly db: SqliteDatabase;
   private readonly hostSessionId = randomUUID();
-  constructor(private readonly userData: string, database?: SqliteDatabase, private readonly now: () => number = Date.now) {
+  constructor(private readonly userData: string, database?: SqliteDatabase, private readonly now: () => number = Date.now,
+    private readonly restoredWork: RestoredWorkAdmission = UNRESTRICTED_RESTORED_WORK) {
     const path = join(userData, 'agent', 'profile-control.sqlite');
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     this.userData = realpathSync(userData);
     this.db = database ?? openSqlite(path);
-    try { this.db.exec(`
-      PRAGMA journal_mode = WAL;
-      PRAGMA synchronous = FULL;
-      CREATE TABLE IF NOT EXISTS profile_documents (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;
-      CREATE TABLE IF NOT EXISTS profile_publications (id TEXT PRIMARY KEY, state TEXT NOT NULL, payload TEXT NOT NULL, request_digest TEXT, updated_at INTEGER NOT NULL) STRICT;
-      CREATE TABLE IF NOT EXISTS profile_invalidations (id TEXT PRIMARY KEY, state TEXT NOT NULL, turn_ids TEXT NOT NULL) STRICT;
-      CREATE TABLE IF NOT EXISTS profile_turns (turn_id TEXT PRIMARY KEY, snapshot TEXT NOT NULL) STRICT;
-    `); } catch (error) { closeSqliteAfterFailure(this.db, error); }
+    try {
+      this.db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;');
+      this.db.exec(profileFileStoreSchema);
+    } catch (error) { closeSqliteAfterFailure(this.db, error); }
   }
 
   close(): void { this.db.close(); }
@@ -323,6 +322,7 @@ export class ProfileFileStore {
 
   recover(key?: string): void {
     for (const row of this.db.prepare("SELECT id, state, payload FROM profile_publications WHERE state = 'prepared' ORDER BY rowid").all() as PublicationRow[]) {
+      if (!this.restoredWork.allows('profile', row.id)) continue;
       const publication = JSON.parse(row.payload) as Publication;
       // Learned writes resume only through the batch owner after fresh source,
       // mode and reset admission. Inspection cannot authorize pending learning.
@@ -377,7 +377,8 @@ export class ProfileFileStore {
 
   private observe(kind: ProfileFileKind, profileName: string): DocumentRecord {
     const before = this.read(kind, profileName);
-    const pending = this.db.prepare("SELECT id FROM profile_publications WHERE state = 'prepared' AND json_extract(payload, '$.key') = ?").get(documentKey(kind, profileName));
+    const pending = (this.db.prepare("SELECT id FROM profile_publications WHERE state = 'prepared' AND json_extract(payload, '$.key') = ?")
+      .all(documentKey(kind, profileName)) as { id: string }[]).find((row) => this.restoredWork.allows('profile', row.id));
     if (pending) throw new ProfileConflictError('pending', 'Profile publication is pending recovery');
     const content = readText(this.path(kind, profileName));
     if (content === before.content) return before;
@@ -406,6 +407,7 @@ export class ProfileFileStore {
   }
 
   private publish(publication: Publication): void {
+    if (!this.restoredWork.allows('profile', publication.id)) throw new ProfileConflictError('pending', 'Historical publication requires a new explicit edit');
     const requestDigest = publication.requestDigest ?? digest(JSON.stringify({
       key: publication.key, beforeRevision: publication.before.revision, afterRevision: publication.after.revision,
       afterContent: publication.after.content,
@@ -423,6 +425,7 @@ export class ProfileFileStore {
   }
 
   private settle(publication: Publication): void {
+    if (!this.restoredWork.allows('profile', publication.id)) throw new ProfileConflictError('pending', 'Historical publication requires a new explicit edit');
     const { after, before } = publication;
     const requestDigest = publication.requestDigest ?? digest(JSON.stringify({
       key: publication.key, beforeRevision: before.revision, afterRevision: after.revision,

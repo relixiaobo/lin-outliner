@@ -19,9 +19,9 @@ export function startupIssue(operation: string, failure: unknown, source?: Start
       : code === 'SQLITE_BUSY' || code === 'SQLITE_LOCKED' ? 'locked'
         : code === 'SQLITE_CORRUPT' || code === 'SQLITE_NOTADB' || code === 'STARTUP_INVALID_DATA' || observed instanceof SyntaxError ? 'invalid-data'
           : code === 'STARTUP_VERSION_MISMATCH' ? 'version-mismatch' : 'unknown';
-  const domain = operation === 'agent' ? 'agent'
-    : operation === 'outline-documents' || operation === 'personal-ranking' ? 'outline'
-      : operation === 'provider-configuration' || operation === 'configuration-observation' ? 'configuration' : 'desktop';
+  const domain = operation === 'agent' || operation === 'data-agent' ? 'agent'
+    : operation === 'outline-documents' || operation === 'personal-ranking' || operation === 'data-outline' ? 'outline'
+      : operation === 'provider-configuration' || operation === 'configuration-observation' || operation === 'data-configuration' ? 'configuration' : 'desktop';
   const message = scrub(observed instanceof Error ? observed.message : String(observed), 1_000);
   const details = scrub([
     `Capability: ${domain}`, `Operation: ${operation}`, `Category: ${category}`,

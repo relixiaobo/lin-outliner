@@ -28,6 +28,7 @@ export interface OutlineDesktopHostOptions {
 }
 
 export interface OutlineDesktopHost {
+  readonly maintenance: { quiesce(): Promise<void>; initialize(token: string): Promise<void> };
   readonly runtimeRoot: string;
   readonly contentRoot: string;
   readonly configurationDirectory: string;
@@ -173,6 +174,19 @@ export function createOutlineDesktopHost(options: OutlineDesktopHostOptions): Ou
   };
 
   return {
+    maintenance: {
+      quiesce: () => supervisor.quiesceForMaintenance(),
+      initialize: async (token) => {
+        try {
+          const client = await supervisor.connect(undefined, token);
+          client.close();
+          await supervisor.shutdown();
+        } catch (error) {
+          await supervisor.shutdown().catch(() => undefined);
+          throw error;
+        }
+      },
+    },
     runtimeRoot,
     contentRoot,
     configurationDirectory: join(options.userDataDir, 'config'),

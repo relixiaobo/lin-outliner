@@ -8,6 +8,7 @@ const MAX_TIMER_DELAY_MS = 60 * 60 * 1_000;
 const PENDING_RETRY_DELAY_MS = 15_000;
 
 export interface AutomationSchedulerOptions {
+  readonly canSchedule?: () => boolean;
   readonly store: AutomationStore;
   readonly dispatcher: AutomationDispatcher;
   readonly onAutomationChanged?: (automation: Automation) => void | Promise<void>;
@@ -53,7 +54,7 @@ export class AutomationScheduler {
   }
 
   wake(reason: 'normal' | 'unavailable' = 'normal'): Promise<void> {
-    if (this.stopped) return Promise.resolve();
+    if (this.stopped || this.options.canSchedule?.() === false) return Promise.resolve();
     return this.runExclusive(async () => {
       if (this.stopped) return;
       this.clearWakeTimer();

@@ -10,14 +10,15 @@ import type { ProfileEvidence, ProfileLearningChange } from '../../src/core/agen
 import { ProfileFileStore, profileFileDigest } from '../../src/main/agent/profile/ProfileFileStore';
 import { captureProfileTurn, profileStateForTurn, profileContextText } from '../../src/main/agent/profile/ProfileContext';
 import { parseUserProfile, renderUserProfile } from '../../src/main/agent/profile/ProfileMarkdown';
+import { UNRESTRICTED_RESTORED_WORK, type RestoredWorkAdmission } from '../../src/main/agent/restoredWork';
 
 const cleanups: (() => void)[] = [];
 afterEach(() => { for (const cleanup of cleanups.splice(0).reverse()) cleanup(); });
-function fixture() {
+function fixture(restoredWork?: RestoredWorkAdmission) {
   const root = mkdtempSync(join(tmpdir(), 'tenon-profile-'));
   cleanups.push(() => rmSync(root, { recursive: true, force: true }));
   const db = new Database(':memory:');
-  const store = new ProfileFileStore(root, db as unknown as SqliteDatabase, () => 123);
+  const store = new ProfileFileStore(root, db as unknown as SqliteDatabase, () => 123, restoredWork);
   cleanups.push(() => store.close());
   return { root, db, store };
 }
@@ -25,6 +26,24 @@ const source = (id: string): ProfileEvidence => ({ threadId: `thread:${id}`, tur
 const proposal = (id = 'a', text = 'Lead research reports with the conclusion.'): ProfileLearningChange => ({ action: 'upsert', key: 'reports', scope: 'Research reports', text, originItemIds: [`item:${id}`], rationale: { futureUse: 'Future research', novelty: 'Explicit ongoing request' } });
 
 describe('Profile files', () => {
+  test('a blocked prepared learning publication cannot settle through applyLearning', () => {
+    let restored = false;
+    const { store, db } = fixture({ ...UNRESTRICTED_RESTORED_WORK, allows: (_kind, id) => !restored || id !== 'learn:old' });
+    const original = db.prepare.bind(db);
+    db.prepare = ((sql: string) => {
+      if (sql.startsWith('INSERT INTO profile_documents')) throw new Error('interrupted settlement');
+      return original(sql);
+    }) as typeof db.prepare;
+    expect(() => store.applyLearning('learn:old', 0, [proposal()], [source('a')])).toThrow('interrupted');
+    db.prepare = original;
+    rmSync(store.path('user'));
+    restored = true;
+    expect(() => store.applyLearning('learn:old', 0, [proposal()], [source('a')])).toThrow('Historical publication');
+    expect(store.receipt('learn:old')).toBe(false);
+    expect(store.inspect('user').content).toBe('');
+    store.applyLearning('learn:fresh', 0, [proposal('b')], [source('b')]);
+    expect(store.receipt('learn:fresh')).toBe(true);
+  });
   test('learns directly, confirms without rewriting text, and protects an authored correction', () => {
     const { store } = fixture();
     store.applyLearning('learn:a', 0, [proposal()], [source('a')]);

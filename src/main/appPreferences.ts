@@ -35,7 +35,7 @@ function preferencesFilePath(): string {
 
 export function loadAppPreferences(): AppPreferences {
   if (currentPreferences) {
-    const file = loadFilePreferences(app.getPath('userData')).preferences;
+    const file = loadFilePreferences(app.getPath('userData'), { readOnly: true }).preferences;
     return {
       ...currentPreferences,
       theme: file.appearance.theme,
@@ -55,7 +55,7 @@ export function loadAppPreferences(): AppPreferences {
     loaded = { ...DEFAULTS };
   }
   currentPreferences = loaded;
-  const file = loadFilePreferences(app.getPath('userData')).preferences;
+  const file = loadFilePreferences(app.getPath('userData'), { readOnly: true }).preferences;
   return { ...loaded, theme: file.appearance.theme, language: isLocale(file.appearance.language) ? file.appearance.language : null };
 }
 
