@@ -1593,25 +1593,34 @@ function registerWindowSettingsTransport(ipcMain: OwnedIpcMain): void {
       'global.launcher': Object.freeze([...windowApplicationHost.launcherHotkeys()]),
     });
   });
-  ipcMain.handle(KEYBINDINGS_GET_CHANNEL, (event): KeybindingsView => {
+  ipcMain.handle(KEYBINDINGS_GET_CHANNEL, async (event): Promise<KeybindingsView> => {
     windowApplicationHost.assertConfigurationSender(event, ['settings'], 'Keyboard Shortcuts');
+    await lifecycle.ready('data-configuration');
     return currentKeybindingsView;
   });
-  ipcMain.handle(KEYBINDINGS_UPDATE_CHANNEL, (event, raw: unknown): KeybindingsView => {
+  ipcMain.handle(KEYBINDINGS_UPDATE_CHANNEL, async (event, raw: unknown): Promise<KeybindingsView> => {
     windowApplicationHost.assertConfigurationSender(event, ['settings'], 'Keyboard Shortcuts');
+    await lifecycle.ready('data-configuration');
     const loaded = updateKeybindings(resolvedUserDataDir, decodeKeybindingsUpdateInput(raw));
     return applyKeybindings(loaded);
   });
   ipcMain.handle(KEYBINDINGS_OPEN_FILE_CHANNEL, async (event): Promise<void> => {
     windowApplicationHost.assertConfigurationSender(event, ['settings'], 'Keyboard Shortcuts');
+    await lifecycle.ready('data-configuration');
     const error = await shell.openPath(ensureKeybindingsFile(resolvedUserDataDir));
     if (error) throw new Error(error);
   });
-  ipcMain.handle('lin:set-theme', (_event, mode: unknown) => windowApplicationHost.setTheme(mode));
+  ipcMain.handle('lin:set-theme', async (_event, mode: unknown) => {
+    await lifecycle.ready('data-configuration');
+    windowApplicationHost.setTheme(mode);
+  });
   ipcMain.on('lin:get-language-sync', (event) => {
     event.returnValue = windowApplicationHost.effectiveLocale();
   });
-  ipcMain.handle('lin:set-language', (_event, raw: unknown) => windowApplicationHost.setLocale(raw));
+  ipcMain.handle('lin:set-language', async (_event, raw: unknown) => {
+    await lifecycle.ready('data-configuration');
+    windowApplicationHost.setLocale(raw);
+  });
   ipcMain.handle(SKILL_REVIEW_GET_CHANNEL, (event) => windowApplicationHost.readSkillReview(event));
   ipcMain.handle(SKILL_REVIEW_DECIDE_CHANNEL, (event, approved: unknown) => windowApplicationHost.decideSkillReview(event, approved));
   ipcMain.handle('lin:open-provider-config', (event, args?: { providerId?: unknown; mode?: unknown }) => {
@@ -1634,18 +1643,21 @@ function registerWindowSettingsTransport(ipcMain: OwnedIpcMain): void {
     if (args?.mode === 'reveal') return getStoredProviderApiKey(providerId);
     throw new Error('A provider key read mode is required.');
   });
-  ipcMain.handle('lin:preferences/get', (event): PreferencesView => {
+  ipcMain.handle('lin:preferences/get', async (event): Promise<PreferencesView> => {
     windowApplicationHost.assertConfigurationSender(event, ['settings'], 'Preference discovery');
+    await lifecycle.ready('data-configuration');
     return readPreferencesView(resolvedUserDataDir, hostSessionId, agentLocalFileRoot);
   });
   ipcMain.handle('lin:preferences/edit', async (event, input: PreferenceEdit): Promise<PreferencesView> => {
     windowApplicationHost.assertConfigurationSender(event, ['settings'], 'Preference editing');
+    await lifecycle.ready('data-configuration');
     editPreference(resolvedUserDataDir, input);
     applyFilePreferencesNow?.();
     return readPreferencesView(resolvedUserDataDir, hostSessionId, agentLocalFileRoot);
   });
   ipcMain.handle('lin:preferences/open-file', async (event) => {
     windowApplicationHost.assertConfigurationSender(event, ['settings'], 'Preference source');
+    await lifecycle.ready('data-configuration');
     const error = await shell.openPath(ensurePreferencesFile(resolvedUserDataDir));
     if (error) throw new Error(error);
   });
