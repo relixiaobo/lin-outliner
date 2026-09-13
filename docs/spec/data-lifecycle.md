@@ -209,8 +209,11 @@ are not represented as released-version upgrade evidence.
 
 `--fixture <directory>` consumes a saved fixture with `fixture.json` metadata and
 checks a working copy. The release owner preserves immutable fixtures generated
-by each supported release. Automated publication enforcement is a separate
-delivery; until then the same driver is part of manual release verification.
+by each supported release. Automated publication enforcement runs the same
+driver for every immutable supported-release fixture, publishes a compatibility
+matrix and exact reports, and attaches the target release's fixture. The first
+release containing this foundation establishes the baseline; pre-baseline
+releases without a fixture are not treated as upgrade sources.
 
 Focused tests cover failed sync, transactional data/version rollback, WAL-only
 commits, damaged current data, lost install receipts, startup ownership, scoped

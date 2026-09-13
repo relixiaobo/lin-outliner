@@ -24,6 +24,8 @@ assert.equal(installedLoro, lockedLoro, 'Run the checker with the exact lockfile
 const output = join(repo, 'tmp/data-lifecycle-checks', randomUUID());
 await mkdir(output, { recursive: true });
 const suppliedIndex = process.argv.indexOf('--fixture');
+const fixtureOutputIndex = process.argv.indexOf('--fixture-output');
+if (suppliedIndex >= 0 && fixtureOutputIndex >= 0) throw new Error('--fixture and --fixture-output cannot be combined');
 let source: string;
 let metadata: { kind: 'tenon-data-fixture'; version: 1; applicationVersion: string; sourceRevision: string; sourceDirty: boolean; loroVersion: string; expected: PopulatedDataFixture };
 if (suppliedIndex >= 0) {
@@ -32,11 +34,13 @@ if (suppliedIndex >= 0) {
   metadata = JSON.parse(await readFile(join(source, 'fixture.json'), 'utf8'));
   assert.equal(metadata.kind, 'tenon-data-fixture'); assert.equal(metadata.version, 1);
 } else {
-  source = join(output, 'source');
+  source = fixtureOutputIndex >= 0 ? resolve(process.argv[fixtureOutputIndex + 1] ?? '') : join(output, 'source');
+  if (fixtureOutputIndex >= 0 && (!source || source === repo)) throw new Error('--fixture-output requires a directory');
+  await mkdir(source, { recursive: true });
   const expected = await seedPopulatedDataFixture(source, { versioned: false });
   metadata = { kind: 'tenon-data-fixture', version: 1, applicationVersion: packageInfo.version,
     sourceRevision: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim(),
-    sourceDirty: !!execFileSync('git', ['status', '--porcelain'], { cwd: repo, encoding: 'utf8' }).trim(),
+    sourceDirty: !!execFileSync('git', ['status', '--porcelain', '--untracked-files=no'], { cwd: repo, encoding: 'utf8' }).trim(),
     loroVersion: installedLoro, expected };
   await writeFile(join(source, 'fixture.json'), `${JSON.stringify(metadata, null, 2)}\n`);
 }
