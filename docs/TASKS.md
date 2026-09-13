@@ -7,22 +7,20 @@ Dev agents read this board and claim work with Draft PRs; main updates it.
 
 ## In Flight
 
-Status refresh: 2026-09-12. GitHub has **no open PRs**. The latest product
-integration is #682 (`726709796`), following #685/#686 and #681/#683/#684.
+Status refresh: 2026-09-13. GitHub has **no open PRs**. The latest product
+integration is #689 (`0d05e97a6`): local data compatibility, backup and recovery.
 All eight active designs below are `draft`; no implementation claim is open.
 Refresh `gh pr list` before claiming files: this snapshot is not a lock.
 
 The development train is `0.8.0`; the latest published release remains `v0.7.0`
 (2026-08-23). Merged features have not yet shipped in a new packaged release.
 
-The main E2E signal is reporting, not a merge gate. The latest completed
-[report](https://github.com/relixiaobo/lin-outliner/issues/476) is for `92b79cac`:
-five samples contain 26 deterministic and five intermittent failures. Its green
-workflow conclusion does not mean the test suite passed. Later main commits
-have no completed measurement at this refresh. Follow the issue for completed
+The main E2E signal is reporting, not a merge gate. Follow the
+[report](https://github.com/relixiaobo/lin-outliner/issues/476) for completed
 measurements and [live main runs](https://github.com/relixiaobo/lin-outliner/actions?query=branch%3Amain)
-for queued, superseded or cancelled runs; do not attribute old samples to a newer
-commit.
+for queued, superseded or cancelled runs. PR #689's final-head samples were still
+running at merge. A green workflow conclusion does not mean the test suite
+passed; do not attribute older samples to the new integration.
 
 ## Delivered Contracts
 
@@ -34,6 +32,7 @@ files and add no implementation or approval prerequisite.
 | Outline and content | #598/#599/#603/#607/#619 supply Source-backed Nodes, public Runtime commands and canonical resource ownership. |
 | Agent execution | #623/#628/#637 supply generic Tool Tasks and delegated Sessions; delegation remains experimental and disabled by default. |
 | Configuration and startup | #656 supplies file-backed Settings; #664 supplies scoped startup fault isolation. |
+| Local data lifecycle | #689 supplies physical format admission, verified local backups, resumable recovery and historical execution fences; [current contract](spec/data-lifecycle.md). |
 | Conversation records | #669 supplies source-aware publication and ordinary-file access across eligible roots. |
 | Questions and Task responsibility | #672/#673 supply deadline/settlement, independent drafts, service handoff, event receipts and continuation ownership. |
 | Projects and execution evidence | #676/#677/#678/#679 supply image observations, owned service evidence, descriptor-safe control transport and Project-owned defaults. |
@@ -48,7 +47,7 @@ review. There is no active claim today; existing PM decisions persist.
 
 | Priority | Plan | Status | Next action / eligibility |
 | --- | --- | --- | --- |
-| P1 | [data-compatibility-foundation](plans/data-compatibility-foundation.md) | `draft` | Establish the versioned userData manifest, safe startup gate, verified backups, canonical Store migrations, derived rebuilds, and populated release-to-release upgrade tests before broader rollout. |
+| P1 | [data-compatibility-release-enforcement](plans/data-compatibility-release-enforcement.md) | `draft` | Automate the existing populated fixture/restore driver in the main-owned release workflow, preserve immutable supported-release fixtures and publish compatibility evidence; local lifecycle Feature 1 is integrated in #689. |
 | P2 | [targeted-thread-recovery](plans/archive/targeted-thread-recovery.md) | `done` | Targeted rebuild/removal now verifies source or exact closure, retains WAL-aware owner evidence, fences recovery across restart, and exposes recovery only after verified completion; [plan archived](plans/archive/targeted-thread-recovery.md). |
 | P2 | [file-preview-office](plans/file-preview-office.md) | `draft` | Prove TypeScript DOCX/XLSX extraction and archive limits with Python absent, then deliver shared Agent/preview reading in one feature; preserve the current PPTX owner. |
 | P2 | [url-static-reader](plans/url-static-reader.md) | `draft` | Share extraction while preserving Agent calls without UI selection, explicit acquisition and remote-image policy. Prefer after Office on shared preview/extraction files. |
@@ -120,22 +119,14 @@ into a blanket dependency for every PR.
 
 ### Release gates
 
-- **Persisted-schema cutover verification** (release gate) — before the next
-  packaged train, stop every Tenon process, manually reset installed and clone-
-  scoped pre-#679 Agent stores plus pre-#619 Outline storage-v2 workspaces, and
-  verify fresh packaged/dev first launch. This covers the input-author, context
-  dependency-manifest, unified Agent resource-reference, whole-Turn
-  `history/rerun` event-name, #611 user-view/additional-context payload-shape,
-  #619 required Operation-intent identity, and #646/#649 execution-context
-  snapshot shape cuts (including series and capture identity), plus #658's
-  required Task isolation evidence, terminal receipt v3, and supervisor identity
-  v2, plus #663's nullable Task timeout and #673's required Task continuation and
-  control-receipt fields, plus #679's removal of conversation-folder storage and
-  replacement of execution-address `workFolder` with `projectDefault`, plus
-  #682's new `agent/scheduled-tasks.sqlite` owner without importing earlier
-  Automation definitions.
-  Use fresh clone-specific userData for development
-  verification; no migration or automatic deletion ships.
+- **Supported-data baseline verification** (release gate) — the first packaged
+  train containing #689 establishes the supported baseline. Run
+  `bun scripts/check-data-lifecycle.ts` and applicable saved release fixtures
+  before publishing, retain an immutable populated fixture with exact version
+  provenance, and verify packaged/dev startup and recovery with isolated data.
+  Unsupported pre-baseline formats remain preserved for recovery; a data wipe
+  cannot substitute for compatibility verification. Automated publication
+  enforcement remains the separate draft feature above.
 - **Launcher NSPanel packaged verification** — one `.dmg` pass for Cmd+Tab,
   fullscreen floating, focus, dock icon, and light/dark behavior.
 
@@ -249,6 +240,7 @@ into a blanket dependency for every PR.
 One line per recent integration. Older entries remain in
 [CHANGELOG.md](../CHANGELOG.md) and Git history; archived plans retain design provenance.
 
+- **data-compatibility-foundation: local lifecycle** (`done`, #689, 2026-09-13) - versioned admission, verified backups, resumable recovery and historical execution fences are integrated; [original design archived](plans/archive/data-compatibility-foundation.md), with release automation tracked separately above.
 - **workspace-document-status-refresh** (`done`, fast-track, 2026-09-12) - reconciled GitHub claims, release/CI evidence, all active designs and delivered owners; removed completed local review workspaces after preserving their changes and evidence.
 - **scheduled-work-redesign** (`done`, #682, 2026-09-12) - task windows, authenticated CLI, canonical results and exact run Stop are integrated; [plan archived](plans/archive/scheduled-work-redesign.md).
 - **memory-profile-direct-learning** (`done`, #686, 2026-09-12) - editable Profile files, direct personal learning, activation and retained-source lifecycle are integrated; [plan archived](plans/archive/memory-profile-direct-learning.md).

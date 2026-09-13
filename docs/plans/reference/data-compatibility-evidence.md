@@ -30,8 +30,12 @@ The recommended foundation has five properties:
 These recommendations preserve the current TypeScript/Electron process seam,
 Runtime-owned Loro document, ContentStore, and domain Stores. They do not choose
 a sync hosting provider or replace existing storage with a replicated SQL
-product. The executable design is maintained in the
-[foundation plan](../data-compatibility-foundation.md).
+product. Current local behavior is maintained in the
+[data lifecycle specification](../../spec/data-lifecycle.md). The
+[original foundation design](../archive/data-compatibility-foundation.md)
+preserves the design provenance; the remaining
+[release enforcement design](../data-compatibility-release-enforcement.md)
+defines automated publication checks.
 
 ## Scope and evidence quality
 

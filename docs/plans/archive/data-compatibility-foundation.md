@@ -37,15 +37,15 @@ standalone migration scaffold or upgrade to an unspecified format.
 ### Authority and policy transition
 
 For migration and legacy-reader design, this plan supersedes the exclusions in
-the archived [Sync Readiness Foundation](archive/sync-readiness-foundation.md#non-goals),
+the archived [Sync Readiness Foundation](sync-readiness-foundation.md#non-goals),
 including its instruction to reset isolated development userData after format
 changes. That archived instruction describes the earlier pre-release policy;
 it is not an alternative design for the supported baseline. Existing identity,
 replication, and ownership mechanisms remain governed by their current specs.
 
 Until the complete baseline implementation lands, the current pre-release rules
-in [AGENTS.md](../../AGENTS.md) and the
-[architecture specification](../spec/architecture.md) still describe the running
+in [AGENTS.md](../../../AGENTS.md) and the
+[architecture specification](../../spec/architecture.md) still describe the running
 system. Merging this design does not claim that migrations or retained readers
 already exist, or authorize a data reset. Feature 1 must replace those current
 no-migration/no-reader rules in the same coordinated implementation change that
@@ -53,7 +53,7 @@ establishes the supported baseline, before any supported schema upgrade ships.
 
 ### Evidence and selected approach
 
-The [research reference](reference/data-compatibility-evidence.md) compares
+The [research reference](../reference/data-compatibility-evidence.md) compares
 SQLite, Joplin, Zotero, Signal Desktop, TriliumNext, VS Code, n8n, AFFiNE,
 Loro, Automerge, and Yjs. It includes pinned sources and isolated SQLite/Loro
 counterexamples. Select transaction-first local migration with independently

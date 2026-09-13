@@ -48,6 +48,22 @@ complete, and remove unsealed evidence when a retaining operation is replaced.**
 An interrupted mutation keeps its journal and evidence for resume; a cancelled
 pre-mutation retention attempt must not leave private orphan copies.
 
+## Recovery must reconstruct authority for each work identity and consumer
+
+**Reload durable execution authority before every owner construction, including
+scoped Retry, and enforce it at final settlement as well as initial admission.**
+Historical leases must not consume new execution capacity; new Goal generations
+must not inherit a permanent ban from an old Thread identity. Keep established
+Store presence requirements through repair and completion rather than inferring
+permission to initialize from a missing file.
+
+PR #689 also showed that a healthy backend does not repair an already-open
+consumer by itself. Expose editable settings only after their domain is ready,
+and notify each affected domain when recovery succeeds even if its preferences
+did not change. Exercise pending startup, failed admission and Retry through
+the real UI and process boundaries; a completed milestone or a green isolated
+Store test cannot prove these handoffs.
+
 ## Human review is a presentation boundary, not a mutation credential
 
 PR #644 moved Skill acquisition and destructive operations behind a native

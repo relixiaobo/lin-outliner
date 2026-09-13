@@ -1,7 +1,7 @@
 # Data lifecycle
 
 The data lifecycle owner implements the local compatibility, backup, and
-recovery feature from [the foundation plan](../../../docs/plans/data-compatibility-foundation.md).
+recovery feature from [the foundation design](../../../docs/plans/archive/data-compatibility-foundation.md).
 It coordinates physical Store adapters and existing Runtime ownership. Store
 owners remain responsible for schema and semantic validation; Desktop lifecycle
 remains responsible for window visibility, retry, and quit.
