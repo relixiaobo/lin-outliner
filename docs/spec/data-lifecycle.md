@@ -46,6 +46,14 @@ construction after a scoped Retry. A completed inspection milestone never
 substitutes for that load. Backup and repair preserve established Store
 expectations; operation completion requires every registered Store to exist.
 
+Settings may open during data preparation. Its preference and shortcut reads
+wait for configuration admission before exposing editable values. Mutations,
+theme/language persistence, update preferences, and public configuration file
+creation wait on the same domain while retaining the JSON write guard. A failed
+admission rejects queued requests without changing the source. Configuration
+recovery refreshes an already-open Settings window independently of Agent
+readiness; data recovery controls remain available throughout preparation.
+
 Main does not import Core or Runtime storage implementation. Outline inspection
 runs in the Runtime executable's read-only `--inspect-data` mode and returns a
 bounded identity/error report. `runtimeLock` is the shared process-ownership

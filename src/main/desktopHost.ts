@@ -545,6 +545,9 @@ async function startConfigurationWatcher(): Promise<void> {
   // Agent may already be healthy when this independent milestone is retried.
   // Join the application (including queued edits) before reporting recovery.
   if (agentHost) await apply();
+  // An already-open Settings window may have observed a failed admission in
+  // the previous attempt. Refresh it as soon as its own configuration recovers.
+  windowApplicationHost.notifyConfigurationChanged('preferences');
   resources.defer('configuration-observation', () => attempt.dispose());
   } catch (error) {
     applyFilePreferencesNow = null;
@@ -1218,9 +1221,10 @@ function registerUpdateTransport(ipcMain: OwnedIpcMain): void {
     return windowApplicationHost.updates.checkExplicitly();
   });
 
-  ipcMain.handle(LIN_APP_UPDATE_SET_AUTOMATIC_CHANNEL, (event, enabled: unknown): Promise<AppUpdateView> => {
+  ipcMain.handle(LIN_APP_UPDATE_SET_AUTOMATIC_CHANNEL, async (event, enabled: unknown): Promise<AppUpdateView> => {
     windowApplicationHost.assertConfigurationSender(event, ['about'], 'Automatic app update checks');
     if (typeof enabled !== 'boolean') throw new Error('Automatic update-check preference must be a boolean.');
+    await lifecycle.ready('data-configuration');
     return windowApplicationHost.updates.setAutomaticChecksEnabled(enabled);
   });
 
@@ -1663,6 +1667,7 @@ function registerWindowSettingsTransport(ipcMain: OwnedIpcMain): void {
   });
   ipcMain.handle('lin:configuration/open-source', async (event, sourceId: unknown) => {
     windowApplicationHost.assertConfigurationSender(event, ['settings'], 'Public configuration source');
+    await lifecycle.ready('data-configuration');
     const error = await shell.openPath(ensureConfigurationSource(resolvedUserDataDir, agentLocalFileRoot, sourceId));
     if (error) throw new Error(error);
   });
