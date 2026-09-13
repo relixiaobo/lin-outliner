@@ -2885,6 +2885,10 @@ const lifecycle = new DesktopHostLifecycle({
       run: async () => {
         const providerReconcile = await reconcileProviderConfig();
         if (providerReconcile?.activeProviderChanged) clearLastAgentThreadConfiguration();
+        // ModelsManager may already be mounted while data admission recovers.
+        // Reconciliation is its readiness boundary, even when preferences did
+        // not change and there is no separate models preference notification.
+        windowApplicationHost.notifyConfigurationChanged('models');
       },
     },
     {

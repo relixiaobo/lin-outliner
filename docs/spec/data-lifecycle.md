@@ -53,6 +53,9 @@ creation wait on the same domain while retaining the JSON write guard. A failed
 admission rejects queued requests without changing the source. Configuration
 recovery refreshes an already-open Settings window independently of Agent
 readiness; data recovery controls remain available throughout preparation.
+Provider configuration recovery also publishes a `models` change after its
+readiness boundary, so an already-open Models pane retries its provider catalog
+without requiring a tab switch or a new Settings window.
 
 Main does not import Core or Runtime storage implementation. Outline inspection
 runs in the Runtime executable's read-only `--inspect-data` mode and returns a

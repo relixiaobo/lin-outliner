@@ -59,6 +59,8 @@ for (const fail of [false, true]) {
       await expect(settings.locator('[data-shortcut-id]')).toHaveCount(0);
       await settings.getByRole('tab', { name: 'General', exact: true }).click();
       await expect(settings.getByRole('radio', { name: 'Dark', exact: true })).toHaveCount(0);
+      await settings.getByRole('tab', { name: 'Models', exact: true }).click();
+      await expect(settings.getByRole('tabpanel', { name: 'Models', exact: true })).toBeVisible();
       // Exercise mutation IPC directly as well: no stale/alternate caller can
       // write around the loading UI while the real data read remains pending.
       await settings.evaluate(({ preferencesDigest, keybindingsDigest }) => {
@@ -84,9 +86,11 @@ for (const fail of [false, true]) {
         expect(await readFile(join(data.userDataDir, 'config/keybindings.jsonc'), 'utf8')).toBe(data.keybindings);
         await rm(unknownStore);
         await smoke.window.locator('.startup-failure-actions').getByRole('button', { name: 'Retry', exact: true }).click();
+        await expect(settings.getByRole('list', { name: 'Providers to add' })).toBeVisible();
       } else {
         await expect.poll(results).toEqual({ preference: 'saved', shortcut: 'saved' });
       }
+      await settings.getByRole('tab', { name: 'General', exact: true }).click();
       await expect(settings.getByRole('radio', { name: 'Dark', exact: true })).toBeEnabled();
       await settings.getByRole('radio', { name: 'Light', exact: true }).check();
       await expect.poll(() => smoke!.app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe('light');
