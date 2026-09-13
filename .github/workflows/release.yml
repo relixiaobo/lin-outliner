@@ -73,6 +73,17 @@ jobs:
       - name: Build the app
         run: bun run app:build
 
+      - name: Verify data compatibility
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bun scripts/check-release-compatibility.ts "${{ steps.version.outputs.version }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tenon-${{ steps.version.outputs.version }}-compatibility
+          path: release-compatibility/*
+          if-no-files-found: error
+
       - uses: actions/upload-artifact@v4
         with:
           name: tenon-${{ steps.version.outputs.version }}-dmg
@@ -88,4 +99,6 @@ jobs:
           gh release create "${GITHUB_REF_NAME}" \
             --title "${GITHUB_REF_NAME}" \
             --notes-file notes.md \
-            release/*.dmg
+            release/*.dmg \
+            release-compatibility/*.json \
+            release-compatibility/tenon-data-fixture-*.tar.gz
